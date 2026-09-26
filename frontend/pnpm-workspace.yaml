@@ -3,3 +3,19 @@ pmOnFail: ignore
 minimumReleaseAgeExclude:
   - '@next/*'
   - next
+
+# REQUIRED for AWS Amplify Hosting.
+# Amplify's Next.js SSR dependency tracer (@vercel/nft) does not follow pnpm's
+# default symlinked node_modules/.pnpm layout, so the SSR compute bundle ships
+# without its runtime packages and the deployed site comes up blank / 500s.
+#
+# AWS documents this under "Configuring monorepo build settings" ->
+# "Configuring Turborepo and pnpm monorepo apps":
+#   "In the .npmrc file, set the linker for installing Node packages to hoisted.
+#    You can copy the following line to your file: node-linker=hoisted"
+#
+# pnpm >= 10 reads project settings from pnpm-workspace.yaml (camelCase) rather
+# than .npmrc, and .npmrc's node-linker is ignored there, so it is set here.
+# The legacy `node-linker=hoisted` line is kept in .npmrc too for older pnpm.
+nodeLinker: hoisted
+
