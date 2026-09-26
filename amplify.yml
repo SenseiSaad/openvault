@@ -1,0 +1,26 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        # Use Node 20 (required for Next.js 16)
+        - nvm use 20 || nvm install 20 && nvm use 20
+        - node -v && npm -v
+        # This project uses pnpm (see frontend/package.json -> packageManager: pnpm@12.3.4)
+        - corepack enable
+        - corepack prepare pnpm@12.3.4 --activate
+        - pnpm --version
+        - cd frontend && pnpm install --frozen-lockfile
+    build:
+      commands:
+        - cd frontend && pnpm run build
+  artifacts:
+    # .next is generated inside frontend/.next (Amplify expects path relative to repo root)
+    baseDirectory: frontend/.next
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - frontend/node_modules/**/*
+      - frontend/.next/cache/**/*
+      - ~/.pnpm-store/**/*
