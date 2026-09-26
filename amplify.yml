@@ -1,58 +1,47 @@
+# Amplify Hosting build spec for the OpenVault monorepo.
+#
+# This repo is a monorepo (frontend/ = Next.js, backend/ = Django), so it MUST
+# use the monorepo schema: `applications:` + `appRoot:`. With appRoot set,
+# Amplify runs every command with the working directory already inside
+# frontend/, so there is no `cd frontend` anywhere in this file and all paths
+# below are relative to frontend/.
+#
+# The `appRoot` value must match the AMPLIFY_MONOREPO_APP_ROOT environment
+# variable in the Amplify console (see AWS docs: "Configuring monorepo build
+# settings"). Amplify sets that automatically when you tick
+# "My app is a monorepo" and enter `frontend` as the app root.
 version: 1
-frontend:
-  phases:
-    preBuild:
-      commands:
-        - nvm use 20 || nvm install 20 && nvm use 20
-        - node -v && npm -v
-        - npm install -g pnpm@12.3.4
-        - pnpm --version
-        - |
-          if [ -d frontend ]; then
-            echo "Installing in frontend/ (repo root detected)"
-            cd frontend && pnpm install --frozen-lockfile
-          else
-            echo "Installing in current directory (frontend root detected)"
-            pnpm install --frozen-lockfile
-          fi
-    build:
-      commands:
-        - |
-          if [ -d frontend ]; then
-            echo "Building frontend/ (repo root detected)"
-            cd frontend && pnpm run build
-          else
-            echo "Building current directory (frontend root detected)"
-            pnpm run build
-          fi
-        - |
-          echo "=== Checking build output ==="
-          pwd; ls -la 2>&1 | head -n 50
-          if [ -d frontend/.next ]; then echo "found frontend/.next"; ls -la frontend/.next 2>&1 | head -n 20; fi
-          if [ -d .next ]; then echo "found .next"; ls -la .next 2>&1 | head -n 20; fi
-          # Normalize for both App root settings:
-          # If built from repo root, also expose .next at repo root for monorepo artifact resolution
-          if [ -d frontend/.next ] && [ ! -d .next ]; then
-            echo "Copying frontend/.next -> .next for fallback"
-            cp -r frontend/.next .next
-          fi
-          # If built from frontend PWD, ensure frontend/.next exists relative to repo root too
-          if [ -d .next ] && [ ! -d frontend/.next ]; then
-            echo "Copying .next -> frontend/.next for fallback"
-            mkdir -p frontend && cp -r .next frontend/.next
-          fi
-          echo "=== Final artifact locations ==="
-          ls -ld .next frontend/.next 2>&1 | cat
-  artifacts:
-    baseDirectory: frontend/.next
-    files:
-      - '**/*'
-  cache:
-    paths:
-      - frontend/node_modules/**/*
-      - frontend/.next/cache/**/*
-      - node_modules/**/*
-      - .next/cache/**/*
-      - ~/.pnpm-store/**/*
+applications:
+  - appRoot: frontend
+    frontend:
+      phases:
+        preBuild:
+          commands:
+            # Next.js 16 requires Node 20+.
+            - nvm use 20 || nvm install 20 && nvm use 20
+            - node -v && npm -v
+            # pnpm is NOT bundled in the Amplify build image, so install it.
+            # (corepack is broken on Amazon Linux 2023: pnpm.cjs MODULE_NOT_FOUND.)
+            - npm install -g pnpm@12.3.4
+            - pnpm --version
+            # node-linker=hoisted is set in frontend/.npmrc, which Amplify's
+            # Next.js SSR bundler requires for pnpm apps.
+            - pnpm install --frozen-lockfile
+        build:
+          commands:
+            - pwd && ls -la | head -n 30
+            - pnpm run build
+      artifacts:
+        # Relative to appRoot (frontend/). Amplify's Next.js SSR runtime reads
+        # required-server-files.json from here.
+        baseDirectory: .next
+        files:
+          - '**/*'
+      cache:
+        paths:
+          - node_modules/**/*
+          - .next/cache/**/*
+          - ~/.pnpm-store/**/*
+
 
 
