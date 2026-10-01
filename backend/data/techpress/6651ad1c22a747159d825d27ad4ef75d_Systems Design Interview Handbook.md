@@ -1,0 +1,3 @@
+Systems Design Interview Handbook
+
+Start from requirements: traffic, data volume, latency and consistency needs. Estimate load before choosing components. Discuss trade-offs between SQL and NoSQL, caching layers, message queues and replication. Design for failure with redundancy and graceful degradation. Communicate assumptions clearly and iterate on the bottleneck rather than gold-plating the whole design.

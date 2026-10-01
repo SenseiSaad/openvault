@@ -1,0 +1,3 @@
+Cell Biology: The Fundamentals
+
+The cell is the basic unit of life. Membranes separate the interior from the environment while controlling what enters and leaves. Organelles divide labour: mitochondria generate energy, ribosomes build proteins, the nucleus stores DNA. Signalling pathways let cells respond to their surroundings, and tightly regulated division underlies growth, repair and, when it fails, cancer.

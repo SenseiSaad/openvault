@@ -1,0 +1,3 @@
+The Neuroscience of Memory and Learning
+
+Memories form as networks of neurons strengthen their connections, a process called synaptic plasticity. The hippocampus binds new episodic memories, which are gradually consolidated into the cortex, especially during sleep. Retrieval is reconstructive, not a perfect replay, which is why memories can change over time. Spacing and active recall exploit these mechanisms to make learning durable.

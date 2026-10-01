@@ -1,0 +1,3 @@
+A Practical Introduction to Large Language Models
+
+Large language models are trained to predict the next token over trillions of words of text. Their capabilities emerge from scale, but reliable behaviour comes from instruction tuning and alignment. This guide covers tokenisation, context windows, temperature, retrieval-augmented generation and the evaluation of factual accuracy. Prompt design remains the cheapest lever for quality.

@@ -1,0 +1,3 @@
+An Introduction to Quantum Mechanics
+
+Quantum mechanics describes matter and energy at the smallest scales, where particles behave as probability waves. Superposition allows a system to occupy many states at once until measured, and entanglement links particles across distance. The Schrodinger equation governs how these states evolve. Counter-intuitive yet exquisitely tested, quantum theory underlies chemistry, semiconductors and emerging quantum computers.

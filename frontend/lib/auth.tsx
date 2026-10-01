@@ -13,6 +13,11 @@ interface AuthContextValue {
   enterpriseRegister: (p: {
     company_name: string
     admin_name?: string
+    admin_title?: string
+    website?: string
+    contact_email?: string
+    phone?: string
+    max_employees?: number | null
     email: string
     password: string
   }) => Promise<User>
@@ -59,8 +64,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [apply],
   )
   const enterpriseRegister = useCallback(
-    (p: { company_name: string; admin_name?: string; email: string; password: string }) =>
-      authApi.enterpriseRegister(p).then(apply),
+    (p: {
+      company_name: string
+      admin_name?: string
+      admin_title?: string
+      website?: string
+      contact_email?: string
+      phone?: string
+      max_employees?: number | null
+      email: string
+      password: string
+    }) => authApi.enterpriseRegister(p).then(apply),
     [apply],
   )
   const logout = useCallback(() => {

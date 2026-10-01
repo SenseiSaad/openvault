@@ -1,0 +1,3 @@
+Feature Engineering for Tabular Data
+
+Good features often matter more than model choice. Handle missing values deliberately, encode categoricals by cardinality, and derive ratios and aggregates that capture domain knowledge. Watch for leakage from features that would not exist at prediction time. Validate with a scheme that mirrors production, and prefer simple, robust transforms that a model can exploit without overfitting.

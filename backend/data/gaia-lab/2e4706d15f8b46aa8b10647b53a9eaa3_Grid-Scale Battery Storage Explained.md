@@ -1,0 +1,3 @@
+Grid-Scale Battery Storage
+
+Lithium-ion batteries dominate grid storage today, smoothing the gap between variable supply and demand over hours. They provide fast frequency response, defer costly network upgrades and store surplus solar for the evening peak. For longer durations, flow batteries, pumped hydro and emerging chemistries compete on cost per stored kilowatt-hour. Falling prices are accelerating deployment worldwide.

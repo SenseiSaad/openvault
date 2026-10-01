@@ -1,0 +1,3 @@
+The Science of Effective Learning
+
+Decades of research point to a few powerful techniques: retrieval practice, spacing study over time, and interleaving related topics. These feel harder than rereading, and that difficulty is exactly why they work. Immediate feedback and explaining ideas in your own words deepen understanding. Popular notions like fixed 'learning styles' find little support in the evidence.

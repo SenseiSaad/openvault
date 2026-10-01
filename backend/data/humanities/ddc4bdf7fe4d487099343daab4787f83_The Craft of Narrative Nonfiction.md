@@ -1,0 +1,3 @@
+The Craft of Narrative Nonfiction
+
+Narrative nonfiction reports facts with the artistry of fiction: scene, character, tension and voice. The writer earns trust through rigorous reporting, then shapes that material into a story with momentum. Detail makes the abstract concrete; structure controls what the reader feels and when. The discipline is to never invent, and yet to make the truth as compelling as any tale.

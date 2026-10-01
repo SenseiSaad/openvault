@@ -1,0 +1,3 @@
+Climate Change 2025: The Physical Science Basis
+
+Global surface temperature is now about 1.2C above pre-industrial levels, driven overwhelmingly by human greenhouse-gas emissions. Warming is intensifying heatwaves, heavy rainfall and sea-level rise. Every fraction of a degree avoided reduces harm. Limiting warming to 1.5C requires roughly halving emissions this decade and reaching net zero around mid-century.

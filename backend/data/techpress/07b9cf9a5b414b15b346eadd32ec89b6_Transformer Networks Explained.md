@@ -1,0 +1,3 @@
+Transformer Networks Explained
+
+The transformer replaces recurrence with self-attention, letting every token attend directly to every other token. Multi-head attention learns different relationships in parallel, while positional encodings restore word order. Stacked attention and feed-forward blocks, with residual connections and layer normalisation, scale to billions of parameters. This architecture underpins nearly all state-of-the-art models.

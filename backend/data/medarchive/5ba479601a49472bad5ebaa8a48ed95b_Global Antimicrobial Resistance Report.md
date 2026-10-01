@@ -1,0 +1,3 @@
+Global Antimicrobial Resistance Report
+
+Overuse of antibiotics in medicine and agriculture is breeding resistant bacteria faster than new drugs are developed. Resistant infections already cause over a million deaths a year. Stewardship programmes, rapid diagnostics, vaccination and infection control all slow the spread. Without coordinated action, routine procedures could again carry serious infection risk.

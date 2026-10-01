@@ -1,0 +1,3 @@
+A Beginner's Guide to Personal Finance
+
+Sound personal finance rests on a few durable habits: spend less than you earn, keep an emergency fund, and clear high-interest debt first. Compound interest rewards those who invest early and consistently. Low-cost, diversified index funds beat most active strategies over the long run. Insurance and a will protect what you build. Simplicity and patience matter more than clever timing.

@@ -1,0 +1,3 @@
+Cognitive Behavioural Therapy
+
+CBT is built on the idea that thoughts, feelings and behaviours influence one another. By identifying distorted thinking and testing it against evidence, patients learn to respond differently to distressing situations. Techniques include thought records, behavioural experiments and graded exposure. It is among the best-supported treatments for anxiety and depression, and its skills often outlast the therapy itself.

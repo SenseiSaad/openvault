@@ -1,0 +1,3 @@
+Evidence-Based Medicine
+
+Evidence-based medicine integrates the best available research, clinical expertise and patient values. The hierarchy of evidence places systematic reviews and randomised trials above observational studies and expert opinion. Clinicians must appraise study quality, effect size and applicability to the patient in front of them. Statistical significance is not the same as clinical importance.

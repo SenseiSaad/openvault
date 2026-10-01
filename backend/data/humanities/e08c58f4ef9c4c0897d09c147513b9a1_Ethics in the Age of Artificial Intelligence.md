@@ -1,0 +1,3 @@
+Ethics in the Age of Artificial Intelligence
+
+As machines make consequential decisions, familiar ethical questions return with force. Who is responsible when an autonomous system causes harm? How do we ensure fairness when models learn from biased data? What weight should we give transparency, privacy and human autonomy? These are not merely technical problems; they demand that engineers and philosophers reason together about the good.

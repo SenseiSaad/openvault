@@ -1,0 +1,3 @@
+Data-Driven Decision Making
+
+Data-driven management replaces gut feel with measurement, experimentation and honest metrics. It starts with asking the right question, then gathering relevant, trustworthy data and guarding against bias in how it is read. Correlation is not causation, so controlled experiments matter. The aim is not to remove judgement but to inform it, and to build a culture where evidence can change minds.

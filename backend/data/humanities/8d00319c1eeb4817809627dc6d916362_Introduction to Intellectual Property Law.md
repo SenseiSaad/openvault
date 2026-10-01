@@ -1,0 +1,3 @@
+Introduction to Intellectual Property Law
+
+Intellectual property law grants creators limited rights over their work to encourage innovation. Patents protect inventions, copyright protects original expression, trademarks protect brand identity and trade secrets protect confidential know-how. Each has different requirements and durations. The central tension is always between rewarding creators and keeping knowledge and competition free.

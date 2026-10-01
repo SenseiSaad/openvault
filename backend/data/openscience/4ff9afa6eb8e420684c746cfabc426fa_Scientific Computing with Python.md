@@ -1,0 +1,3 @@
+Scientific Computing with Python
+
+Vectorised array operations in NumPy replace slow Python loops and express intent clearly. Understand floating-point limits: catastrophic cancellation and accumulation of error can silently ruin a result. Profile before optimising, and validate against analytic cases. Well-tested, readable research code is a scientific instrument in its own right and deserves the same rigour as the experiment.

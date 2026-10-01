@@ -1,0 +1,3 @@
+Ocean Acidification and Marine Life
+
+The ocean has absorbed roughly a third of human carbon emissions, lowering its pH in a process called acidification. More acidic water makes it harder for corals, shellfish and plankton to build calcium-carbonate shells and skeletons. Because these organisms anchor marine food webs, the effects ripple up to fisheries. Cutting emissions is the only durable remedy.

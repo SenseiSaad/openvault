@@ -1,0 +1,3 @@
+Principles of Behavioural Economics
+
+Behavioural economics blends psychology with economics to explain choices that classical theory cannot. People are loss-averse, anchor on irrelevant numbers and are swayed by how options are framed. Small changes to defaults, or 'nudges', can shift behaviour without restricting choice. The field reshaped how governments design pensions, taxes and public-health campaigns.

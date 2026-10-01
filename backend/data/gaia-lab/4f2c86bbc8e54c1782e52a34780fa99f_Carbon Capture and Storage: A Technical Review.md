@@ -1,0 +1,3 @@
+Carbon Capture and Storage
+
+CCS separates carbon dioxide from flue gas or the air, compresses it and injects it into deep geological formations for permanent storage. It is one of the few options for hard-to-abate industries such as cement and steel. Costs and energy penalties remain high, and public trust in storage sites matters. It complements, rather than replaces, cutting emissions at the source.

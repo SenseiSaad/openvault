@@ -1,0 +1,3 @@
+A Short History of the Industrial Revolution
+
+From the late 18th century, mechanised production and the steam engine transformed Britain and then the world. Output soared, cities swelled and new classes of factory workers emerged, often in harsh conditions. Railways and the telegraph collapsed distance. The revolution lifted long-run living standards while unleashing pollution and inequality whose consequences still shape debate today.

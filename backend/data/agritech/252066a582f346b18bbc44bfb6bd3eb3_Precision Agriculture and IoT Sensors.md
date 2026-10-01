@@ -1,0 +1,3 @@
+Precision Agriculture
+
+Sensors, satellites and GPS-guided machinery let farmers manage fields at the square-metre scale. Soil-moisture and nutrient data drive variable-rate irrigation and fertiliser, reducing waste. Drones spot disease and stress before it is visible from the ground. The payoff is higher yields from fewer inputs, though it demands connectivity and data skills many rural areas still lack.

@@ -1,0 +1,3 @@
+Genetically Modified Crops
+
+Genetic modification inserts specific traits, such as pest resistance or drought tolerance, into a crop's genome. Decades of study find approved GM foods as safe to eat as conventional ones, yet debate continues over ecology, corporate control of seed and labelling. Sound policy weighs evidence of benefit and risk case by case rather than treating all modification alike.

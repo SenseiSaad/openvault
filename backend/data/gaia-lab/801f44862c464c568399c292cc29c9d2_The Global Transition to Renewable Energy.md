@@ -1,0 +1,3 @@
+The Global Transition to Renewable Energy
+
+Solar and wind are now the cheapest sources of new electricity in most of the world. Their variability shifts the challenge from generation to flexibility: storage, demand response and stronger grids. Electrifying transport and heating raises demand even as it cuts emissions. The transition is as much about markets and grids as about the turbines and panels themselves.

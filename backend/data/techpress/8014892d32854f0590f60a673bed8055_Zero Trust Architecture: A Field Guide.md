@@ -1,0 +1,3 @@
+Zero Trust Architecture
+
+Zero trust replaces the perimeter model with per-request verification of identity, device posture and context. Every access decision is authenticated, authorised and encrypted, and no network location is inherently trusted. Practical rollout starts with strong identity, micro-segmentation and continuous logging. Least privilege and short-lived credentials limit the blast radius of any single breach.

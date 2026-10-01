@@ -1,0 +1,3 @@
+CRISPR Gene Editing
+
+CRISPR-Cas9 uses a guide RNA to direct a cutting enzyme to a precise DNA sequence, where the cell's repair machinery can disable or rewrite a gene. It has transformed research and enabled therapies for sickle-cell disease and inherited blindness. Editing human embryos, however, raises profound ethical questions about consent, equity and heritable change that science alone cannot answer.

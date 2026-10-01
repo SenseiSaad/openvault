@@ -1,0 +1,3 @@
+Biodiversity Loss and Ecosystem Services
+
+Species are disappearing tens to hundreds of times faster than the natural background rate, mainly from habitat loss, overexploitation and climate change. Biodiversity underpins pollination, clean water, fisheries and carbon storage, services worth trillions. Protecting and restoring habitat, and connecting fragmented landscapes, are the most effective responses.

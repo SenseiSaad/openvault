@@ -1,0 +1,3 @@
+State of Cloud Computing 2025
+
+Cloud spending grew 21% year over year, with 78% of surveyed organisations now running workloads across two or more providers. Cost optimisation overtook security as the top concern for the first time. Kubernetes remains the default orchestration layer, while serverless adoption is strongest among teams under fifty engineers. FinOps practices correlated with a 15% reduction in idle spend.

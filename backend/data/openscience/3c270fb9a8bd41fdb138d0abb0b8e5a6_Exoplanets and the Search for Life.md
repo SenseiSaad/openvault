@@ -1,0 +1,3 @@
+Exoplanets and the Search for Life
+
+Most known exoplanets were found by watching a star dim as a planet transits, or wobble under a planet's gravity. Thousands are now catalogued, some in the habitable zone where liquid water could exist. Spectroscopy of starlight filtered through a planet's atmosphere hunts for water, methane and oxygen. Biosignatures remain unconfirmed but within reach of the next generation of telescopes.

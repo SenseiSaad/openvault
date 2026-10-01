@@ -1,0 +1,3 @@
+Social Networks and Collective Behaviour
+
+Society is a web of relationships, and the shape of that web governs how information, behaviour and disease spread. A few highly connected hubs can accelerate diffusion, while weak ties bridge otherwise separate groups. Contagion is not only biological: opinions, norms and panics propagate along the same links. Mapping networks helps predict tipping points in collective behaviour.

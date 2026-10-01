@@ -1,0 +1,3 @@
+Understanding Inflation and Monetary Policy
+
+Inflation is a sustained rise in the general price level, eroding the purchasing power of money. It can stem from strong demand, supply shocks or expectations that become self-fulfilling. Central banks respond mainly by adjusting interest rates to cool or stimulate spending. The hard part is timing: policy acts with long and variable lags, so banks must act on forecasts, not just today's data.
