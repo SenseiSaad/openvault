@@ -4,9 +4,15 @@ import { AuthProvider } from '@/lib/auth'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'F5P Library — Make room for ideas',
-  description: 'A thoughtful home for documents, research, and the small discoveries worth keeping.',
-  generator: 'v0.app',
+  title: {
+    default: 'OpenVault: The open knowledge library',
+    template: '%s · OpenVault',
+  },
+  description:
+    'OpenVault is a secure, multi-tenant knowledge library: a calm, searchable home for documents, research, and the discoveries worth keeping.',
+  applicationName: 'OpenVault',
+  keywords: ['OpenVault', 'knowledge library', 'documents', 'research', 'secure document sharing'],
+  generator: 'OpenVault',
   icons: {
     icon: [
       {

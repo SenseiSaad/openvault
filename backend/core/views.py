@@ -19,21 +19,25 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.conf import settings
 
 from . import rag
-from .models import Company, User, Document, Chunk, AuditLog, Favorite
+from . import providers
+from .models import Company, User, Document, Chunk, AuditLog, Favorite, DocumentShare, LLMConfig
 from .permissions import IsAdmin, IsEditor
 from .serializers import (
     CompanySerializer, UserSerializer, DocumentSerializer, AuditSerializer,
     RegisterCompanySerializer, LoginSerializer, UserCreateSerializer, AskSerializer,
     PublicRegisterSerializer, PublicLoginSerializer,
+    DocumentShareSerializer, LLMConfigSerializer,
 )
 
 
 def client_ip(request):
+    """Best-effort caller IP for the audit log (honours X-Forwarded-For)."""
     fwd = request.META.get("HTTP_X_FORWARDED_FOR")
     return (fwd.split(",")[0].strip() if fwd else request.META.get("REMOTE_ADDR", "")) or ""
 
 
 def audit(request, action, detail=""):
+    """Write one audit-trail row for the caller's company (no-op for public users)."""
     user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
     company = getattr(user, "company", None)
     if company is None:
@@ -44,6 +48,7 @@ def audit(request, action, detail=""):
 
 
 def token_for(user):
+    """Mint a short-lived JWT access token for this user."""
     return str(RefreshToken.for_user(user).access_token)
 
 # -------------------------------------------------------------------- auth
@@ -63,10 +68,15 @@ def register_company(request):
         n += 1
         slug = f"{base}-{n}"
 
-    company = Company.objects.create(name=d["company_name"], slug=slug)
+    company = Company.objects.create(
+        name=d["company_name"], slug=slug,
+        website=d.get("website", ""), contact_email=d.get("contact_email", ""),
+        phone=d.get("phone", ""), max_employees=d.get("max_employees"),
+    )
     user = User.objects.create_user(
         email=d["email"], password=d["password"],
-        full_name=d.get("admin_name", ""), role="admin", company=company,
+        full_name=d.get("admin_name", ""), title=d.get("admin_title", ""),
+        role="admin", company=company,
     )
     AuditLog.objects.create(company=company, user=user, action="register",
                             detail=f"company {company.name}", ip=client_ip(request))
@@ -76,6 +86,7 @@ def register_company(request):
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def login(request):
+    """Enterprise sign-in with email + password. Returns a JWT."""
     s = LoginSerializer(data=request.data)
     s.is_valid(raise_exception=True)
     user = authenticate(username=s.validated_data["email"], password=s.validated_data["password"])
@@ -94,6 +105,7 @@ def _as(request, user):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def me(request):
+    """Return the signed-in user's own profile (used to hydrate the frontend)."""
     return Response(UserSerializer(request.user).data)
 
 # ------------------------------------------------------- consumer (public) auth
@@ -192,15 +204,32 @@ def document_detail(request, pk):
 
 
 def _get_doc(request, pk):
+    """Owner-company only. Used for edit / delete / publish / share management."""
     try:
         return Document.objects.get(pk=pk, company=request.user.company)
     except Document.DoesNotExist:
         raise Http404
 
+
+def _accessible_doc(request, pk):
+    """Owner-company OR a document explicitly shared with this user.
+    Used for read + download so cross-company collaborators can reach one file."""
+    try:
+        doc = Document.objects.get(pk=pk)
+    except Document.DoesNotExist:
+        raise Http404
+    u = request.user
+    if getattr(u, "company_id", None) and doc.company_id == u.company_id:
+        return doc
+    if DocumentShare.objects.filter(document=doc, shared_with_user=u).exists():
+        return doc
+    raise Http404
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def download_document(request, pk):
-    doc = _get_doc(request, pk)
+    doc = _accessible_doc(request, pk)
     if not doc.stored_path or not os.path.exists(doc.stored_path):
         raise Http404
     audit(request, "download", doc.filename)
@@ -211,15 +240,15 @@ def download_document(request, pk):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def ask(request):
-    """Stream an answer as NDJSON, grounded only in this company's documents."""
+    """Stream an answer as NDJSON, grounded only in documents this user may see
+    (their own company's documents plus any explicitly shared with them)."""
     s = AskSerializer(data=request.data)
     s.is_valid(raise_exception=True)
     question = s.validated_data["question"]
     audit(request, "ask", question)
-    company = request.user.company
 
     resp = StreamingHttpResponse(
-        rag.stream_answer(company, question), content_type="application/x-ndjson"
+        rag.stream_answer(request.user, question), content_type="application/x-ndjson"
     )
     resp["Cache-Control"] = "no-cache"
     resp["X-Accel-Buffering"] = "no"
@@ -229,7 +258,9 @@ def ask(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def llm_status(request):
-    return Response({"online": rag.llm_available(), "model": settings.LLM_MODEL})
+    """Lightweight status probe for the chat model (drives the UI status dot)."""
+    prov = providers.get_chat_provider()
+    return Response({"online": prov.available(), "provider": prov.label, "model": prov.chat_model})
 
 # -------------------------------------------------------- admin (company)
 @api_view(["GET", "POST"])
@@ -246,9 +277,17 @@ def users(request):
     d = s.validated_data
     if User.objects.filter(email__iexact=d["email"]).exists():
         return Response({"detail": "Email already registered."}, status=400)
+    # Optional seat limit: only enforced when the company set a max_employees.
+    if company.max_employees and company.users.count() >= company.max_employees:
+        return Response(
+            {"detail": f"Seat limit reached ({company.max_employees}). "
+                       "Increase it in company settings to add more members."},
+            status=400,
+        )
     user = User.objects.create_user(
         email=d["email"], password=d["password"],
-        full_name=d.get("full_name", ""), role=d["role"], company=company,
+        full_name=d.get("full_name", ""), title=d.get("title", ""),
+        role=d["role"], company=company,
     )
     audit(request, "add_user", f"{user.email} ({user.role})")
     return Response(UserSerializer(user).data, status=201)
@@ -257,6 +296,7 @@ def users(request):
 @api_view(["DELETE"])
 @permission_classes([IsAdmin])
 def user_detail(request, pk):
+    """Remove a member of the admin's own company (can't delete yourself)."""
     if pk == request.user.id:
         return Response({"detail": "You can't remove yourself."}, status=400)
     try:
@@ -272,6 +312,7 @@ def user_detail(request, pk):
 @api_view(["GET"])
 @permission_classes([IsAdmin])
 def audit_log(request):
+    """The company's 200 most recent audit entries (admin only)."""
     qs = AuditLog.objects.filter(company=request.user.company).order_by("-created_at")[:200]
     return Response(AuditSerializer(qs, many=True).data)
 
@@ -286,6 +327,7 @@ def _preview(doc, limit=280):
 
 
 def _public_card(doc, preview=False):
+    """Shape a document into the trimmed public-portal card (no private fields)."""
     data = {
         "id": doc.id, "filename": doc.filename, "size": doc.size,
         "category": doc.category, "description": doc.description,
@@ -401,3 +443,101 @@ def favorite_detail(request, pk):
         return Response(status=204)
     Favorite.objects.get_or_create(user=request.user, document=doc)
     return Response({"favorited": True}, status=201)
+
+
+# ------------------------------------------------- cross-company collaboration
+@api_view(["GET", "POST"])
+@permission_classes([IsEditor])
+def document_shares(request, pk):
+    """List (GET) or grant (POST {email}) access to ONE document for ONE user.
+    Only the owning company can manage a document's shares."""
+    doc = _get_doc(request, pk)
+    if request.method == "GET":
+        shares = DocumentShare.objects.filter(document=doc).select_related(
+            "shared_with_user", "shared_with_user__company"
+        )
+        return Response(DocumentShareSerializer(shares, many=True).data)
+
+    email = (request.data.get("email") or "").strip()
+    if not email:
+        return Response({"detail": "Email is required."}, status=400)
+    try:
+        target = User.objects.get(email__iexact=email)
+    except User.DoesNotExist:
+        return Response({"detail": "No user with that email."}, status=404)
+    if getattr(target, "company_id", None) and target.company_id == doc.company_id:
+        return Response({"detail": "That user is already in this company."}, status=400)
+    share, _ = DocumentShare.objects.get_or_create(
+        document=doc, shared_with_user=target,
+        defaults={"shared_by": request.user, "can_download": True},
+    )
+    audit(request, "share", f"{doc.filename} -> {target.email}")
+    return Response(DocumentShareSerializer(share).data, status=201)
+
+
+@api_view(["DELETE"])
+@permission_classes([IsEditor])
+def document_share_detail(request, pk, user_id):
+    """Revoke one user's access to a document."""
+    doc = _get_doc(request, pk)
+    DocumentShare.objects.filter(document=doc, shared_with_user_id=user_id).delete()
+    audit(request, "unshare", f"{doc.filename} (user {user_id})")
+    return Response(status=204)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def shared_with_me(request):
+    """Documents from OTHER companies that were shared with the current user."""
+    shares = (
+        DocumentShare.objects.filter(shared_with_user=request.user)
+        .select_related("document", "document__company", "shared_by")
+        .order_by("-created_at")
+    )
+    out = []
+    for s in shares:
+        data = DocumentSerializer(s.document).data
+        data["shared_by"] = s.shared_by.email if s.shared_by else None
+        data["can_download"] = s.can_download
+        out.append(data)
+    return Response(out)
+
+
+# --------------------------------------------------------- LLM provider config
+@api_view(["GET", "PUT"])
+@permission_classes([IsAdmin])
+def llm_config(request):
+    """Read or update the platform LLM settings (provider, model, API key, ...).
+
+    Note: this is a global platform setting, not tenant-scoped — one shared model
+    serves every company; isolation happens at retrieval, not at the model. In
+    production restrict this to a platform operator and keep keys in .env."""
+    cfg = LLMConfig.load()
+    if request.method == "GET":
+        return Response(LLMConfigSerializer(cfg).data)
+    s = LLMConfigSerializer(cfg, data=request.data, partial=True)
+    s.is_valid(raise_exception=True)
+    s.save()
+    audit(request, "llm_config", f"provider={cfg.provider} model={cfg.chat_model}")
+    return Response(LLMConfigSerializer(cfg).data)
+
+
+@api_view(["POST"])
+@permission_classes([IsAdmin])
+def llm_test(request):
+    """Ping the currently-configured provider with a tiny prompt to prove it works."""
+    prov = providers.get_chat_provider()
+    if not prov.available():
+        return Response({"ok": False, "provider": prov.label, "model": prov.chat_model,
+                         "detail": "Not reachable / no API key set."})
+    try:
+        out = "".join(prov.stream_chat(
+            [{"role": "system", "content": "Reply with exactly one word: pong."},
+             {"role": "user", "content": "ping"}],
+            temperature=0.0, max_tokens=16,
+        ))
+        return Response({"ok": True, "provider": prov.label, "model": prov.chat_model,
+                         "sample": out.strip()[:120]})
+    except Exception as e:
+        return Response({"ok": False, "provider": prov.label, "model": prov.chat_model,
+                         "detail": str(e)[:200]})

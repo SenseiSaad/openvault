@@ -8,8 +8,6 @@ chunks are ALWAYS injected into context regardless of the question.
 import io
 import json
 import re
-import urllib.error
-import urllib.request
 
 from django.conf import settings
 
@@ -19,6 +17,7 @@ except ImportError:  # numpy only needed for embedding similarity; keyword searc
     np = None
 
 from .models import Chunk, Document
+from . import providers
 
 # ---------------------------------------------------------------- extraction
 def extract_text(raw: bytes, filename: str, content_type: str) -> str:
@@ -74,52 +73,24 @@ def chunk_text(text: str, size: int = 900, overlap: int = 150) -> list[str]:
         chunks.append(buf)
     return chunks
 
-# ------------------------------------------------------------------ ollama io
-def _ollama(path: str) -> str:
-    return f"{settings.LLM_URL}{path}"
-
-
-def _http_json(path: str, payload: dict | None = None, timeout: float = 30.0):
-    """Small stdlib HTTP helper (GET when payload is None, else POST JSON)."""
-    data = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(
-        _ollama(path),
-        data=data,
-        headers={"Content-Type": "application/json"} if data else {},
-        method="POST" if data else "GET",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
-
-
+# ---------------------------------------------------------- provider-backed io
 def llm_available() -> bool:
-    """Is the model server reachable? Used for the UI status dot."""
-    try:
-        _http_json("/api/tags", timeout=2.0)
-        return True
-    except Exception:
-        return False
+    """Is the active chat provider reachable / configured? (UI status dot)."""
+    return providers.get_chat_provider().available()
 
 
 def embed(texts: list[str]) -> list | None:
-    """Embed a batch of texts. Returns None if embeddings are unavailable."""
-    if np is None:
-        return None
-    vecs = []
-    try:
-        for t in texts:
-            resp = _http_json("/api/embeddings", {"model": settings.EMBED_MODEL, "prompt": t})
-            vecs.append(np.asarray(resp["embedding"], dtype=np.float32))
-        return vecs
-    except Exception:
-        return None
+    """Embed a batch of texts via the embedding provider (None => keyword search)."""
+    return providers.get_embed_provider().embed(texts)
 
 
 def _to_bytes(vec) -> bytes:
+    """Pack an embedding vector into float32 bytes for BinaryField storage."""
     return vec.astype(np.float32).tobytes()
 
 
 def _from_bytes(blob: bytes):
+    """Unpack stored float32 bytes back into a numpy vector."""
     return np.frombuffer(blob, dtype=np.float32)
 
 # -------------------------------------------------------------- index / store
@@ -146,6 +117,8 @@ def index_document(doc: Document, raw: bytes) -> int:
 
 
 def _keyword_score(query: str, text: str) -> float:
+    """Term-frequency relevance used when embeddings are unavailable.
+    Counts query-word hits, normalised by text length so long chunks don't win."""
     terms = {w for w in re.findall(r"\w+", query.lower()) if len(w) > 2}
     if not terms:
         return 0.0
@@ -153,21 +126,37 @@ def _keyword_score(query: str, text: str) -> float:
     return sum(low.count(t) for t in terms) / (len(text) + 1)
 
 # ------------------------------------------------------------------- retrieve
-def retrieve(company, question: str, k: int | None = None) -> list[Chunk]:
-    """Return the top-k relevant chunks for a company.
+def accessible_doc_ids(user) -> set:
+    """Documents this user may use in chat: their OWN company's documents PLUS
+    any specific document explicitly shared with them (DocumentShare)."""
+    from .models import DocumentShare
+    ids = set()
+    if getattr(user, "company_id", None):
+        ids |= set(Document.objects.filter(company_id=user.company_id).values_list("id", flat=True))
+    ids |= set(DocumentShare.objects.filter(shared_with_user=user).values_list("document_id", flat=True))
+    return ids
 
-    OKF chunks (from documents flagged is_okf) are ALWAYS prepended so curated
-    notes and exceptions are guaranteed to reach the model. The remaining slots
-    are filled by cosine similarity when embeddings exist, else keyword search.
+
+def retrieve(user, question: str, k: int | None = None) -> list[Chunk]:
+    """Return the top-k relevant chunks the user is allowed to see.
+
+    The allowed set is user-scoped (own company + shared documents), which is
+    the isolation boundary. OKF chunks are ALWAYS prepended so curated notes and
+    exceptions reach the model. Remaining slots use cosine similarity when
+    embeddings exist, else keyword search.
     """
     k = k or settings.TOP_K
+    ids = accessible_doc_ids(user)
+    if not ids:
+        return []
     okf = list(
-        Chunk.objects.filter(company=company, document__is_okf=True).select_related("document")[:k]
+        Chunk.objects.filter(document_id__in=ids, document__is_okf=True)
+        .select_related("document")[:k]
     )
     okf_ids = {c.id for c in okf}
 
     pool = list(
-        Chunk.objects.filter(company=company)
+        Chunk.objects.filter(document_id__in=ids)
         .exclude(id__in=okf_ids)
         .select_related("document")
     )
@@ -210,6 +199,8 @@ SYSTEM_PROMPT = (
 
 
 def build_messages(chunks: list[Chunk], question: str) -> list[dict]:
+    """Assemble the system + user messages: retrieved chunks become the CONTEXT
+    block, tagged by document name (or OKF), with fences neutralised."""
     blocks = []
     for c in chunks:
         tag = "OKF" if c.document.is_okf else c.document.filename
@@ -224,22 +215,25 @@ def build_messages(chunks: list[Chunk], question: str) -> list[dict]:
     ]
 
 # --------------------------------------------------------------- streaming
-def stream_answer(company, question: str):
+def stream_answer(user, question: str):
     """Yield NDJSON lines: source list first, then token deltas, then done.
 
     Each yielded line is a JSON object + newline so the frontend can read it
-    incrementally from a ReadableStream.
+    incrementally from a ReadableStream. Works with whichever provider is active
+    (local Ollama or a third-party API) — see providers.get_chat_provider().
     """
-    chunks = retrieve(company, question)
+    chunks = retrieve(user, question)
     sources = sorted({c.document.filename for c in chunks})
     yield json.dumps({"type": "sources", "sources": sources}) + "\n"
 
-    if not llm_available():
+    chat = providers.get_chat_provider()
+    if not chat.available():
         yield json.dumps({
             "type": "error",
             "message": (
-                "The AI model is offline right now. Start it with `ollama serve` "
-                "and pull the model, or point LLM_URL at your cloud instance. "
+                f"The '{chat.label}' model is not reachable. For local use start it "
+                "with `ollama serve` and pull the model; for an API provider set the "
+                "key on the Settings page. "
                 f"(Retrieved {len(chunks)} relevant passages.)"
             ),
         }) + "\n"
@@ -247,26 +241,9 @@ def stream_answer(company, question: str):
 
     messages = build_messages(chunks, question)
     try:
-        body = json.dumps(
-            {"model": settings.LLM_MODEL, "messages": messages, "stream": True}
-        ).encode()
-        req = urllib.request.Request(
-            _ollama("/api/chat"),
-            data=body,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=None) as r:
-            for raw in r:  # response is a file-like object; yields one line at a time
-                raw = raw.strip()
-                if not raw:
-                    continue
-                data = json.loads(raw)
-                tok = data.get("message", {}).get("content", "")
-                if tok:
-                    yield json.dumps({"type": "token", "token": tok}) + "\n"
-                if data.get("done"):
-                    break
+        for tok in chat.stream_chat(messages, chat.temperature, chat.max_tokens):
+            if tok:
+                yield json.dumps({"type": "token", "token": tok}) + "\n"
     except Exception as e:
         yield json.dumps({"type": "error", "message": f"Model error: {e}"}) + "\n"
         return
