@@ -1,13 +1,14 @@
 """API endpoints. Function-based DRF views kept deliberately simple and flat.
 
 Multi-tenant rule enforced everywhere: a request only ever touches rows where
-`company == request.user.company`. Public endpoints expose only is_public docs.
+`company == request.user.company`. Document reads additionally pass the
+per-document ACL before metadata, downloads, or RAG retrieval are returned.
 """
 import os
 import uuid
 
 from django.contrib.auth import authenticate
-from django.db.models import F, Q
+from django.db.models import Q
 from django.http import StreamingHttpResponse, Http404, FileResponse
 from django.utils.text import slugify
 from rest_framework import status
@@ -20,12 +21,14 @@ from django.conf import settings
 
 from . import rag
 from . import providers
-from .models import Company, User, Document, Chunk, AuditLog, Favorite, DocumentShare, LLMConfig
+from .models import (
+    Company, User, Document, DocumentAccess, AuditLog, DocumentShare, LLMConfig,
+)
 from .permissions import IsAdmin, IsEditor
 from .serializers import (
-    CompanySerializer, UserSerializer, DocumentSerializer, AuditSerializer,
+    CompanySerializer, CompanyDirectorySerializer, MemberDirectorySerializer,
+    UserSerializer, DocumentSerializer, AuditSerializer,
     RegisterCompanySerializer, LoginSerializer, UserCreateSerializer, AskSerializer,
-    PublicRegisterSerializer, PublicLoginSerializer,
     DocumentShareSerializer, LLMConfigSerializer,
 )
 
@@ -37,7 +40,7 @@ def client_ip(request):
 
 
 def audit(request, action, detail=""):
-    """Write one audit-trail row for the caller's company (no-op for public users)."""
+    """Write one audit-trail row for the caller's company."""
     user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None
     company = getattr(user, "company", None)
     if company is None:
@@ -50,6 +53,48 @@ def audit(request, action, detail=""):
 def token_for(user):
     """Mint a short-lived JWT access token for this user."""
     return str(RefreshToken.for_user(user).access_token)
+
+
+def visible_documents(user):
+    """Return only documents the signed-in user is allowed to read."""
+    if not getattr(user, "company_id", None):
+        return Document.objects.none()
+    return (
+        Document.objects.filter(company_id=user.company_id)
+        .filter(Q(access_scope="company") | Q(access_grants__user=user))
+        .distinct()
+    )
+
+
+def share_target(request):
+    """Resolve a registered target user from a company code + member id.
+
+    The code is required for the new sharing flow. Email remains accepted as a
+    backwards-compatible API path for existing integrations, but the frontend
+    never needs to expose a global email directory.
+    """
+    access_code = (request.data.get("access_code") or "").strip().upper()
+    raw_user_id = request.data.get("user_id")
+    email = (request.data.get("email") or "").strip()
+    company = None
+    if access_code:
+        company = Company.objects.filter(access_code__iexact=access_code).first()
+        if not company:
+            return None, "No registered company uses that access code."
+    try:
+        if raw_user_id is not None:
+            target = User.objects.get(pk=int(raw_user_id), is_active=True)
+        elif email:
+            target = User.objects.get(email__iexact=email, is_active=True)
+        else:
+            return None, "Select a registered company member."
+    except (User.DoesNotExist, TypeError, ValueError):
+        return None, "That registered member could not be found."
+    if company and target.company_id != company.id:
+        return None, "That member does not belong to the selected company."
+    if not target.company_id or target.role == "public":
+        return None, "Only registered enterprise members can receive documents."
+    return target, None
 
 # -------------------------------------------------------------------- auth
 @api_view(["POST"])
@@ -108,46 +153,12 @@ def me(request):
     """Return the signed-in user's own profile (used to hydrate the frontend)."""
     return Response(UserSerializer(request.user).data)
 
-# ------------------------------------------------------- consumer (public) auth
-@api_view(["POST"])
-@permission_classes([AllowAny])
-def public_register(request):
-    """Create a consumer account (username + email + password, no company)."""
-    s = PublicRegisterSerializer(data=request.data)
-    s.is_valid(raise_exception=True)
-    d = s.validated_data
-    if User.objects.filter(username__iexact=d["username"]).exists():
-        return Response({"detail": "Username already taken."}, status=400)
-    if User.objects.filter(email__iexact=d["email"]).exists():
-        return Response({"detail": "Email already registered."}, status=400)
-    user = User.objects.create_user(
-        email=d["email"], password=d["password"],
-        username=d["username"], role="public", company=None,
-    )
-    return Response({"token": token_for(user), "user": UserSerializer(user).data}, status=201)
-
-
-@api_view(["POST"])
-@permission_classes([AllowAny])
-def public_login(request):
-    """Consumers sign in with username + password (manual lookup)."""
-    s = PublicLoginSerializer(data=request.data)
-    s.is_valid(raise_exception=True)
-    d = s.validated_data
-    try:
-        user = User.objects.get(username__iexact=d["username"], role="public")
-    except User.DoesNotExist:
-        return Response({"detail": "Invalid username or password."}, status=401)
-    if not user.is_active or not user.check_password(d["password"]):
-        return Response({"detail": "Invalid username or password."}, status=401)
-    return Response({"token": token_for(user), "user": UserSerializer(user).data})
-
 # --------------------------------------------------------------- documents
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def documents(request):
-    """List this company's documents (tenant-scoped)."""
-    qs = Document.objects.filter(company=request.user.company).order_by("-created_at")
+    """List only documents readable by this member."""
+    qs = visible_documents(request.user).order_by("-created_at")
     return Response(DocumentSerializer(qs, many=True).data)
 
 
@@ -159,7 +170,9 @@ def upload_document(request):
     if not f:
         return Response({"detail": "No file provided."}, status=400)
     is_okf = str(request.data.get("is_okf", "")).lower() in ("1", "true", "yes", "on")
-    is_public = str(request.data.get("is_public", "")).lower() in ("1", "true", "yes", "on")
+    access_scope = (request.data.get("access_scope") or "company").strip().lower()
+    if access_scope not in {"company", "restricted"}:
+        return Response({"detail": "access_scope must be company or restricted."}, status=400)
     category = request.data.get("category") or "Other"
     description = request.data.get("description") or ""
 
@@ -175,32 +188,28 @@ def upload_document(request):
         company=company, filename=f.name, stored_path=stored,
         content_type=f.content_type or "", size=len(raw),
         category=category, description=description,
-        is_public=is_public, is_okf=is_okf, uploaded_by=request.user,
+        is_okf=is_okf, access_scope=access_scope,
+        uploaded_by=request.user,
     )
+    DocumentAccess.objects.create(document=doc, user=request.user)
     n = rag.index_document(doc, raw)
     audit(request, "upload", f"{f.name} ({n} chunks)")
     return Response(DocumentSerializer(doc).data, status=201)
 
 
-@api_view(["POST", "DELETE"])
+@api_view(["DELETE"])
 @permission_classes([IsEditor])
 def document_detail(request, pk):
     doc = _get_doc(request, pk)
-    if request.method == "DELETE":
-        if doc.stored_path and os.path.exists(doc.stored_path):
-            try:
-                os.remove(doc.stored_path)
-            except OSError:
-                pass
-        name = doc.filename
-        doc.delete()
-        audit(request, "delete", name)
-        return Response(status=204)
-    # POST toggles the public flag
-    doc.is_public = not doc.is_public
-    doc.save(update_fields=["is_public"])
-    audit(request, "publish", f"{doc.filename} -> public={doc.is_public}")
-    return Response(DocumentSerializer(doc).data)
+    if doc.stored_path and os.path.exists(doc.stored_path):
+        try:
+            os.remove(doc.stored_path)
+        except OSError:
+            pass
+    name = doc.filename
+    doc.delete()
+    audit(request, "delete", name)
+    return Response(status=204)
 
 
 def _get_doc(request, pk):
@@ -212,24 +221,43 @@ def _get_doc(request, pk):
 
 
 def _accessible_doc(request, pk):
-    """Owner-company OR a document explicitly shared with this user.
-    Used for read + download so cross-company collaborators can reach one file."""
+    """Resolve a document only when its ACL grants this exact user access."""
     try:
         doc = Document.objects.get(pk=pk)
     except Document.DoesNotExist:
         raise Http404
     u = request.user
     if getattr(u, "company_id", None) and doc.company_id == u.company_id:
-        return doc
+        if doc.access_scope == "company" or DocumentAccess.objects.filter(document=doc, user=u).exists():
+            return doc
     if DocumentShare.objects.filter(document=doc, shared_with_user=u).exists():
         return doc
+    if DocumentAccess.objects.filter(document=doc, user=u).exists():
+        return doc
     raise Http404
+
+
+def _can_download(request, doc):
+    """Enforce download permission server-side, not just in the UI."""
+    u = request.user
+    if doc.company_id == getattr(u, "company_id", None):
+        if doc.access_scope == "company":
+            return True
+        grant = DocumentAccess.objects.filter(document=doc, user=u).first()
+        return bool(grant and grant.can_download)
+    share = DocumentShare.objects.filter(document=doc, shared_with_user=u).first()
+    if share:
+        return share.can_download
+    grant = DocumentAccess.objects.filter(document=doc, user=u).first()
+    return bool(grant and grant.can_download)
 
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def download_document(request, pk):
     doc = _accessible_doc(request, pk)
+    if not _can_download(request, doc):
+        return Response({"detail": "Download is disabled for this document."}, status=403)
     if not doc.stored_path or not os.path.exists(doc.stored_path):
         raise Http404
     audit(request, "download", doc.filename)
@@ -316,133 +344,29 @@ def audit_log(request):
     qs = AuditLog.objects.filter(company=request.user.company).order_by("-created_at")[:200]
     return Response(AuditSerializer(qs, many=True).data)
 
-# ------------------------------------------------------- public portal (open)
-def _preview(doc, limit=280):
-    """First chunk's text as a short snippet (reuses already-indexed chunks)."""
-    c = Chunk.objects.filter(document=doc).order_by("ord").first()
-    if not c:
-        return ""
-    text = " ".join(c.text.split())
-    return text[:limit] + ("…" if len(text) > limit else "")
-
-
-def _public_card(doc, preview=False):
-    """Shape a document into the trimmed public-portal card (no private fields)."""
-    data = {
-        "id": doc.id, "filename": doc.filename, "size": doc.size,
-        "category": doc.category, "description": doc.description,
-        "downloads": doc.downloads, "company": doc.company.name,
-        "company_slug": doc.company.slug, "created_at": doc.created_at,
-    }
-    if preview:
-        data["preview"] = _preview(doc)
-    return data
-
-
+# --------------------------------------------------------- company directory
 @api_view(["GET"])
-@permission_classes([AllowAny])
-def public_companies(request):
-    """Companies that have published at least one public document."""
-    ids = Document.objects.filter(is_public=True).values_list("company_id", flat=True).distinct()
-    qs = Company.objects.filter(id__in=list(ids)).order_by("name")
-    return Response(CompanySerializer(qs, many=True).data)
-
-
-@api_view(["GET"])
-@permission_classes([AllowAny])
-def public_categories(request):
-    """Distinct categories among public documents, with counts."""
-    from django.db.models import Count
-    rows = (
-        Document.objects.filter(is_public=True)
-        .values("category").annotate(count=Count("id")).order_by("-count")
-    )
-    return Response([{"name": r["category"], "count": r["count"]} for r in rows])
-
-
-@api_view(["GET"])
-@permission_classes([AllowAny])
-def public_documents(request):
-    """Public documents with search + filters. No sign-in required.
-
-    Query params: ?q= (filename/description/company), ?company=<slug>,
-    ?category=<name>, ?sort=recent|popular.
-    """
-    qs = Document.objects.filter(is_public=True).select_related("company")
-
-    q = (request.query_params.get("q") or "").strip()
-    if q:
-        qs = qs.filter(
-            Q(filename__icontains=q) | Q(description__icontains=q)
-            | Q(company__name__icontains=q) | Q(category__icontains=q)
-        )
-    slug = request.query_params.get("company")
-    if slug:
-        qs = qs.filter(company__slug=slug)
-    category = request.query_params.get("category")
-    if category:
-        qs = qs.filter(category=category)
-
-    sort = request.query_params.get("sort")
-    qs = qs.order_by("-downloads", "-created_at") if sort == "popular" else qs.order_by("-created_at")
-
-    return Response([_public_card(d, preview=True) for d in qs])
-
-
-@api_view(["GET"])
-@permission_classes([AllowAny])
-def public_document_detail(request, pk):
-    """Single public document: metadata + a text preview."""
-    try:
-        doc = Document.objects.select_related("company").get(pk=pk, is_public=True)
-    except Document.DoesNotExist:
-        raise Http404
-    data = _public_card(doc, preview=True)
-    data["preview"] = _preview(doc, limit=2000)
-    if request.user and request.user.is_authenticated:
-        data["favorited"] = Favorite.objects.filter(user=request.user, document=doc).exists()
-    return Response(data)
+@permission_classes([IsAuthenticated])
+def company_search(request):
+    """Find a registered company by its short share code."""
+    code = (request.query_params.get("code") or "").strip().upper()
+    if not code:
+        return Response({"detail": "Enter a company access code."}, status=400)
+    company = Company.objects.filter(access_code__iexact=code).first()
+    if not company:
+        return Response({"detail": "No registered company uses that access code."}, status=404)
+    return Response(CompanyDirectorySerializer(company).data)
 
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
-def public_download(request, pk):
-    """Download a public document. Requires an account; bumps the popularity counter."""
-    try:
-        doc = Document.objects.get(pk=pk, is_public=True)
-    except Document.DoesNotExist:
-        raise Http404
-    if not doc.stored_path or not os.path.exists(doc.stored_path):
-        raise Http404
-    Document.objects.filter(pk=doc.pk).update(downloads=F("downloads") + 1)
-    return FileResponse(open(doc.stored_path, "rb"), as_attachment=True, filename=doc.filename)
-
-
-# ---------------------------------------------------------------- favourites
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def favorites(request):
-    """The current user's saved public documents."""
-    qs = (
-        Favorite.objects.filter(user=request.user)
-        .select_related("document", "document__company").order_by("-created_at")
-    )
-    return Response([_public_card(f.document, preview=True) for f in qs])
-
-
-@api_view(["POST", "DELETE"])
-@permission_classes([IsAuthenticated])
-def favorite_detail(request, pk):
-    """Add (POST) or remove (DELETE) a public document from favourites."""
-    try:
-        doc = Document.objects.get(pk=pk, is_public=True)
-    except Document.DoesNotExist:
-        raise Http404
-    if request.method == "DELETE":
-        Favorite.objects.filter(user=request.user, document=doc).delete()
-        return Response(status=204)
-    Favorite.objects.get_or_create(user=request.user, document=doc)
-    return Response({"favorited": True}, status=201)
+def company_members(request, access_code):
+    """List selectable enterprise members for a company found by access code."""
+    company = Company.objects.filter(access_code__iexact=access_code.strip()).first()
+    if not company:
+        return Response({"detail": "No registered company uses that access code."}, status=404)
+    users = User.objects.filter(company=company, is_active=True).exclude(role="public").order_by("full_name", "email")
+    return Response(MemberDirectorySerializer(users, many=True).data)
 
 
 # ------------------------------------------------- cross-company collaboration
@@ -458,20 +382,23 @@ def document_shares(request, pk):
         )
         return Response(DocumentShareSerializer(shares, many=True).data)
 
-    email = (request.data.get("email") or "").strip()
-    if not email:
-        return Response({"detail": "Email is required."}, status=400)
-    try:
-        target = User.objects.get(email__iexact=email)
-    except User.DoesNotExist:
-        return Response({"detail": "No user with that email."}, status=404)
-    if getattr(target, "company_id", None) and target.company_id == doc.company_id:
-        return Response({"detail": "That user is already in this company."}, status=400)
-    share, _ = DocumentShare.objects.get_or_create(
-        document=doc, shared_with_user=target,
-        defaults={"shared_by": request.user, "can_download": True},
+    target, error = share_target(request)
+    if error:
+        return Response({"detail": error}, status=400)
+    can_download_raw = request.data.get("can_download", True)
+    can_download = can_download_raw if isinstance(can_download_raw, bool) else str(can_download_raw).lower() in ("1", "true", "yes", "on")
+    access, _ = DocumentAccess.objects.update_or_create(
+        document=doc, user=target,
+        defaults={"can_download": can_download},
     )
-    audit(request, "share", f"{doc.filename} -> {target.email}")
+    share, _ = DocumentShare.objects.update_or_create(
+        document=doc, shared_with_user=target,
+        defaults={
+            "shared_by": request.user,
+            "can_download": access.can_download,
+        },
+    )
+    audit(request, "share", f"{doc.filename} -> {target.email} ({target.company.name})")
     return Response(DocumentShareSerializer(share).data, status=201)
 
 
@@ -481,6 +408,7 @@ def document_share_detail(request, pk, user_id):
     """Revoke one user's access to a document."""
     doc = _get_doc(request, pk)
     DocumentShare.objects.filter(document=doc, shared_with_user_id=user_id).delete()
+    DocumentAccess.objects.filter(document=doc, user_id=user_id).delete()
     audit(request, "unshare", f"{doc.filename} (user {user_id})")
     return Response(status=204)
 
@@ -491,6 +419,7 @@ def shared_with_me(request):
     """Documents from OTHER companies that were shared with the current user."""
     shares = (
         DocumentShare.objects.filter(shared_with_user=request.user)
+        .exclude(document__company=request.user.company)
         .select_related("document", "document__company", "shared_by")
         .order_by("-created_at")
     )

@@ -6,25 +6,20 @@ import { useState } from 'react'
 import { ArrowRight, Menu, X } from 'lucide-react'
 import { useAuth } from '@/lib/auth'
 import { Logo } from './logo'
-import { AuthDialog } from './auth-dialog'
 
 const NAV = [
-  { href: '/discover', label: 'Discover' },
-  { href: '/publishers', label: 'Publishers' },
   { href: '/about', label: 'About' },
-  { href: '/help', label: 'Help' },
-  { href: '/policy', label: 'Policy' },
+  { href: '/help', label: 'How it works' },
+  { href: '/policy', label: 'Privacy & security' },
 ]
 
-// Shared top navigation for every public page. Auth-aware: shows sign-in
-// actions for guests, and the account + workspace shortcuts once signed in.
+// Public navigation is intentionally product/education only. There is no
+// consumer library, free account, or browse experience anymore.
 export function SiteHeader() {
-  const { user, isEnterprise, logout } = useAuth()
+  const { user, logout } = useAuth()
   const pathname = usePathname()
-  const [authOpen, setAuthOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const active = (href: string) => pathname === href || pathname.startsWith(href + '/')
-  const displayName = user?.username || user?.full_name || user?.email
 
   return (
     <>
@@ -40,17 +35,14 @@ export function SiteHeader() {
         <div className="flex items-center gap-2">
           {user ? (
             <>
-              {isEnterprise && (
-                <Link href="/workspace" className="hidden rounded-full px-4 py-2 text-sm text-[#65645f] hover:bg-white md:block">Workspace</Link>
-              )}
-              <Link href="/favorites" className="hidden rounded-full px-4 py-2 text-sm text-[#65645f] hover:bg-white md:block">Favourites</Link>
-              <span className="hidden max-w-[12ch] truncate text-sm text-[#65645f] lg:block">Hi, {displayName}</span>
+              <Link href="/workspace" className="hidden rounded-full px-4 py-2 text-sm text-[#65645f] hover:bg-white md:block">Open dashboard</Link>
+              <span className="hidden max-w-[18ch] truncate text-sm text-[#65645f] lg:block">{user.full_name || user.email}</span>
               <button onClick={logout} className="rounded-full bg-[#1d1d1b] px-5 py-2.5 text-sm text-white hover:bg-[#3c3b37]">Log out</button>
             </>
           ) : (
             <>
-              <button onClick={() => setAuthOpen(true)} className="hidden rounded-full px-4 py-2 text-sm text-[#65645f] hover:bg-white md:block">Log in</button>
-              <button onClick={() => setAuthOpen(true)} className="rounded-full bg-[#1d1d1b] px-5 py-2.5 text-sm text-white hover:bg-[#3c3b37]">Join OpenVault <ArrowRight className="ml-1 inline size-3.5" /></button>
+              <Link href="/enterprise?role=employee" className="hidden rounded-full px-4 py-2 text-sm text-[#65645f] hover:bg-white md:block">Log in</Link>
+              <Link href="/enterprise?tab=create" className="rounded-full bg-[#1d1d1b] px-5 py-2.5 text-sm text-white hover:bg-[#3c3b37]">Get Started <ArrowRight className="ml-1 inline size-3.5" /></Link>
             </>
           )}
           <button onClick={() => setMenuOpen(!menuOpen)} className="ml-1 grid size-10 place-items-center rounded-full border border-[#deddd8] md:hidden" aria-label="Toggle menu" aria-expanded={menuOpen}>
@@ -67,17 +59,18 @@ export function SiteHeader() {
           <div className="h-px bg-[#eae7df]" />
           {user ? (
             <>
-              {isEnterprise && <Link href="/workspace" onClick={() => setMenuOpen(false)}>Workspace</Link>}
-              <Link href="/favorites" onClick={() => setMenuOpen(false)}>Favourites</Link>
+              <Link href="/workspace" onClick={() => setMenuOpen(false)}>Open dashboard</Link>
               <button className="text-left text-[#9a3b2c]" onClick={() => { logout(); setMenuOpen(false) }}>Log out</button>
             </>
           ) : (
-            <button className="text-left font-medium" onClick={() => { setAuthOpen(true); setMenuOpen(false) }}>Log in / Join OpenVault</button>
+            <>
+              <Link href="/enterprise?role=employee" onClick={() => setMenuOpen(false)}>Log in</Link>
+              <Link href="/enterprise?tab=create" onClick={() => setMenuOpen(false)}>Get Started</Link>
+            </>
           )}
         </div>
       )}
 
-      {authOpen && <AuthDialog onClose={() => setAuthOpen(false)} />}
     </>
   )
 }

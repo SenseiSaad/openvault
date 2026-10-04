@@ -10,6 +10,7 @@ import json
 import re
 
 from django.conf import settings
+from django.db.models import Q
 
 try:
     import numpy as np
@@ -129,10 +130,15 @@ def _keyword_score(query: str, text: str) -> float:
 def accessible_doc_ids(user) -> set:
     """Documents this user may use in chat: their OWN company's documents PLUS
     any specific document explicitly shared with them (DocumentShare)."""
-    from .models import DocumentShare
+    from .models import DocumentAccess, DocumentShare
     ids = set()
     if getattr(user, "company_id", None):
-        ids |= set(Document.objects.filter(company_id=user.company_id).values_list("id", flat=True))
+        ids |= set(
+            Document.objects.filter(company_id=user.company_id)
+            .filter(Q(access_scope="company") | Q(access_grants__user=user))
+            .values_list("id", flat=True)
+        )
+    ids |= set(DocumentAccess.objects.filter(user=user).values_list("document_id", flat=True))
     ids |= set(DocumentShare.objects.filter(shared_with_user=user).values_list("document_id", flat=True))
     return ids
 

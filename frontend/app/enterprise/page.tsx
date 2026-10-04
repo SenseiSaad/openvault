@@ -89,10 +89,10 @@ function EnterpriseInner() {
       <header className="mx-auto flex max-w-6xl items-center justify-between">
         <Logo />
         <Link
-          href="/auth"
+          href="/"
           className="rounded-full text-sm text-[#77746c] transition-colors hover:text-[#1d1d1b] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1d1d1b]/40"
         >
-          Personal login
+Back to landing
         </Link>
       </header>
 
