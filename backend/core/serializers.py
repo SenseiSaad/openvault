@@ -10,6 +10,22 @@ class CompanySerializer(serializers.ModelSerializer):
         fields = ["id", "name", "slug"]
 
 
+class CompanyDirectorySerializer(serializers.ModelSerializer):
+    """Minimal registered-company record used by the sharing directory."""
+    member_count = serializers.IntegerField(source="users.count", read_only=True)
+
+    class Meta:
+        model = Company
+        fields = ["id", "name", "access_code", "member_count"]
+
+
+class MemberDirectorySerializer(serializers.ModelSerializer):
+    """Safe member identity fields for a company selected by access code."""
+    class Meta:
+        model = User
+        fields = ["id", "email", "full_name", "title", "role"]
+
+
 class CompanyProfileSerializer(serializers.ModelSerializer):
     """Fuller company view for the company's OWN authenticated members (workspace).
 
@@ -18,7 +34,7 @@ class CompanyProfileSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = Company
-        fields = ["id", "name", "slug", "website", "contact_email", "phone",
+        fields = ["id", "name", "slug", "access_code", "website", "contact_email", "phone",
                   "max_employees"]
 
 
@@ -40,7 +56,7 @@ class DocumentSerializer(serializers.ModelSerializer):
         model = Document
         fields = [
             "id", "filename", "content_type", "size", "category", "description",
-            "downloads", "is_public", "is_okf", "num_chunks", "created_at",
+            "downloads", "is_okf", "num_chunks", "access_scope", "created_at",
             "company_name",
         ]
 
@@ -71,19 +87,6 @@ class LoginSerializer(serializers.Serializer):
     password = serializers.CharField()
 
 
-class PublicRegisterSerializer(serializers.Serializer):
-    """Consumer sign-up: username + email + password."""
-    username = serializers.CharField(min_length=3, max_length=150)
-    email = serializers.EmailField()
-    password = serializers.CharField(min_length=6)
-
-
-class PublicLoginSerializer(serializers.Serializer):
-    """Consumers sign in with username + password (not email)."""
-    username = serializers.CharField()
-    password = serializers.CharField()
-
-
 class UserCreateSerializer(serializers.Serializer):
     full_name = serializers.CharField(required=False, allow_blank=True, default="")
     title = serializers.CharField(required=False, allow_blank=True, default="")
@@ -101,14 +104,19 @@ class DocumentShareSerializer(serializers.ModelSerializer):
     user_id = serializers.IntegerField(source="shared_with_user.id", read_only=True)
     email = serializers.CharField(source="shared_with_user.email", read_only=True)
     full_name = serializers.CharField(source="shared_with_user.full_name", read_only=True)
+    title = serializers.CharField(source="shared_with_user.title", read_only=True)
+    role = serializers.CharField(source="shared_with_user.role", read_only=True)
     company_name = serializers.CharField(
         source="shared_with_user.company.name", read_only=True, default=None
+    )
+    access_code = serializers.CharField(
+        source="shared_with_user.company.access_code", read_only=True, default=None
     )
 
     class Meta:
         model = DocumentShare
-        fields = ["id", "user_id", "email", "full_name", "company_name",
-                  "can_download", "created_at"]
+        fields = ["id", "user_id", "email", "full_name", "title", "role",
+                  "company_name", "access_code", "can_download", "created_at"]
 
 
 class LLMConfigSerializer(serializers.ModelSerializer):

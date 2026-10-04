@@ -130,7 +130,7 @@ export async function askStream(
 }
 
 // ---- Types ---------------------------------------------------------------
-export type Role = 'public' | 'admin' | 'employee' | 'viewer'
+export type Role = 'admin' | 'employee' | 'viewer'
 
 // Common job titles offered in the dropdowns. These are display labels only and
 // do NOT affect permissions (which are governed by Role).
@@ -144,6 +144,7 @@ export interface CompanyProfile {
   id: number
   name: string
   slug: string
+  access_code: string | null
   website: string
   contact_email: string
   phone: string
@@ -170,12 +171,6 @@ export interface AuthResponse {
 export const authApi = {
   me: (): Promise<User> => api.get('/auth/me'),
 
-  // Consumer (public): sign in with USERNAME.
-  publicRegister: (p: { username: string; email: string; password: string }): Promise<AuthResponse> =>
-    api.post('/public/register', p),
-  publicLogin: (p: { username: string; password: string }): Promise<AuthResponse> =>
-    api.post('/public/login', p),
-
   // Enterprise: sign in with EMAIL.
   enterpriseLogin: (p: { email: string; password: string }): Promise<AuthResponse> =>
     api.post('/auth/login', p),
@@ -192,81 +187,31 @@ export const authApi = {
   }): Promise<AuthResponse> => api.post('/auth/register', p),
 }
 
-// ---- Public documents / browse ------------------------------------------
-export interface DocCard {
-  id: number
-  filename: string
-  size: number
-  category: string
-  description: string
-  downloads: number
-  company: string
-  company_slug: string
-  created_at: string
-  preview?: string
-  favorited?: boolean
-}
-
-export interface Category {
-  name: string
-  count: number
-}
-
-export interface Company {
+// ---- Registered-company directory ---------------------------------------
+export interface CompanyDirectory {
   id: number
   name: string
-  slug: string
+  access_code: string
+  member_count: number
 }
 
-export interface BrowseParams {
-  q?: string
-  category?: string
-  company?: string // slug
-  sort?: 'recent' | 'popular'
+export interface MemberDirectory {
+  id: number
+  email: string
+  full_name: string
+  title: string
+  role: Role
 }
 
-function qs(params: BrowseParams): string {
-  const sp = new URLSearchParams()
-  if (params.q) sp.set('q', params.q)
-  if (params.category) sp.set('category', params.category)
-  if (params.company) sp.set('company', params.company)
-  if (params.sort) sp.set('sort', params.sort)
-  const s = sp.toString()
-  return s ? `?${s}` : ''
-}
-
-export const docsApi = {
-  list: (params: BrowseParams = {}): Promise<DocCard[]> =>
-    api.get(`/public/documents${qs(params)}`),
-  detail: (id: number | string): Promise<DocCard> => api.get(`/public/documents/${id}`),
-  categories: (): Promise<Category[]> => api.get('/public/categories'),
-  companies: (): Promise<Company[]> => api.get('/public/companies'),
-  favorites: (): Promise<DocCard[]> => api.get('/favorites'),
-  addFavorite: (id: number): Promise<{ favorited: boolean }> => api.post(`/favorites/${id}`),
-  removeFavorite: (id: number): Promise<null> => api.del(`/favorites/${id}`),
-}
-
-// Authenticated file download: fetch with the bearer token, then trigger a
-// browser "save" so the gated endpoint's Authorization header is sent.
-export async function downloadDocument(id: number, filename: string) {
-  const res = await fetch(`${API_BASE}/api/public/documents/${id}/download`, {
-    headers: authHeaders(),
-  })
-  if (!res.ok) throw new Error(`Download failed (${res.status})`)
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename || 'document'
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
+export const companyApi = {
+  search: (accessCode: string): Promise<CompanyDirectory> =>
+    api.get(`/companies/search?code=${encodeURIComponent(accessCode)}`),
+  members: (accessCode: string): Promise<MemberDirectory[]> =>
+    api.get(`/companies/${encodeURIComponent(accessCode)}/members`),
 }
 
 // ---- Enterprise workspace (authenticated, tenant-scoped) -----------------
-// Full document objects for the caller's OWN company; includes private docs
-// (is_public=false), unlike the public portal. Shape = DocumentSerializer.
+// Full document objects permitted for the current enterprise member.
 export interface EnterpriseDoc {
   id: number
   filename: string
@@ -275,8 +220,8 @@ export interface EnterpriseDoc {
   category: string
   description: string
   downloads: number
-  is_public: boolean
   is_okf: boolean
+  access_scope: 'company' | 'restricted'
   num_chunks: number
   created_at: string
   company_name?: string
@@ -311,7 +256,10 @@ export interface DocumentShareRow {
   user_id: number
   email: string
   full_name: string
+  title: string
+  role: Role
   company_name: string | null
+  access_code: string | null
   can_download: boolean
   created_at: string
 }
@@ -352,15 +300,14 @@ export interface NewUser {
   title?: string
   email: string
   password: string
-  role: Exclude<Role, 'public'>
+  role: Role
 }
 
-// Company documents. list/download work for any member; upload, the
-// publish/unpublish toggle and delete require an editor (admin or employee).
+// Company documents. Access is filtered server-side; upload/delete/share
+// require an editor (admin or employee).
 export const workApi = {
   documents: (): Promise<EnterpriseDoc[]> => api.get('/documents'),
   upload: (form: FormData): Promise<EnterpriseDoc> => api.upload('/documents/upload', form),
-  togglePublic: (id: number): Promise<EnterpriseDoc> => api.post(`/documents/${id}`),
   remove: (id: number): Promise<null> => api.del(`/documents/${id}`),
   llmStatus: (): Promise<LlmStatus> => api.get('/llm-status'),
   // Documents other companies shared directly with me (cross-company collab).
@@ -371,8 +318,8 @@ export const workApi = {
 // outside their company, can access one specific document.
 export const shareApi = {
   list: (docId: number): Promise<DocumentShareRow[]> => api.get(`/documents/${docId}/shares`),
-  add: (docId: number, email: string): Promise<DocumentShareRow> =>
-    api.post(`/documents/${docId}/shares`, { email }),
+  add: (docId: number, payload: { access_code: string; user_id: number; can_download?: boolean }): Promise<DocumentShareRow> =>
+    api.post(`/documents/${docId}/shares`, payload),
   remove: (docId: number, userId: number): Promise<null> =>
     api.del(`/documents/${docId}/shares/${userId}`),
 }
@@ -392,8 +339,7 @@ export const adminApi = {
   audit: (): Promise<AuditRow[]> => api.get('/admin/audit'),
 }
 
-// Authenticated download of a company-owned document (public OR private),
-// via the tenant-scoped endpoint (distinct from the public portal one above).
+// Authenticated download of a permitted enterprise document.
 export async function downloadOwnDocument(id: number, filename: string) {
   const res = await fetch(`${API_BASE}/api/documents/${id}/download`, {
     headers: authHeaders(),

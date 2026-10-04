@@ -7,8 +7,6 @@ interface AuthContextValue {
   user: User | null
   loading: boolean // true while restoring the session on first load
   isEnterprise: boolean
-  publicLogin: (username: string, password: string) => Promise<User>
-  publicRegister: (p: { username: string; email: string; password: string }) => Promise<User>
   enterpriseLogin: (email: string, password: string) => Promise<User>
   enterpriseRegister: (p: {
     company_name: string
@@ -49,16 +47,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return res.user
   }, [])
 
-  const publicLogin = useCallback(
-    (username: string, password: string) =>
-      authApi.publicLogin({ username, password }).then(apply),
-    [apply],
-  )
-  const publicRegister = useCallback(
-    (p: { username: string; email: string; password: string }) =>
-      authApi.publicRegister(p).then(apply),
-    [apply],
-  )
   const enterpriseLogin = useCallback(
     (email: string, password: string) => authApi.enterpriseLogin({ email, password }).then(apply),
     [apply],
@@ -87,9 +75,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value={{
         user,
         loading,
-        isEnterprise: !!user && user.role !== 'public',
-        publicLogin,
-        publicRegister,
+        isEnterprise: !!user,
         enterpriseLogin,
         enterpriseRegister,
         logout,

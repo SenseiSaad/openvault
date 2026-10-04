@@ -27,7 +27,6 @@ const ROLE_BADGE: Record<Role, { label: string; cls: string; Icon: LucideIcon }>
   admin: { label: 'Admin', cls: 'border-[#e7ddfb] bg-[#f5f0ff] text-[#6b46c1]', Icon: Shield },
   employee: { label: 'Employee', cls: 'border-[#cfdbf1] bg-[#dfe7f7] text-[#37589c]', Icon: Briefcase },
   viewer: { label: 'Viewer', cls: 'border-[#e2e3e5] bg-[#eef0f2] text-[#6b6a64]', Icon: Eye },
-  public: { label: 'Public', cls: 'border-[#e2e3e5] bg-[#eef0f2] text-[#6b6a64]', Icon: Eye },
 }
 
 const ROLE_OPTIONS: { value: CreatableRole; label: string; desc: string; Icon: LucideIcon }[] = [

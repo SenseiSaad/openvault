@@ -7,9 +7,6 @@ urlpatterns = [
     path("auth/register", views.register_company),
     path("auth/login", views.login),
     path("auth/me", views.me),
-    # consumer (public) auth
-    path("public/register", views.public_register),
-    path("public/login", views.public_login),
     # documents
     path("documents", views.documents),
     path("documents/upload", views.upload_document),
@@ -19,6 +16,9 @@ urlpatterns = [
     path("documents/<int:pk>/shares", views.document_shares),
     path("documents/<int:pk>/shares/<int:user_id>", views.document_share_detail),
     path("shared-with-me", views.shared_with_me),
+    # Registered-company directory used for controlled document sharing.
+    path("companies/search", views.company_search),
+    path("companies/<str:access_code>/members", views.company_members),
     # chat
     path("ask", views.ask),
     path("llm-status", views.llm_status),
@@ -29,13 +29,4 @@ urlpatterns = [
     # LLM provider settings (admin)
     path("admin/llm-config", views.llm_config),
     path("admin/llm-test", views.llm_test),
-    # public portal (browse without auth)
-    path("public/companies", views.public_companies),
-    path("public/categories", views.public_categories),
-    path("public/documents", views.public_documents),
-    path("public/documents/<int:pk>", views.public_document_detail),
-    path("public/documents/<int:pk>/download", views.public_download),
-    # favourites (require an account)
-    path("favorites", views.favorites),
-    path("favorites/<int:pk>", views.favorite_detail),
 ]

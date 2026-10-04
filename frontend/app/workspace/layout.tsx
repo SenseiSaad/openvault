@@ -71,7 +71,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
               <p className="truncate font-medium text-[#1d1d1b]">{user.full_name || user.username || user.email}</p>
               <p className="mt-0.5 capitalize text-[#8c8a83]">{user.role}</p>
               <div className="mt-3 flex flex-col gap-2">
-                <Link href="/" className="text-[#65645f] hover:text-[#1d1d1b]">← Back to library</Link>
+                <Link href="/" className="text-[#65645f] hover:text-[#1d1d1b]">← Back to landing</Link>
                 <button onClick={logout} className="flex items-center gap-1.5 text-[#9a3b2c] hover:opacity-80"><LogOut className="size-3.5" /> Log out</button>
               </div>
             </div>

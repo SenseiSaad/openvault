@@ -6,6 +6,7 @@ import {
   Activity,
   ArrowRight,
   Building2,
+  Check,
   Download,
   FileText,
   Globe,
@@ -15,6 +16,8 @@ import {
   Mail,
   Phone,
   ScrollText,
+  Share2,
+  ShieldCheck,
   Sparkles,
   Users,
   type LucideIcon,
@@ -29,7 +32,7 @@ import {
   type LlmStatus,
   type User,
 } from '@/lib/api'
-import { formatDate, titleFromName } from '@/components/doc-card'
+import { formatDate, titleFromName } from '@/lib/utils'
 
 export default function WorkspaceOverviewPage() {
   const { user } = useAuth()
@@ -83,11 +86,10 @@ export default function WorkspaceOverviewPage() {
 
   const stats = useMemo(() => {
     const total = docs.length
-    const published = docs.filter((d) => d.is_public).length
+    const restricted = docs.filter((d) => d.access_scope === 'restricted').length
     return {
       total,
-      published,
-      hidden: total - published,
+      restricted,
       downloads: docs.reduce((s, d) => s + (d.downloads || 0), 0),
       chunks: docs.reduce((s, d) => s + (d.num_chunks || 0), 0),
     }
@@ -143,20 +145,57 @@ export default function WorkspaceOverviewPage() {
           ) : null}
 
           <section className="mt-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <StatCard icon={FileText} tint="#dfe7f7" label="Total documents" value={stats.total.toLocaleString()} />
-            <StatCard
-              icon={Globe}
-              tint="#e7e2ff"
-              label="Published"
-              value={stats.published.toLocaleString()}
-              hint={`${stats.hidden.toLocaleString()} private`}
-            />
-            <StatCard icon={Download} tint="#fff0d3" label="Total downloads" value={stats.downloads.toLocaleString()} />
-            <StatCard icon={Layers} tint="#dfe7f7" label="Indexed chunks" value={stats.chunks.toLocaleString()} />
-            {isAdmin ? (
-              <StatCard icon={Users} tint="#e7e2ff" label="Team members" value={members.length.toLocaleString()} />
-            ) : null}
+            {[
+              { icon: FileText, tint: '#dfe7f7', label: 'Total documents', value: stats.total.toLocaleString() },
+              { icon: Lock, tint: '#fff0d3', label: 'Restricted files', value: stats.restricted.toLocaleString(), hint: `${(stats.total - stats.restricted).toLocaleString()} company-wide` },
+              { icon: Download, tint: '#fff0d3', label: 'Total downloads', value: stats.downloads.toLocaleString() },
+              { icon: Layers, tint: '#dfe7f7', label: 'Indexed chunks', value: stats.chunks.toLocaleString() },
+              ...(isAdmin ? [{ icon: Users, tint: '#e7e2ff', label: 'Team members', value: members.length.toLocaleString() }] : []),
+            ].map((data, i) => (
+              <StatCard key={data.label} {...data} index={i} />
+            ))}
           </section>
+
+          {isAdmin ? (
+            <section className="mt-6 rounded-3xl border border-[#d6dfef] bg-[#f0f4fb] p-6">
+              <div className="flex items-center gap-3">
+                <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-white shadow-sm">
+                  <ShieldCheck className="size-5 text-[#2b4c7e]" aria-hidden />
+                </span>
+                <h2 className="text-sm font-semibold text-[#1d1d1b]">CPA & Audit Readiness</h2>
+              </div>
+              <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                <div className="flex gap-3">
+                  <Check className="mt-0.5 size-4 shrink-0 text-[#2b4c7e]" />
+                  <div>
+                    <p className="text-sm font-medium text-[#1d1d1b]">Evidence by document</p>
+                    <p className="text-xs text-[#5c7299]">every file is owned by one company</p>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <Check className="mt-0.5 size-4 shrink-0 text-[#2b4c7e]" />
+                  <div>
+                    <p className="text-sm font-medium text-[#1d1d1b]">Role-aware access</p>
+                    <p className="text-xs text-[#5c7299]">restricted files only visible to named people</p>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <Check className="mt-0.5 size-4 shrink-0 text-[#2b4c7e]" />
+                  <div>
+                    <p className="text-sm font-medium text-[#1d1d1b]">Share and revoke logs</p>
+                    <p className="text-xs text-[#5c7299]">every share/unshare is recorded</p>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <Check className="mt-0.5 size-4 shrink-0 text-[#2b4c7e]" />
+                  <div>
+                    <p className="text-sm font-medium text-[#1d1d1b]">Audit-ready activity</p>
+                    <p className="text-xs text-[#5c7299]">complete activity trail for admins</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+          ) : null}
 
           <section className="mt-6 grid gap-6 lg:grid-cols-2">
             <RecentUploads docs={recent} />
@@ -176,7 +215,31 @@ export default function WorkspaceOverviewPage() {
                 href="/workspace/documents"
                 icon={FileText}
                 title="Manage documents"
-                desc="Upload, publish, and organise your company files."
+                desc="Upload files and choose company-wide or named-person access."
+              />
+              <ActionCard
+                href="/workspace/documents"
+                icon={Lock}
+                title="Access controls"
+                desc="Upload files as company-wide or restrict to named people. Even same-company executives cannot view restricted files without explicit access."
+              />
+              <ActionCard
+                href="/workspace/shared"
+                icon={Share2}
+                title="Shared with me"
+                desc="View documents that other companies have specifically shared with you."
+              />
+              <ActionCard
+                href="/workspace/documents"
+                icon={Share2}
+                title="Share with a partner"
+                desc="Use a registered company code to grant one employee access to one file."
+              />
+              <ActionCard
+                href="/workspace/audit"
+                icon={ShieldCheck}
+                title="CPA evidence trail"
+                desc="Review the activity record for uploads, shares, downloads, and member changes."
               />
               {isAdmin ? (
                 <>
@@ -259,6 +322,7 @@ function CompanyCard({
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold text-[#1d1d1b]">{company.name}</h2>
           <p className="mt-0.5 text-xs uppercase tracking-[0.12em] text-[#98958c]">Company profile</p>
+          <p className="mt-2 inline-flex items-center gap-2 rounded-full bg-[#f0ede5] px-3 py-1 text-xs font-semibold tracking-[0.16em] text-[#4f4d47]">Company code <span className="font-mono">{company.access_code || '—'}</span></p>
         </div>
       </div>
 
@@ -308,15 +372,20 @@ function StatCard({
   label,
   value,
   hint,
+  index = 0,
 }: {
   icon: LucideIcon
   tint: string
   label: string
   value: string
   hint?: string
+  index?: number
 }) {
   return (
-    <div className="rounded-[22px] border border-[#dcdad3] bg-[#fffdfa] p-6">
+    <div
+      className="animate-[fade-in-up_0.5s_ease-out_both] rounded-[22px] border border-[#dcdad3] bg-[#fffdfa] p-6"
+      style={{ animationDelay: `${index * 0.1}s` }}
+    >
       <span className="grid size-10 place-items-center rounded-xl" style={{ backgroundColor: tint }}>
         <Icon className="size-5 text-[#20211f]" aria-hidden />
       </span>
@@ -327,15 +396,11 @@ function StatCard({
   )
 }
 
-function VisibilityBadge({ isPublic }: { isPublic: boolean }) {
-  return isPublic ? (
-    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#dfe7f7] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.1em] text-[#2c4a7a]">
-      <Globe className="size-3" aria-hidden /> Public
-    </span>
+function VisibilityBadge({ scope }: { scope: EnterpriseDoc['access_scope'] }) {
+  return scope === 'restricted' ? (
+    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#fff0d3] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.1em] text-[#8a6316]"><Lock className="size-3" aria-hidden /> Restricted</span>
   ) : (
-    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#efece6] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.1em] text-[#77746c]">
-      <Lock className="size-3" aria-hidden /> Private
-    </span>
+    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#e6f1e4] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.1em] text-[#4a7a5a]"><Users className="size-3" aria-hidden /> Company-wide</span>
   )
 }
 
@@ -366,7 +431,7 @@ function RecentUploads({ docs }: { docs: EnterpriseDoc[] }) {
                   <span className="shrink-0">{formatDate(d.created_at)}</span>
                 </p>
               </div>
-              <VisibilityBadge isPublic={d.is_public} />
+              <VisibilityBadge scope={d.access_scope} />
             </li>
           ))}
         </ul>

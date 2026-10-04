@@ -39,6 +39,7 @@ OpenVault/
 ├── backend/           Django 5 API, RAG pipeline, SQLite database
 ├── OpenVault.pptx     Project presentation
 ├── amplify.yml        AWS Amplify build spec for the frontend
+├── run.sh             Start both servers and open them in the browser
 ├── start-dev.sh       Start / stop / restart both local servers
 └── README.md
 ```
@@ -111,8 +112,8 @@ pnpm install          # or: npm install
 cp .env.example .env.local
 cd ..
 
-# 3. Run both
-./start-dev.sh
+# 3. Run both (starts the servers and opens the browser)
+./run.sh
 ```
 
 Then open:
@@ -126,11 +127,17 @@ Then open:
 Useful launcher commands:
 
 ```bash
-./start-dev.sh          # start both (logs in .dev-logs/)
-./start-dev.sh status
-./start-dev.sh stop
-./start-dev.sh restart
+./run.sh                # start both + open the browser (logs in .dev-logs/)
+./run.sh status
+./run.sh stop
+./run.sh restart
+
+./start-dev.sh          # same servers, without opening a browser
 ```
+
+`run.sh` also works around the Linux `Too many open files (os error 24)`
+crash in `next dev`: if the per-user inotify instance limit is exhausted, it
+falls back to webpack with polling file-watching automatically.
 
 To run the servers yourself instead of the script:
 

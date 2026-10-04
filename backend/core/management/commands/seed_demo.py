@@ -1,8 +1,7 @@
-"""Seed rich demo data for the OpenVault public knowledge library.
+"""Seed realistic enterprise tenants and private documents for OpenVault.
 
-Creates a Django superuser, several publisher institutions (companies), their
-admin/employee users, and ~50 realistic public documents spanning 30 subject
-genres (Technology, Biology, Agriculture, Climate, Economics, ...). Each
+Creates a Django superuser, several demo companies, their admin/employee
+users, and representative documents spanning multiple subject genres. Each
 document is written to disk and indexed offline so search + previews work
 without a running LLM.
 
@@ -18,11 +17,11 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from core import rag
-from core.models import Company, User, Document, DocumentShare
+from core.models import Company, User, Document, DocumentAccess, DocumentShare
 
 
-# publisher slug -> (display name, [documents])
-# each document: (filename, category, downloads, days_ago, description, is_public, is_okf, body)
+# company slug -> (display name, [documents])
+# each document: (filename, category, downloads, days_ago, description, legacy_public_flag, is_okf, body)
 DEMO = {
     # ============================================ Tech Press Review
     "techpress": ("Tech Press Review", [
@@ -405,8 +404,8 @@ DEMO = {
 
 
 # Private enterprise tenants for testing ISOLATION + granular COLLABORATION.
-# These are NOT on the public portal (is_public=False). Company A / B / C are
-# placeholders you can fill with your own data. Policy numbers differ on purpose
+# Company A / B / C are private tenants used to demonstrate isolation and
+# person-level sharing. Policy numbers differ on purpose
 # so you can prove one company's HR cannot see another company's answers.
 # each doc: (filename, category, days_ago, description, is_okf, body)
 ENTERPRISE = {
@@ -496,7 +495,7 @@ ENTERPRISE = {
 
 
 class Command(BaseCommand):
-    help = "Seed demo publishers, users and public knowledge-library documents"
+    help = "Seed private enterprise tenants, users and controlled-sharing demos"
 
     def _doc(self, company, uploader, spec):
         (name, category, downloads, days_ago, desc, is_public, is_okf, body) = spec
@@ -510,13 +509,14 @@ class Command(BaseCommand):
             defaults=dict(
                 stored_path=stored, content_type="text/markdown", size=len(raw),
                 category=category, description=desc, downloads=downloads,
-                is_public=is_public, is_okf=is_okf, uploaded_by=uploader,
+                is_okf=is_okf, uploaded_by=uploader,
             ),
         )
         if created:
             with open(stored, "wb") as out:
                 out.write(raw)
             rag.index_document(doc, raw)
+            DocumentAccess.objects.get_or_create(document=doc, user=uploader)
             # backdate created_at (auto_now_add ignores assignment, so update directly)
             Document.objects.filter(pk=doc.pk).update(
                 created_at=timezone.now() - timedelta(days=days_ago)
@@ -555,8 +555,8 @@ class Command(BaseCommand):
             staff.save()
 
         # ---- Private enterprise tenants (data ISOLATION + COLLABORATION demo) ----
-        # Company A / B / C are NOT on the public portal. Each gets an admin, an
-        # HR persona (role "employee") and a read-only viewer, all password demo1234.
+        # Each tenant gets an admin, an HR persona (role "employee") and a
+        # read-only viewer, all password demo1234.
         ent_users = {}  # slug -> {"admin": u, "hr": u, "viewer": u}
         for slug, (name, docs) in ENTERPRISE.items():
             company, _ = Company.objects.get_or_create(slug=slug, defaults={"name": name})
@@ -583,7 +583,11 @@ class Command(BaseCommand):
             vendor_doc = Document.objects.get(
                 company__slug="company-c", filename="Vendor Security Requirements.md",
             )
-            DocumentShare.objects.get_or_create(
+            vendor_doc.access_scope = "restricted"
+            vendor_doc.save(update_fields=["access_scope"])
+            DocumentAccess.objects.get_or_create(document=vendor_doc, user=ent_users["company-c"]["admin"])
+            DocumentAccess.objects.get_or_create(document=vendor_doc, user=ent_users["company-a"]["hr"])
+            DocumentShare.objects.update_or_create(
                 document=vendor_doc,
                 shared_with_user=ent_users["company-a"]["hr"],
                 defaults=dict(shared_by=ent_users["company-c"]["admin"], can_download=True),
@@ -592,10 +596,9 @@ class Command(BaseCommand):
             pass
 
         self.stdout.write(self.style.SUCCESS(
-            f">> Seeded {Company.objects.count()} companies, "
-            f"{Document.objects.filter(is_public=True).count()} public docs "
-            f"({new_docs} new) across "
-            f"{Document.objects.filter(is_public=True).values('category').distinct().count()} genres."
+            f">> Seeded {Company.objects.count()} companies and "
+            f"{Document.objects.count()} private documents ({new_docs} new) across "
+            f"{Document.objects.values('category').distinct().count()} categories."
         ))
         self.stdout.write(
             "   Public/enterprise publisher login: admin@openscience.com / demo1234\n"

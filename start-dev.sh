@@ -15,6 +15,14 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+export VOLTA_HOME="$HOME/.volta"
+[ -s "$VOLTA_HOME/bin" ] && export PATH="$VOLTA_HOME/bin:$PATH"
+if [ -s "$HOME/.local/share/fnm/fnm" ]; then
+  export PATH="$HOME/.local/share/fnm:$PATH"
+  eval "$($HOME/.local/share/fnm/fnm env)"
+fi
 BACKEND_DIR="$ROOT/backend"
 FRONTEND_DIR="$ROOT/frontend"
 LOG_DIR="$ROOT/.dev-logs"

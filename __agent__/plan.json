@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "items": [
+    {
+      "title": "Inspect the existing app structure and user flows",
+      "status": "done"
+    },
+    {
+      "title": "Remove public/free-user browsing and build the landing/auth entry flow",
+      "status": "done"
+    },
+    {
+      "title": "Implement secure cross-company document sharing and role-based visibility",
+      "status": "in-progress"
+    },
+    {
+      "title": "Enhance employer dashboards and add CPA-related content",
+      "status": "pending"
+    },
+    {
+      "title": "Run tests/build checks and summarize the changes",
+      "status": "pending"
+    }
+  ],
+  "updated_at": "2026-10-02T05:55:08.717Z",
+  "session_id": "01a0fb10-fb13-729e-93f8-7d75c9673497"
+}

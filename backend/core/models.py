@@ -1,9 +1,20 @@
 """Database tables. Every tenant-owned row carries `company` — that FK is the
 backbone of multi-tenant isolation (one company can never see another's data)."""
+import secrets
+import string
+
 from django.contrib.auth.models import (
     AbstractBaseUser, BaseUserManager, PermissionsMixin,
 )
 from django.db import models
+
+
+_COMPANY_CODE_ALPHABET = string.ascii_uppercase + string.digits
+
+
+def generate_company_code():
+    """Return a short, human-shareable identifier unique to one company."""
+    return "".join(secrets.choice(_COMPANY_CODE_ALPHABET) for _ in range(5))
 
 
 class Company(models.Model):
@@ -11,6 +22,10 @@ class Company(models.Model):
     and queries always filter by it, so tenants stay fully isolated."""
     name = models.CharField(max_length=200)
     slug = models.SlugField(unique=True)
+    # Short identifier shown to admins and used for cross-company lookup.
+    # It is intentionally not derived from the company name, so it is safe to
+    # share without exposing a predictable tenant URL.
+    access_code = models.CharField(max_length=5, unique=True, null=True, blank=True)
     # --- optional company profile (collected at registration, shown in the workspace) ---
     website = models.CharField(max_length=200, blank=True, default="")
     contact_email = models.EmailField(blank=True, default="")
@@ -19,6 +34,17 @@ class Company(models.Model):
     # add more members than this (enforced in the users() view, never crashes).
     max_employees = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        if not self.access_code:
+            # The collision loop also covers the very small chance of a code
+            # collision during imports or local demo seeding.
+            while True:
+                code = generate_company_code()
+                if not type(self).objects.filter(access_code=code).exclude(pk=self.pk).exists():
+                    self.access_code = code
+                    break
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.name
@@ -43,18 +69,17 @@ class UserManager(BaseUserManager):
 
 
 class User(AbstractBaseUser, PermissionsMixin):
-    """An account. `role` is the security level (admin/employee/viewer/public);
-    `title` is a cosmetic job label. Enterprise users belong to a company and log
-    in by email; public consumers have no company and log in by username."""
+    """An enterprise account. `role` is the security level and `title` is a
+    display job label used when selecting document recipients."""
     ROLES = [
         ("admin", "admin"),
         ("employee", "employee"),
         ("viewer", "viewer"),
-        ("public", "public"),  # consumer accounts (no company) — browse + favourites
     ]
 
     email = models.EmailField(unique=True)
-    # Consumers log in with this; enterprise users leave it NULL and use email.
+    # Retained nullable for compatibility with pre-existing database rows; all
+    # current enterprise authentication uses email.
     username = models.CharField(max_length=150, unique=True, null=True, blank=True)
     full_name = models.CharField(max_length=200, blank=True, default="")
     # Display job title only (CEO, CTO, HR, ...). This is a label, NOT a permission:
@@ -78,8 +103,8 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 
 class Document(models.Model):
-    """An uploaded file owned by one company. `is_public` exposes it on the open
-    portal; `is_okf` marks a curated note always fed into chat context."""
+    """An uploaded file owned by one company. Access is company-wide or
+    explicitly restricted to named users; `is_okf` marks a trusted AI note."""
     # 30 subject genres for the public knowledge library, plus the legacy
     # business categories (kept so enterprise uploads still have those options).
     CATEGORIES = [
@@ -126,12 +151,31 @@ class Document(models.Model):
     size = models.IntegerField(default=0)
     category = models.CharField(max_length=50, choices=CATEGORIES, default="Other")
     description = models.TextField(blank=True, default="")
-    downloads = models.IntegerField(default=0)  # popularity counter for the public site
-    is_public = models.BooleanField(default=False)  # shown on the public portal
+    downloads = models.IntegerField(default=0)
     is_okf = models.BooleanField(default=False)     # curated OKF note, always in context
     uploaded_by = models.ForeignKey(User, null=True, on_delete=models.SET_NULL)
     num_chunks = models.IntegerField(default=0)
+    # `company` keeps the existing tenant-wide behaviour. `restricted` means
+    # only the uploader and explicitly granted users may read/search/download.
+    ACCESS_SCOPES = [("company", "Entire company"), ("restricted", "Selected people")]
+    access_scope = models.CharField(max_length=20, choices=ACCESS_SCOPES, default="company")
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+class DocumentAccess(models.Model):
+    """An explicit per-user grant for a restricted document.
+
+    This is separate from DocumentShare so the same access rule works for
+    people in the owning company and for registered people in another company.
+    DocumentShare stores the collaboration/audit metadata for external grants.
+    """
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name="access_grants")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="document_access")
+    can_download = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("document", "user")
 
 
 class Chunk(models.Model):
@@ -154,16 +198,6 @@ class AuditLog(models.Model):
     detail = models.CharField(max_length=300, blank=True, default="")
     ip = models.CharField(max_length=64, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
-
-
-class Favorite(models.Model):
-    """A consumer's saved public document. Not tenant-scoped — belongs to a user."""
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="favorites")
-    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name="favorited_by")
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        unique_together = ("user", "document")
 
 
 class DocumentShare(models.Model):

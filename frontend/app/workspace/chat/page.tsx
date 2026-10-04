@@ -101,7 +101,13 @@ export default function WorkspaceChatPage() {
 
   return (
     <div className="mx-auto flex h-[calc(100vh-5rem)] max-w-3xl flex-col lg:h-[calc(100vh-5rem)]">
-      <ChatHeader llm={llm} />
+      <ChatHeader 
+        llm={llm} 
+        user={user} 
+        onLlmChange={() => {
+          workApi.llmStatus().then(setLlm).catch(() => setLlm(null))
+        }} 
+      />
 
       <div ref={scrollRef} className="mt-6 flex-1 space-y-6 overflow-y-auto pr-1">
         {messages.length === 0 ? (
@@ -123,7 +129,7 @@ export default function WorkspaceChatPage() {
   )
 }
 
-function ChatHeader({ llm }: { llm: LlmStatus | null }) {
+function ChatHeader({ llm, user, onLlmChange }: { llm: LlmStatus | null; user: any; onLlmChange: () => void }) {
   const online = !!llm?.online
   return (
     <header className="flex items-end justify-between gap-4 border-b border-[#e6e3dc] pb-5">
@@ -136,14 +142,34 @@ function ChatHeader({ llm }: { llm: LlmStatus | null }) {
           Answers come only from your company&apos;s documents — with the sources cited.
         </p>
       </div>
-      <span
-        className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-3.5 py-2 text-xs font-medium ${
-          online ? 'border-[#cfe3d1] bg-[#e8f2e8] text-[#3f6b45]' : 'border-[#e6e3dc] bg-[#f2f0ec] text-[#77746c]'
-        }`}
-      >
-        <span className={`size-1.5 rounded-full ${online ? 'bg-[#4a8a5c]' : 'bg-[#b9b6ae]'}`} aria-hidden />
-        {online ? `AI online · ${llm?.model || 'model'}` : 'AI offline'}
-      </span>
+      <div className="flex flex-col items-end gap-2">
+        <span
+          className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-3.5 py-2 text-xs font-medium ${
+            online ? 'border-[#cfe3d1] bg-[#e8f2e8] text-[#3f6b45]' : 'border-[#e6e3dc] bg-[#f2f0ec] text-[#77746c]'
+          }`}
+        >
+          <span className={`size-1.5 rounded-full ${online ? 'bg-[#4a8a5c]' : 'bg-[#b9b6ae]'}`} aria-hidden />
+          {online ? `AI online · ${llm?.model || 'model'}` : 'AI offline'}
+        </span>
+        {user?.role === 'admin' && (
+          <select
+            value={llm?.provider || 'ollama'}
+            onChange={async (e) => {
+              import('@/lib/api').then(({ settingsApi }) => {
+                settingsApi.updateLlmConfig({ provider: e.target.value as any, chat_model: '' }).then(() => {
+                  onLlmChange()
+                })
+              })
+            }}
+            className="text-xs border border-[#e6e3dc] rounded-md px-2 py-1 bg-[#fcfbf9] text-[#77746c] outline-none"
+          >
+            <option value="ollama">Ollama (Local)</option>
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="gemini">Gemini</option>
+          </select>
+        )}
+      </div>
     </header>
   )
 }
