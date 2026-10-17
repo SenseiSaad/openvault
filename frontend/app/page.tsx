@@ -24,7 +24,7 @@ export default function Page() {
 
         <div className="grid items-end gap-12 lg:grid-cols-[1.1fr_.9fr]">
           <div>
-            <p className="mb-6 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-[#8c8a83] animate-[fade-in-up_0.6s_ease-out_both]">
+            <p className="mb-6 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-[#6b6862] animate-[fade-in-up_0.6s_ease-out_both]">
               <Sparkles className="size-3.5" aria-hidden /> The private company knowledge system
             </p>
             <h1 className="max-w-4xl text-[clamp(3.5rem,8vw,7.7rem)] font-semibold leading-[.88] tracking-[-0.085em] animate-[fade-in-up_0.6s_ease-out_both] delay-[150ms]">
@@ -50,7 +50,7 @@ export default function Page() {
       {/* The OpenVault System */}
       <section className="mx-auto max-w-7xl px-6 py-20 lg:px-10 lg:py-24" aria-labelledby="pillars-heading">
         <div className="max-w-2xl">
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8c8a83]">The OpenVault system</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6b6862]">The OpenVault system</p>
           <h2 id="pillars-heading" className="mt-4 text-4xl font-semibold tracking-[-0.06em] sm:text-5xl">
             Built for useful access, not <span className="font-serif font-normal italic">open exposure.</span>
           </h2>
@@ -62,7 +62,7 @@ export default function Page() {
                 <Icon className="size-5" aria-hidden />
               </span>
               <h3 className="mt-7 text-xl font-semibold tracking-[-0.03em]">{title}</h3>
-              <p className="mt-3 text-sm leading-relaxed text-[#77746c]">{body}</p>
+              <p className="mt-3 text-sm leading-relaxed text-[#6b6862]">{body}</p>
             </article>
           ))}
         </div>
@@ -146,7 +146,7 @@ export default function Page() {
             <div>
               <FileCheck2 className="size-7 text-[#53688f]" aria-hidden />
               <h3 className="mt-16 text-2xl font-semibold tracking-[-0.04em]">A better handoff for finance and assurance.</h3>
-              <p className="mt-4 text-sm leading-relaxed text-[#77746c]">
+              <p className="mt-4 text-sm leading-relaxed text-[#6b6862]">
                 Give a CPA, auditor, or approved partner exactly the evidence they need, without turning your whole company library into a shared drive.
               </p>
             </div>
@@ -161,7 +161,7 @@ export default function Page() {
       <section className="mx-auto max-w-7xl px-6 pb-20 lg:px-10 lg:pb-24">
         <div className="rounded-[28px] bg-[#fffdfa] border border-[#dcdad3] p-8 sm:p-12 overflow-hidden relative">
           <div className="max-w-2xl mx-auto text-center mb-16">
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8c8a83] mb-4">Granular Control</p>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6b6862] mb-4">Granular Control</p>
             <h2 className="text-3xl font-semibold tracking-[-0.05em] sm:text-4xl">How document access actually works</h2>
           </div>
 
@@ -174,7 +174,7 @@ export default function Page() {
                 <Upload className="size-5 text-[#53688f]" />
               </div>
               <h3 className="text-sm font-semibold mb-2">1. Secure Upload</h3>
-              <p className="text-xs leading-relaxed text-[#77746c]">CEO uploads a confidential file and marks it for &apos;Selected people&apos; only.</p>
+              <p className="text-xs leading-relaxed text-[#6b6862]">CEO uploads a confidential file and marks it for &apos;Selected people&apos; only.</p>
             </div>
 
             <div className="relative text-center">
@@ -182,7 +182,7 @@ export default function Page() {
                 <Lock className="size-5 text-[#53688f]" />
               </div>
               <h3 className="text-sm font-semibold mb-2">2. Zero-Trust Defaults</h3>
-              <p className="text-xs leading-relaxed text-[#77746c]">Even the CTO or CFO in the same company cannot view it by default.</p>
+              <p className="text-xs leading-relaxed text-[#6b6862]">Even the CTO or CFO in the same company cannot view it by default.</p>
             </div>
 
             <div className="relative text-center">
@@ -190,7 +190,7 @@ export default function Page() {
                 <UserCheck className="size-5 text-[#53688f]" />
               </div>
               <h3 className="text-sm font-semibold mb-2">3. Exact Delegation</h3>
-              <p className="text-xs leading-relaxed text-[#77746c]">Only explicitly named people (e.g. HR Director) are granted read access.</p>
+              <p className="text-xs leading-relaxed text-[#6b6862]">Only explicitly named people (e.g. HR Director) are granted read access.</p>
             </div>
 
             <div className="relative text-center">
@@ -198,7 +198,7 @@ export default function Page() {
                 <Building2 className="size-5 text-[#53688f]" />
               </div>
               <h3 className="text-sm font-semibold mb-2">4. Partner Sharing</h3>
-              <p className="text-xs leading-relaxed text-[#77746c]">Share externally via company code to specific people at partner companies securely.</p>
+              <p className="text-xs leading-relaxed text-[#6b6862]">Share externally via company code to specific people at partner companies securely.</p>
             </div>
           </div>
         </div>
@@ -209,9 +209,9 @@ export default function Page() {
         <div className="rounded-[28px] bg-[#fffdfa] border border-[#dcdad3] p-8 sm:p-12">
           <div className="flex flex-col gap-8 sm:flex-row sm:items-end sm:justify-between">
             <div className="max-w-xl">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8c8a83]">Ready when your team is</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6b6862]">Ready when your team is</p>
               <h2 className="mt-4 text-3xl font-semibold tracking-[-0.05em] sm:text-4xl">Put the right knowledge in the right hands.</h2>
-              <p className="mt-3 text-sm leading-relaxed text-[#77746c]">Start with a registered organization. Employees and employer admins use the same secure entry point, with permissions set by the company.</p>
+              <p className="mt-3 text-sm leading-relaxed text-[#6b6862]">Start with a registered organization. Employees and employer admins use the same secure entry point, with permissions set by the company.</p>
             </div>
             <div className="flex flex-wrap gap-3">
               <Link href="/enterprise?tab=create" className={`inline-flex items-center gap-2 rounded-full bg-[#1d1d1b] px-5 py-3 text-sm font-medium text-white transition hover:bg-[#3c3b37] ${FOCUS}`}>

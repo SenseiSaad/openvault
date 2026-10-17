@@ -6,20 +6,31 @@ import {
   AlertCircle,
   ArrowLeft,
   Briefcase,
+  Building2,
   CheckCircle2,
   Eye,
-  Info,
   Loader2,
   Lock,
-  Mail,
+  Pencil,
   Shield,
   Trash2,
   UserPlus,
   Users,
+  X,
   type LucideIcon,
 } from 'lucide-react'
-import { adminApi, JOB_TITLES, type NewUser, type Role, type User } from '@/lib/api'
+import {
+  adminApi,
+  companyApi2,
+  JOB_TITLES,
+  type Department,
+  type NewUser,
+  type Role,
+  type User,
+} from '@/lib/api'
 import { useAuth } from '@/lib/auth'
+import { toast } from '@/components/toaster'
+import { ConfirmDialog } from '@/components/confirm-dialog'
 
 type CreatableRole = Exclude<Role, 'public'>
 
@@ -36,17 +47,19 @@ const ROLE_OPTIONS: { value: CreatableRole; label: string; desc: string; Icon: L
 ]
 
 const inputClass =
-  'h-12 w-full rounded-xl border border-[#d8d5cc] bg-white px-4 text-sm text-[#1d1d1b] outline-none transition-colors placeholder:text-[#9b9890] focus:border-[#1d1d1b] focus:ring-2 focus:ring-[#1d1d1b]/10'
-const labelClass = 'mb-1.5 block text-sm font-medium text-[#1d1d1b]'
+  'h-11 w-full rounded-xl border border-[#d8d5cc] bg-white px-3.5 text-xs text-[#1d1d1b] outline-none transition-colors placeholder:text-[#6b6862] focus:border-[#1d1d1b] focus:ring-2 focus:ring-[#1d1d1b]/10'
+const labelClass = 'mb-1.5 block text-xs font-medium text-[#1d1d1b]'
 const focusRing =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1d1d1b]/30 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f7f6f2]'
+const ghostBtn = `inline-flex items-center gap-1.5 rounded-full border border-[#e6e3dc] bg-white px-3 py-1.5 text-xs font-medium text-[#1d1d1b] transition hover:border-[#1d1d1b] disabled:opacity-50 ${focusRing}`
+const primaryBtn = `inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[#1d1d1b] px-5 text-xs font-medium text-white transition hover:bg-[#3c3b37] disabled:opacity-50 ${focusRing}`
 
 function RoleBadge({ role }: { role: Role }) {
   const meta = ROLE_BADGE[role] ?? ROLE_BADGE.viewer
   const Icon = meta.Icon
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium ${meta.cls}`}
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${meta.cls}`}
     >
       <Icon className="size-3" aria-hidden /> {meta.label}
     </span>
@@ -56,26 +69,22 @@ function RoleBadge({ role }: { role: Role }) {
 export default function MembersPage() {
   const { user } = useAuth()
 
-  // The auth-gated layout guarantees a user; this keeps the type non-null.
   if (!user) return null
 
-  // Admin-only page. The layout only hides the nav link for non-admins, so a
-  // viewer/employee could still land here directly; self-guard.
   if (user.role !== 'admin') {
     return (
       <div className="mx-auto max-w-lg py-10">
         <div className="rounded-2xl border border-[#e6e3dc] bg-[#fffdfa] p-8 text-center sm:p-10">
-          <span className="mx-auto grid size-12 place-items-center rounded-full bg-[#f1eee7] text-[#77746c]">
+          <span className="mx-auto grid size-12 place-items-center rounded-full bg-[#f1eee7] text-[#6b6862]">
             <Lock className="size-5" aria-hidden />
           </span>
           <h1 className="mt-5 text-2xl font-semibold tracking-[-0.03em]">Admins only</h1>
-          <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-[#77746c]">
-            Managing who can access your organization&rsquo;s workspace is limited to admins. If you
-            need a change, ask one of your workspace admins.
+          <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-[#6b6862]">
+            Managing team membership is limited to administrators.
           </p>
           <Link
             href="/workspace"
-            className={`mt-6 inline-flex items-center gap-2 rounded-full bg-[#1d1d1b] px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-[#3c3b37] ${focusRing}`}
+            className={`mt-6 inline-flex items-center gap-2 rounded-full bg-[#1d1d1b] px-5 py-2.5 text-xs font-medium text-white transition-colors hover:bg-[#3c3b37] ${focusRing}`}
           >
             <ArrowLeft className="size-4" aria-hidden /> Back to workspace
           </Link>
@@ -89,11 +98,14 @@ export default function MembersPage() {
 
 function MembersAdmin({ currentUserId }: { currentUserId: number }) {
   const [users, setUsers] = useState<User[]>([])
+  const [departments, setDepartments] = useState<Department[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
 
+  // New member form
   const [fullName, setFullName] = useState('')
   const [title, setTitle] = useState('')
+  const [departmentId, setDepartmentId] = useState<number | ''>('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [role, setRole] = useState<CreatableRole>('viewer')
@@ -101,15 +113,22 @@ function MembersAdmin({ currentUserId }: { currentUserId: number }) {
   const [formError, setFormError] = useState('')
   const [formSuccess, setFormSuccess] = useState('')
 
+  // Edit / Delete dialogs
+  const [editingUser, setEditingUser] = useState<User | null>(null)
+  const [confirmUser, setConfirmUser] = useState<User | null>(null)
   const [removingId, setRemovingId] = useState<number | null>(null)
-  const [tableError, setTableError] = useState('')
 
   const load = useCallback(() => {
     setLoading(true)
     setLoadError('')
-    adminApi
-      .users()
-      .then(setUsers)
+    Promise.all([
+      adminApi.users(),
+      companyApi2.departments().catch(() => []),
+    ])
+      .then(([usersRes, deptsRes]) => {
+        setUsers(usersRes)
+        setDepartments(deptsRes)
+      })
       .catch((err) => setLoadError(err instanceof Error ? err.message : 'Could not load members.'))
       .finally(() => setLoading(false))
   }, [])
@@ -139,16 +158,19 @@ function MembersAdmin({ currentUserId }: { currentUserId: number }) {
       role,
       ...(fullName.trim() ? { full_name: fullName.trim() } : {}),
       ...(title ? { title } : {}),
+      ...(departmentId ? { department_id: Number(departmentId) } : {}),
     }
     try {
       const created = await adminApi.createUser(payload)
       setUsers((prev) => [created, ...prev])
       setFullName('')
       setTitle('')
+      setDepartmentId('')
       setEmail('')
       setPassword('')
       setRole('viewer')
       setFormSuccess(`${created.full_name || created.email} was added as ${created.role}.`)
+      toast.success('Member invited.')
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Could not add this member.')
     } finally {
@@ -159,16 +181,16 @@ function MembersAdmin({ currentUserId }: { currentUserId: number }) {
   async function onRemove(u: User) {
     if (u.id === currentUserId) return
     const name = u.full_name || u.email
-    if (!window.confirm(`Remove ${name}? They will immediately lose access to this workspace.`)) return
-    setTableError('')
     setRemovingId(u.id)
     try {
       await adminApi.removeUser(u.id)
       setUsers((prev) => prev.filter((x) => x.id !== u.id))
+      toast.success('Member removed.')
     } catch (err) {
-      setTableError(err instanceof Error ? err.message : `Could not remove ${name}.`)
+      toast.error(err instanceof Error ? err.message : `Could not remove ${name}.`)
     } finally {
       setRemovingId(null)
+      setConfirmUser(null)
     }
   }
 
@@ -176,19 +198,20 @@ function MembersAdmin({ currentUserId }: { currentUserId: number }) {
     { label: 'Total members', value: counts.total, Icon: Users, dot: '' },
     { label: 'Admins', value: counts.admin, Icon: Shield, dot: 'bg-[#6b46c1]' },
     { label: 'Employees', value: counts.employee, Icon: Briefcase, dot: 'bg-[#37589c]' },
-    { label: 'Viewers', value: counts.viewer, Icon: Eye, dot: 'bg-[#9b9890]' },
+    { label: 'Viewers', value: counts.viewer, Icon: Eye, dot: 'bg-[#6b6862]' },
   ]
 
   return (
-    <div className="space-y-10">
+    <div className="space-y-8 pb-8">
       <header>
-        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#8c8a83]">Member management</p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em] sm:text-4xl sm:tracking-[-0.05em]">
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6b6862]">
+          Member management
+        </p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">
           Manage your team&rsquo;s <span className="font-serif font-normal italic">access.</span>
         </h1>
-        <p className="mt-3 max-w-xl text-sm leading-relaxed text-[#77746c] sm:text-base">
-          Invite teammates, choose what they can do, and control who can reach your
-          organization&rsquo;s private workspace.
+        <p className="mt-2 max-w-xl text-xs leading-relaxed text-[#6b6862] sm:text-sm">
+          Invite teammates, assign departments and roles, and adjust permissions at any time.
         </p>
       </header>
 
@@ -198,67 +221,67 @@ function MembersAdmin({ currentUserId }: { currentUserId: number }) {
         <ErrorState message={loadError} onRetry={load} />
       ) : (
         <>
-          {/* Summary strip */}
+          {/* Summary */}
           <section aria-label="Membership summary" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {stats.map((s) => {
               const Icon = s.Icon
               return (
                 <div key={s.label} className="rounded-2xl border border-[#e6e3dc] bg-[#fffdfa] p-4">
-                  <div className="flex items-center justify-between text-[#8c8a83]">
+                  <div className="flex items-center justify-between text-[#6b6862]">
                     <span className="flex items-center gap-1.5 text-xs font-medium">
                       {s.dot ? <span className={`size-1.5 rounded-full ${s.dot}`} aria-hidden /> : null}
                       {s.label}
                     </span>
                     <Icon className="size-4 text-[#b1b0ac]" aria-hidden />
                   </div>
-                  <p className="mt-2 text-2xl font-semibold tracking-[-0.02em] text-[#1d1d1b]">{s.value}</p>
+                  <p className="mt-2 text-2xl font-semibold tracking-[-0.02em] text-[#1d1d1b]">
+                    {s.value}
+                  </p>
                 </div>
               )
             })}
           </section>
 
           {/* Invite panel */}
-          <section className="rounded-2xl border border-[#e6e3dc] bg-[#fffdfa] p-6 sm:p-8">
+          <section className="rounded-2xl border border-[#e6e3dc] bg-[#fffdfa] p-5 sm:p-7">
             <div className="flex items-start gap-3">
               <span className="grid size-9 shrink-0 place-items-center rounded-full bg-[#f1eee7] text-[#1d1d1b]">
                 <UserPlus className="size-4" aria-hidden />
               </span>
               <div>
-                <h2 className="text-lg font-semibold tracking-[-0.02em]">Invite a member</h2>
-                <p className="mt-0.5 text-sm text-[#77746c]">
-                  Create an account for a teammate. They sign in with the email and password you set here.
+                <h2 className="text-base font-semibold tracking-[-0.02em]">Invite a member</h2>
+                <p className="text-xs text-[#6b6862]">
+                  Create an account for a teammate. They sign in with their work email.
                 </p>
               </div>
             </div>
 
-            <form onSubmit={onCreate} className="mt-6 space-y-5">
-              <div className="grid gap-4 sm:grid-cols-2">
+            <form onSubmit={onCreate} className="mt-5 space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <label htmlFor="m-name" className={labelClass}>
-                    Full name <span className="font-normal text-[#9b9890]">(optional)</span>
+                    Full name <span className="font-normal text-[#6b6862]">(optional)</span>
                   </label>
                   <input
                     id="m-name"
-                    name="full_name"
                     type="text"
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
-                    autoComplete="name"
                     placeholder="Ada Lovelace"
                     className={inputClass}
                     disabled={submitting}
                   />
                 </div>
                 <div>
-                  <label htmlFor="m-email" className={labelClass}>Email</label>
+                  <label htmlFor="m-email" className={labelClass}>
+                    Email
+                  </label>
                   <input
                     id="m-email"
-                    name="email"
                     type="email"
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    autoComplete="off"
                     placeholder="teammate@company.com"
                     className={inputClass}
                     disabled={submitting}
@@ -266,49 +289,62 @@ function MembersAdmin({ currentUserId }: { currentUserId: number }) {
                 </div>
               </div>
 
-              <div>
-                <label htmlFor="m-title" className={labelClass}>
-                  Job title <span className="font-normal text-[#9b9890]">(optional)</span>
-                </label>
-                <select
-                  id="m-title"
-                  name="title"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  className={inputClass}
-                  disabled={submitting}
-                >
-                  <option value="">No title</option>
-                  {JOB_TITLES.map((t) => (
-                    <option key={t} value={t}>{t}</option>
-                  ))}
-                </select>
-                <p className="mt-1.5 text-xs text-[#8c8a83]">
-                  A display label only (for example CEO or Engineer). It does not change what the
-                  member can do; that is set by the role below.
-                </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="m-title" className={labelClass}>
+                    Job title <span className="font-normal text-[#6b6862]">(optional)</span>
+                  </label>
+                  <select
+                    id="m-title"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    className={inputClass}
+                    disabled={submitting}
+                  >
+                    <option value="">No title</option>
+                    {JOB_TITLES.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label htmlFor="m-dept" className={labelClass}>
+                    Department <span className="font-normal text-[#6b6862]">(optional)</span>
+                  </label>
+                  <select
+                    id="m-dept"
+                    value={departmentId}
+                    onChange={(e) => setDepartmentId(e.target.value ? Number(e.target.value) : '')}
+                    className={inputClass}
+                    disabled={submitting}
+                  >
+                    <option value="">No department</option>
+                    {departments.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div>
-                <label htmlFor="m-password" className={labelClass}>Temporary password</label>
+                <label htmlFor="m-password" className={labelClass}>
+                  Temporary password
+                </label>
                 <input
                   id="m-password"
-                  name="password"
                   type="password"
                   required
                   minLength={8}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="new-password"
                   placeholder="At least 8 characters"
                   className={inputClass}
                   disabled={submitting}
-                  aria-describedby="m-password-hint"
                 />
-                <p id="m-password-hint" className="mt-1.5 text-xs text-[#8c8a83]">
-                  Use at least 8 characters. Share it securely; your teammate can change it after
-                  signing in.
-                </p>
               </div>
 
               <fieldset disabled={submitting}>
@@ -320,7 +356,11 @@ function MembersAdmin({ currentUserId }: { currentUserId: number }) {
                     return (
                       <label
                         key={opt.value}
-                        className={`flex cursor-pointer flex-col gap-1 rounded-xl border p-4 transition-colors ${active ? 'border-[#1d1d1b] bg-white ring-2 ring-[#1d1d1b]/10' : 'border-[#dcdad3] bg-white hover:border-[#b9b6ad]'} ${submitting ? 'cursor-not-allowed opacity-60' : ''}`}
+                        className={`flex cursor-pointer flex-col gap-1 rounded-xl border p-3.5 transition ${
+                          active
+                            ? 'border-[#1d1d1b] bg-white ring-2 ring-[#1d1d1b]/10'
+                            : 'border-[#dcdad3] bg-white hover:border-[#b9b6ad]'
+                        }`}
                       >
                         <span className="flex items-center gap-2">
                           <input
@@ -331,11 +371,13 @@ function MembersAdmin({ currentUserId }: { currentUserId: number }) {
                             onChange={() => setRole(opt.value)}
                             className="sr-only"
                           />
-                          <Icon className="size-4 text-[#1d1d1b]" aria-hidden />
-                          <span className="text-sm font-medium text-[#1d1d1b]">{opt.label}</span>
-                          {active ? <CheckCircle2 className="ml-auto size-4 text-[#1d1d1b]" aria-hidden /> : null}
+                          <Icon className="size-3.5 text-[#1d1d1b]" aria-hidden />
+                          <span className="text-xs font-medium text-[#1d1d1b]">{opt.label}</span>
+                          {active ? (
+                            <CheckCircle2 className="ml-auto size-3.5 text-[#1d1d1b]" aria-hidden />
+                          ) : null}
                         </span>
-                        <span className="text-xs leading-relaxed text-[#77746c]">{opt.desc}</span>
+                        <span className="text-[11px] leading-relaxed text-[#6b6862]">{opt.desc}</span>
                       </label>
                     )
                   })}
@@ -343,64 +385,61 @@ function MembersAdmin({ currentUserId }: { currentUserId: number }) {
               </fieldset>
 
               {formError ? (
-                <p role="alert" className="flex items-start gap-2 rounded-xl bg-[#fbe4e0] px-4 py-3 text-sm text-[#9a3b2c]">
-                  <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden /> {formError}
+                <p
+                  role="alert"
+                  className="flex items-start gap-2 rounded-xl bg-[#fbe4e0] px-3.5 py-2.5 text-xs text-[#9a3b2c]"
+                >
+                  <AlertCircle className="mt-0.5 size-3.5 shrink-0" aria-hidden /> {formError}
                 </p>
               ) : null}
               {formSuccess ? (
-                <p role="status" className="flex items-start gap-2 rounded-xl bg-[#e7f0e6] px-4 py-3 text-sm text-[#3f6b45]">
-                  <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden /> {formSuccess}
+                <p
+                  role="status"
+                  className="flex items-start gap-2 rounded-xl bg-[#e7f0e6] px-3.5 py-2.5 text-xs text-[#3f6b45]"
+                >
+                  <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" aria-hidden /> {formSuccess}
                 </p>
               ) : null}
 
-              <div className="flex flex-wrap items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3 pt-1">
                 <button
                   type="submit"
                   disabled={submitting}
-                  aria-busy={submitting}
-                  className={`inline-flex h-12 items-center justify-center gap-2 rounded-full bg-[#1d1d1b] px-6 text-sm font-medium text-white transition-colors hover:bg-[#3c3b37] disabled:cursor-not-allowed disabled:opacity-60 ${focusRing}`}
+                  className={primaryBtn}
                 >
                   {submitting ? (
-                    <Loader2 className="size-4 animate-spin" aria-hidden />
+                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
                   ) : (
-                    <UserPlus className="size-4" aria-hidden />
+                    <UserPlus className="size-3.5" aria-hidden />
                   )}
                   {submitting ? 'Adding…' : 'Add member'}
                 </button>
-                <span className="text-xs text-[#8c8a83]">Your teammate can sign in right away.</span>
               </div>
             </form>
           </section>
 
           {/* Members list */}
           <section className="space-y-4">
-            <h2 className="text-lg font-semibold tracking-[-0.02em]">
-              Members <span className="text-sm font-normal text-[#8c8a83]">({counts.total})</span>
+            <h2 className="text-base font-semibold tracking-[-0.02em]">
+              Members <span className="text-xs font-normal text-[#6b6862]">({counts.total})</span>
             </h2>
-
-            {tableError ? (
-              <p role="alert" className="flex items-start gap-2 rounded-xl bg-[#fbe4e0] px-4 py-3 text-sm text-[#9a3b2c]">
-                <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden /> {tableError}
-              </p>
-            ) : null}
 
             {counts.total === 0 ? (
               <div className="rounded-2xl border border-[#e6e3dc] bg-[#fffdfa] p-10 text-center">
-                <p className="font-serif text-xl italic text-[#1d1d1b]">No members yet.</p>
-                <p className="mx-auto mt-2 max-w-xs text-sm text-[#98958c]">
-                  Add your first teammate using the form above.
-                </p>
+                <p className="font-serif text-lg italic text-[#1d1d1b]">No members yet.</p>
               </div>
             ) : (
               <>
                 {/* Desktop table */}
                 <div className="hidden overflow-hidden rounded-2xl border border-[#e6e3dc] bg-[#fffdfa] md:block">
-                  <table className="w-full text-sm">
+                  <table className="w-full text-xs">
                     <thead>
-                      <tr className="border-b border-[#eae7df] text-left text-xs font-semibold uppercase tracking-[0.08em] text-[#8c8a83]">
+                      <tr className="border-b border-[#eae7df] text-left uppercase tracking-[0.08em] text-[#6b6862]">
                         <th scope="col" className="px-5 py-3 font-semibold">Name</th>
                         <th scope="col" className="px-5 py-3 font-semibold">Email</th>
+                        <th scope="col" className="px-5 py-3 font-semibold">Department</th>
                         <th scope="col" className="px-5 py-3 font-semibold">Role</th>
+                        <th scope="col" className="px-5 py-3 font-semibold">Status</th>
                         <th scope="col" className="px-5 py-3 text-right font-semibold">Actions</th>
                       </tr>
                     </thead>
@@ -408,38 +447,72 @@ function MembersAdmin({ currentUserId }: { currentUserId: number }) {
                       {users.map((u) => {
                         const isSelf = u.id === currentUserId
                         return (
-                          <tr key={u.id} className="border-b border-[#f0ede6] last:border-0">
-                            <td className="px-5 py-4">
-                              <span className="flex items-center gap-2 font-medium text-[#1d1d1b]">
+                          <tr key={u.id} className="border-b border-[#f0ede6] last:border-0 hover:bg-[#faf9f5]">
+                            <td className="px-5 py-3.5">
+                              <span className="flex items-center gap-1.5 font-medium text-[#1d1d1b]">
                                 {u.full_name || u.email}
                                 {isSelf ? (
-                                  <span className="rounded-full bg-[#f1eee7] px-2 py-0.5 text-xs font-medium text-[#77746c]">You</span>
+                                  <span className="rounded-full bg-[#f1eee7] px-2 py-0.5 text-[10px] font-medium text-[#6b6862]">
+                                    You
+                                  </span>
                                 ) : null}
                               </span>
                               {u.title ? (
-                                <span className="mt-0.5 block text-xs text-[#98958c]">{u.title}</span>
+                                <span className="block text-[11px] text-[#6b6862]">{u.title}</span>
                               ) : null}
                             </td>
-                            <td className="px-5 py-4 text-[#77746c]">{u.email}</td>
-                            <td className="px-5 py-4"><RoleBadge role={u.role} /></td>
-                            <td className="px-5 py-4 text-right">
-                              {isSelf ? (
-                                <span className="text-xs text-[#b1b0ac]" aria-label="This is your account">-</span>
+                            <td className="px-5 py-3.5 text-[#6b6862]">{u.email}</td>
+                            <td className="px-5 py-3.5 text-[#6b6862]">
+                              {u.department_name ? (
+                                <span className="inline-flex items-center gap-1 rounded bg-[#f4f2ec] px-2 py-0.5 text-[11px] text-[#4a4944]">
+                                  <Building2 className="size-2.5" />
+                                  {u.department_name}
+                                </span>
                               ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => onRemove(u)}
-                                  disabled={removingId === u.id}
-                                  aria-label={`Remove ${u.full_name || u.email}`}
-                                  className={`inline-flex items-center gap-1.5 rounded-full border border-[#e6e3dc] px-3 py-1.5 text-xs font-medium text-[#9a3b2c] transition-colors hover:border-[#e2b6ac] hover:bg-[#fbe4e0] disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`}
-                                >
-                                  {removingId === u.id ? (
-                                    <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                                  ) : (
-                                    <Trash2 className="size-3.5" aria-hidden />
-                                  )}
-                                  Remove
-                                </button>
+                                '—'
+                              )}
+                            </td>
+                            <td className="px-5 py-3.5">
+                              <RoleBadge role={u.role} />
+                            </td>
+                            <td className="px-5 py-3.5">
+                              {u.is_active === false ? (
+                                <span className="rounded-full bg-[#fbe4e0] px-2 py-0.5 text-[10px] font-medium text-[#9a3b2c]">
+                                  Deactivated
+                                </span>
+                              ) : (
+                                <span className="rounded-full bg-[#e6f1e4] px-2 py-0.5 text-[10px] font-medium text-[#4a7a5a]">
+                                  Active
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-5 py-3.5 text-right">
+                              {isSelf ? (
+                                <span className="text-xs text-[#b1b0ac]">—</span>
+                              ) : (
+                                <div className="inline-flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingUser(u)}
+                                    className={ghostBtn}
+                                    title="Edit member"
+                                  >
+                                    <Pencil className="size-3" /> Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setConfirmUser(u)}
+                                    disabled={removingId === u.id}
+                                    className="inline-flex items-center gap-1 rounded-full border border-[#e6e3dc] px-2.5 py-1.5 text-xs text-[#9a3b2c] transition hover:bg-[#fbe4e0] disabled:opacity-50"
+                                    title="Remove member"
+                                  >
+                                    {removingId === u.id ? (
+                                      <Loader2 className="size-3 animate-spin" />
+                                    ) : (
+                                      <Trash2 className="size-3" />
+                                    )}
+                                  </button>
+                                </div>
                               )}
                             </td>
                           </tr>
@@ -449,63 +522,236 @@ function MembersAdmin({ currentUserId }: { currentUserId: number }) {
                   </table>
                 </div>
 
-                {/* Mobile cards */}
+                {/* Mobile list */}
                 <ul className="space-y-3 md:hidden">
                   {users.map((u) => {
                     const isSelf = u.id === currentUserId
                     return (
-                      <li key={u.id} className="rounded-2xl border border-[#e6e3dc] bg-[#fffdfa] p-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="flex items-center gap-2 font-medium text-[#1d1d1b]">
-                              <span className="truncate">{u.full_name || u.email}</span>
-                              {isSelf ? (
-                                <span className="shrink-0 rounded-full bg-[#f1eee7] px-2 py-0.5 text-xs font-medium text-[#77746c]">You</span>
-                              ) : null}
+                      <li key={u.id} className="rounded-2xl border border-[#e6e3dc] bg-[#fffdfa] p-4 text-xs">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="font-semibold text-[#1d1d1b]">
+                              {u.full_name || u.email}
+                              {isSelf && (
+                                <span className="ml-1.5 rounded-full bg-[#f1eee7] px-2 py-0.5 text-[10px] text-[#6b6862]">
+                                  You
+                                </span>
+                              )}
                             </p>
-                            {u.title ? (
-                              <p className="mt-0.5 truncate text-xs text-[#98958c]">{u.title}</p>
-                            ) : null}
-                            <p className="mt-1 flex items-center gap-1.5 text-sm text-[#77746c]">
-                              <Mail className="size-3.5 shrink-0 text-[#b1b0ac]" aria-hidden />
-                              <span className="truncate">{u.email}</span>
-                            </p>
+                            {u.title && <p className="text-[11px] text-[#6b6862]">{u.title}</p>}
+                            <p className="mt-1 text-[#6b6862]">{u.email}</p>
+                            {u.department_name && (
+                              <p className="mt-1 text-[11px] text-[#6b6862]">
+                                Department: {u.department_name}
+                              </p>
+                            )}
                           </div>
                           <RoleBadge role={u.role} />
                         </div>
-                        {!isSelf ? (
-                          <button
-                            type="button"
-                            onClick={() => onRemove(u)}
-                            disabled={removingId === u.id}
-                            aria-label={`Remove ${u.full_name || u.email}`}
-                            className={`mt-3 inline-flex items-center gap-1.5 rounded-full border border-[#e6e3dc] px-3 py-1.5 text-xs font-medium text-[#9a3b2c] transition-colors hover:border-[#e2b6ac] hover:bg-[#fbe4e0] disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`}
-                          >
-                            {removingId === u.id ? (
-                              <Loader2 className="size-3.5 animate-spin" aria-hidden />
-                            ) : (
-                              <Trash2 className="size-3.5" aria-hidden />
-                            )}
-                            Remove
-                          </button>
-                        ) : null}
+
+                        {!isSelf && (
+                          <div className="mt-3 flex items-center justify-end gap-2 border-t border-[#f0ede6] pt-2">
+                            <button
+                              type="button"
+                              onClick={() => setEditingUser(u)}
+                              className={ghostBtn}
+                            >
+                              <Pencil className="size-3" /> Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmUser(u)}
+                              disabled={removingId === u.id}
+                              className="rounded-full border border-[#e6e3dc] px-3 py-1 text-xs text-[#9a3b2c] hover:bg-[#fbe4e0]"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        )}
                       </li>
                     )
                   })}
                 </ul>
               </>
             )}
-
-            {/* Role note */}
-            <p className="flex items-start gap-2 rounded-xl border border-[#eae7df] bg-[#faf8f3] px-4 py-3 text-xs leading-relaxed text-[#77746c]">
-              <Info className="mt-0.5 size-3.5 shrink-0 text-[#b1b0ac]" aria-hidden />
-              Roles are set when a member is created and can&rsquo;t be edited here; there&rsquo;s no
-              role-change endpoint. To move someone to a different role, remove them and add them
-              again with the new role.
-            </p>
           </section>
         </>
       )}
+
+      {/* Edit Member Modal */}
+      {editingUser && (
+        <EditMemberModal
+          user={editingUser}
+          departments={departments}
+          onClose={() => setEditingUser(null)}
+          onSaved={(updated) => {
+            setUsers((prev) => prev.map((x) => (x.id === updated.id ? updated : x)))
+          }}
+        />
+      )}
+
+      {/* Confirm Delete Dialog */}
+      <ConfirmDialog
+        open={!!confirmUser}
+        title="Remove member"
+        message={
+          confirmUser
+            ? `Remove ${confirmUser.full_name || confirmUser.email}? They will immediately lose access to this workspace.`
+            : ''
+        }
+        confirmText="Remove"
+        danger={true}
+        loading={confirmUser ? removingId === confirmUser.id : false}
+        onConfirm={() => confirmUser && onRemove(confirmUser)}
+        onCancel={() => setConfirmUser(null)}
+      />
+    </div>
+  )
+}
+
+function EditMemberModal({
+  user,
+  departments,
+  onClose,
+  onSaved,
+}: {
+  user: User
+  departments: Department[]
+  onClose: () => void
+  onSaved: (updated: User) => void
+}) {
+  const [fullName, setFullName] = useState(user.full_name || '')
+  const [title, setTitle] = useState(user.title || '')
+  const [departmentId, setDepartmentId] = useState<number | ''>(user.department_id ?? '')
+  const [role, setRole] = useState<CreatableRole>(
+    user.role === 'admin' ? 'admin' : user.role === 'employee' ? 'employee' : 'viewer',
+  )
+  const [isActive, setIsActive] = useState<boolean>(user.is_active !== false)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault()
+    setSubmitting(true)
+    setError('')
+    try {
+      const updated = await adminApi.updateUser(user.id, {
+        full_name: fullName.trim(),
+        title: title || '',
+        department_id: departmentId ? Number(departmentId) : null,
+        role,
+        is_active: isActive,
+      })
+      toast.success('Member updated.')
+      onSaved(updated)
+      onClose()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not update member.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onClick={onClose}>
+      <div
+        className="w-full max-w-md rounded-3xl border border-[#e6e3dc] bg-[#fffdfa] p-6 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-[#eae7df] pb-3">
+          <h2 className="text-sm font-semibold text-[#1d1d1b]">
+            Edit member: {user.full_name || user.email}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-1 text-[#6b6862] hover:bg-[#efece4]"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <form onSubmit={submit} className="mt-4 space-y-3.5">
+          <div>
+            <label className={labelClass}>Full name</label>
+            <input
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              className={inputClass}
+            />
+          </div>
+
+          <div>
+            <label className={labelClass}>Job title</label>
+            <select
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className={inputClass}
+            >
+              <option value="">No title</option>
+              {JOB_TITLES.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className={labelClass}>Department</label>
+            <select
+              value={departmentId}
+              onChange={(e) => setDepartmentId(e.target.value ? Number(e.target.value) : '')}
+              className={inputClass}
+            >
+              <option value="">No department</option>
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className={labelClass}>Role</label>
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value as CreatableRole)}
+              className={inputClass}
+            >
+              <option value="viewer">Viewer (Read-only)</option>
+              <option value="employee">Employee (Upload & manage)</option>
+              <option value="admin">Admin (Full access)</option>
+            </select>
+          </div>
+
+          <label className="flex items-center gap-2 pt-1 text-xs text-[#1d1d1b]">
+            <input
+              type="checkbox"
+              checked={isActive}
+              onChange={(e) => setIsActive(e.target.checked)}
+              className="size-4 rounded"
+            />
+            <span>Account is active (uncheck to deactivate access)</span>
+          </label>
+
+          {error && <p className="text-xs text-[#9a3b2c]">{error}</p>}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button type="button" onClick={onClose} className={ghostBtn}>
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className={primaryBtn}
+            >
+              {submitting ? <Loader2 className="size-3.5 animate-spin" /> : 'Save changes'}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   )
 }
@@ -531,11 +777,11 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
         <AlertCircle className="size-5" aria-hidden />
       </span>
       <p className="mt-4 text-sm font-medium text-[#1d1d1b]">We couldn&rsquo;t load your members.</p>
-      <p className="mx-auto mt-1 max-w-sm text-sm text-[#98958c]">{message}</p>
+      <p className="mx-auto mt-1 max-w-sm text-sm text-[#6b6862]">{message}</p>
       <button
         type="button"
         onClick={onRetry}
-        className={`mt-5 inline-flex items-center gap-2 rounded-full bg-[#1d1d1b] px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[#3c3b37] ${focusRing}`}
+        className={`mt-5 inline-flex items-center gap-2 rounded-full bg-[#1d1d1b] px-5 py-2.5 text-xs font-medium text-white transition-colors hover:bg-[#3c3b37] ${focusRing}`}
       >
         Try again
       </button>

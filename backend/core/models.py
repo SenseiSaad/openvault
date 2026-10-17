@@ -2,6 +2,7 @@
 backbone of multi-tenant isolation (one company can never see another's data)."""
 import secrets
 import string
+from datetime import timedelta
 
 from django.contrib.auth.models import (
     AbstractBaseUser, BaseUserManager, PermissionsMixin,
@@ -33,6 +34,11 @@ class Company(models.Model):
     # Seat limit for member accounts. NULL means unlimited; when set, admins can't
     # add more members than this (enforced in the users() view, never crashes).
     max_employees = models.PositiveIntegerField(null=True, blank=True)
+    # Subscription tier. Governed by Plan limits; every new company starts on
+    # the default (Free) plan. Platform admins can move a company between plans.
+    plan = models.ForeignKey(
+        "Plan", on_delete=models.PROTECT, related_name="companies", null=True, blank=True,
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):
@@ -77,6 +83,10 @@ class User(AbstractBaseUser, PermissionsMixin):
         ("viewer", "viewer"),
     ]
 
+    # Reply-language preference for the AI assistant. English is the default;
+    # Roman Urdu (Urdu written in Latin script) is the opt-in for daily use.
+    LANGUAGES = [("en", "English"), ("ur", "Roman Urdu")]
+
     email = models.EmailField(unique=True)
     # Retained nullable for compatibility with pre-existing database rows; all
     # current enterprise authentication uses email.
@@ -89,7 +99,17 @@ class User(AbstractBaseUser, PermissionsMixin):
     company = models.ForeignKey(
         Company, on_delete=models.CASCADE, related_name="users", null=True, blank=True
     )
+    department = models.ForeignKey(
+        "Department", on_delete=models.SET_NULL, related_name="members",
+        null=True, blank=True,
+    )
     role = models.CharField(max_length=20, choices=ROLES, default="employee")
+    # Platform root admin: complete authority over every tenant, the platform
+    # LLM default, plans and company plan assignment. Granted via the
+    # `create_platform_admin` management command — never hardcoded to an email.
+    is_platform_admin = models.BooleanField(default=False)
+    email_verified = models.BooleanField(default=False)
+    language = models.CharField(max_length=2, choices=LANGUAGES, default="en")
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -100,6 +120,100 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.email
+
+
+class Department(models.Model):
+    """A team inside one company. Documents can be scoped to a department so
+    only its members (plus explicit grantees) can read them."""
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="departments")
+    name = models.CharField(max_length=120)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("company", "name")
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.company.name} / {self.name}"
+
+
+class Plan(models.Model):
+    """A subscription tier. Limits are enforced server-side (seats on member
+    creation, document count + storage on upload, monthly asks on /api/ask).
+    Prices are in PKR; the Free plan is auto-attached to every new company."""
+    name = models.CharField(max_length=60, unique=True)
+    price_pkr = models.PositiveIntegerField(default=0)
+    billing_period = models.CharField(max_length=20, default="month")
+    max_members = models.PositiveIntegerField(null=True, blank=True)      # None = unlimited
+    max_documents = models.PositiveIntegerField(null=True, blank=True)
+    storage_mb = models.PositiveIntegerField(null=True, blank=True)
+    monthly_ask_limit = models.PositiveIntegerField(null=True, blank=True)
+    # Extra capabilities a plan unlocks (checked in views, not just shown).
+    allow_versions = models.BooleanField(default=False)
+    allow_departments = models.BooleanField(default=False)
+    allow_custom_llm = models.BooleanField(default=False)
+    is_default = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.name
+
+    @classmethod
+    def default(cls):
+        """The default (Free) plan. Auto-provisions it on fresh installs so a
+        missing seed command can never block company registration."""
+        plan = cls.objects.filter(is_default=True, is_active=True).first()
+        if plan is None:
+            plan = cls.objects.filter(name="Free").first()
+        if plan is None:
+            plan = cls.objects.create(
+                name="Free", price_pkr=0, billing_period="month",
+                max_members=3, max_documents=20, storage_mb=512, monthly_ask_limit=50,
+                is_default=True,
+            )
+        return plan
+
+
+class OneTimeToken(models.Model):
+    """Single-purpose, expiring, hashed token for email verification and
+    password resets. The raw token only ever exists in the emailed link."""
+    PURPOSES = [("verify_email", "verify_email"), ("password_reset", "password_reset")]
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="one_time_tokens")
+    purpose = models.CharField(max_length=20, choices=PURPOSES)
+    token_hash = models.CharField(max_length=64, unique=True)  # sha256 hex of the raw token
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    def is_valid(self):
+        from django.utils import timezone
+        return self.used_at is None and self.expires_at > timezone.now()
+
+    @classmethod
+    def issue(cls, user, purpose, minutes=60):
+        import hashlib
+        from django.utils import timezone
+        raw = secrets.token_urlsafe(32)
+        obj = cls.objects.create(
+            user=user, purpose=purpose, token_hash=hashlib.sha256(raw.encode()).hexdigest(),
+            expires_at=timezone.now() + timedelta(minutes=minutes),
+        )
+        return obj, raw
+
+    @classmethod
+    def consume(cls, raw, purpose):
+        """Return the token row when valid, marking it used. None otherwise."""
+        import hashlib
+        from django.utils import timezone
+        h = hashlib.sha256((raw or "").encode()).hexdigest()
+        obj = cls.objects.filter(token_hash=h, purpose=purpose).first()
+        if not obj or not obj.is_valid():
+            return None
+        obj.used_at = timezone.now()
+        obj.save(update_fields=["used_at"])
+        return obj
 
 
 class Document(models.Model):
@@ -157,9 +271,106 @@ class Document(models.Model):
     num_chunks = models.IntegerField(default=0)
     # `company` keeps the existing tenant-wide behaviour. `restricted` means
     # only the uploader and explicitly granted users may read/search/download.
-    ACCESS_SCOPES = [("company", "Entire company"), ("restricted", "Selected people")]
+    # `department` limits visibility to members of document.department.
+    ACCESS_SCOPES = [
+        ("company", "Entire company"),
+        ("restricted", "Selected people"),
+        ("department", "My department"),
+    ]
     access_scope = models.CharField(max_length=20, choices=ACCESS_SCOPES, default="company")
+    department = models.ForeignKey(
+        Department, on_delete=models.SET_NULL, related_name="documents", null=True, blank=True,
+    )
+    # Comma-separated free-form tags (searchable/filterable in the workspace).
+    tags = models.CharField(max_length=300, blank=True, default="")
+    # Background indexing lifecycle: upload returns immediately (pending) and a
+    # worker thread flips this to ready (or failed) once chunks exist.
+    INDEXING_STATES = [("pending", "pending"), ("ready", "ready"), ("failed", "failed")]
+    indexing_status = models.CharField(max_length=10, choices=INDEXING_STATES, default="ready")
+    index_error = models.CharField(max_length=300, blank=True, default="")
+    version = models.PositiveIntegerField(default=1)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class DocumentVersion(models.Model):
+    """A frozen copy of a document's file as of a version upload. The current
+    file lives on Document; older ones are archived here (plan-gated)."""
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name="versions")
+    version_number = models.PositiveIntegerField()
+    stored_path = models.CharField(max_length=500)
+    filename = models.CharField(max_length=300)
+    size = models.IntegerField(default=0)
+    uploaded_by = models.ForeignKey(User, null=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("document", "version_number")
+        ordering = ["-version_number"]
+
+
+class ChatConversation(models.Model):
+    """A named chat thread for one user in one company. Messages persist so the
+    assistant keeps context across turns and users can revisit old answers."""
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="conversations")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="conversations")
+    title = models.CharField(max_length=120, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+
+    def __str__(self):
+        return self.title or f"Chat {self.pk}"
+
+
+class ChatMessage(models.Model):
+    """One persisted turn inside a ChatConversation. Assistant rows keep their
+    grounded source names and a thumbs up/down rating for quality analytics."""
+    conversation = models.ForeignKey(
+        ChatConversation, on_delete=models.CASCADE, related_name="messages",
+    )
+    role = models.CharField(max_length=10)  # "user" | "assistant"
+    content = models.TextField()
+    sources = models.TextField(blank=True, default="")  # JSON list of filenames
+    # null = unrated; 1 = thumbs up; -1 = thumbs down
+    rating = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+
+
+class AskLog(models.Model):
+    """One row per /api/ask call. Powers usage analytics: questions per user or
+    department, unanswered questions (zero chunks retrieved), flagged asks and
+    plan quota accounting."""
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="ask_logs")
+    user = models.ForeignKey(User, null=True, on_delete=models.SET_NULL, related_name="ask_logs")
+    department = models.ForeignKey(
+        Department, on_delete=models.SET_NULL, null=True, blank=True, related_name="ask_logs",
+    )
+    question = models.TextField()
+    mode = models.CharField(max_length=10, blank=True, default="")
+    provider = models.CharField(max_length=20, blank=True, default="")
+    chunks_found = models.IntegerField(default=0)
+    answered = models.BooleanField(default=False)
+    flagged = models.BooleanField(default=False)
+    latency_ms = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class Announcement(models.Model):
+    """A company-wide broadcast from an admin, shown in the workspace."""
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="announcements")
+    title = models.CharField(max_length=200)
+    body = models.TextField()
+    created_by = models.ForeignKey(User, null=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
 
 
 class DocumentAccess(models.Model):
@@ -224,16 +435,22 @@ class DocumentShare(models.Model):
 
 
 class LLMConfig(models.Model):
-    """Platform-wide LLM settings, editable at runtime from the Settings page.
+    """Runtime-editable LLM settings.
 
-    A single row (pk=1). When a field is left blank the matching .env value is
-    used instead (see providers._resolve). The api_key is stored in plaintext —
-    fine for local testing; in production put it in .env / a secrets manager and
-    leave this blank.
+    Two levels: the platform-wide row (company NULL, pk arbitrary) and optional
+    per-company overrides (a company's own provider/model/key). Resolution order
+    in providers._resolve(): company row -> platform row -> .env. The api_key is
+    stored in plaintext — fine for local testing; in production put it in
+    .env / a secrets manager and leave this blank.
     """
     PROVIDERS = [("ollama", "ollama"), ("openai", "openai"),
-                 ("anthropic", "anthropic"), ("gemini", "gemini")]
+                 ("anthropic", "anthropic"), ("gemini", "gemini"),
+                 ("bedrock", "bedrock")]
 
+    company = models.ForeignKey(
+        Company, on_delete=models.CASCADE, related_name="llm_configs",
+        null=True, blank=True,
+    )
     provider = models.CharField(max_length=20, choices=PROVIDERS, default="ollama")
     chat_model = models.CharField(max_length=120, blank=True, default="")
     api_key = models.CharField(max_length=400, blank=True, default="")
@@ -242,7 +459,63 @@ class LLMConfig(models.Model):
     max_tokens = models.IntegerField(default=512)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["company"], condition=models.Q(company__isnull=False),
+                name="uniq_llmconfig_per_company",
+            )
+        ]
+
     @classmethod
     def load(cls):
-        obj, _ = cls.objects.get_or_create(pk=1)
+        obj, _ = cls.objects.get_or_create(company=None)
         return obj
+
+    @classmethod
+    def for_company(cls, company):
+        """The company's own override row, or None when it uses the platform default."""
+        if company is None:
+            return None
+        return cls.objects.filter(company=company).first()
+
+
+class AttendanceRecord(models.Model):
+    """One attendance mark for one user on one calendar day (Feature 5).
+
+    Created when an employee scans the company QR code from an authenticated web
+    session. `company` keeps the row tenant-scoped like every other table, and
+    the (user, date) pair is unique so a day can only be marked once."""
+    STATUSES = [("Present", "Present"), ("Absent", "Absent")]
+
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name="attendance")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="attendance")
+    date = models.DateField()
+    scanned_at = models.DateTimeField(auto_now_add=True)
+    status = models.CharField(max_length=10, choices=STATUSES, default="Present")
+
+    class Meta:
+        unique_together = ("user", "date")
+        ordering = ["-date", "-scanned_at"]
+
+    def __str__(self):
+        return f"{self.user} {self.date} {self.status}"
+
+
+class UserStrike(models.Model):
+    """Rolling attendance-discipline counter for one user (Feature 5).
+
+    The monthly evaluation utility refreshes `absent_count`, and when a month
+    crosses the absence limit it increments `strikes`. Once `strikes` reaches the
+    cap the account is frozen (and deactivated by the evaluator). `last_evaluated_period`
+    guards against double-counting if the evaluation runs twice in the same month."""
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="strike_record")
+    absent_count = models.IntegerField(default=0)
+    strikes = models.IntegerField(default=0)
+    is_frozen = models.BooleanField(default=False)
+    # "YYYY-MM" of the last month already counted toward strikes.
+    last_evaluated_period = models.CharField(max_length=7, blank=True, default="")
+    last_updated = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.user}: {self.strikes} strike(s), {self.absent_count} absence(s)"

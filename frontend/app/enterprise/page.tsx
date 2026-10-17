@@ -74,14 +74,14 @@ function EnterpriseInner() {
         : 'OpenVault for teams.'
 
   const inputClass =
-    'h-12 rounded-xl border border-[#d8d5cc] bg-white px-4 text-sm text-[#1d1d1b] outline-none transition-colors placeholder:text-[#9b9890] focus:border-[#1d1d1b] focus:ring-2 focus:ring-[#1d1d1b]/10'
+    'h-12 rounded-xl border border-[#d8d5cc] bg-white px-4 text-sm text-[#1d1d1b] outline-none transition-colors placeholder:text-[#6b6862] focus:border-[#1d1d1b] focus:ring-2 focus:ring-[#1d1d1b]/10'
   const primaryBtn =
     'flex h-12 items-center justify-center gap-2 rounded-full bg-[#1d1d1b] text-sm font-medium text-white transition-colors hover:bg-[#3c3b37] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1d1d1b]/50 disabled:cursor-not-allowed disabled:opacity-60'
 
   function tabClass(active: boolean) {
     return active
       ? 'border-b-2 border-[#1d1d1b] pb-3 text-[#1d1d1b]'
-      : 'border-b-2 border-transparent pb-3 text-[#a5a299] transition-colors hover:text-[#77746c]'
+      : 'border-b-2 border-transparent pb-3 text-[#a5a299] transition-colors hover:text-[#6b6862]'
   }
 
   return (
@@ -90,7 +90,7 @@ function EnterpriseInner() {
         <Logo />
         <Link
           href="/"
-          className="rounded-full text-sm text-[#77746c] transition-colors hover:text-[#1d1d1b] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1d1d1b]/40"
+          className="rounded-full text-sm text-[#6b6862] transition-colors hover:text-[#1d1d1b] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1d1d1b]/40"
         >
 Back to landing
         </Link>
@@ -98,7 +98,7 @@ Back to landing
 
       <section className="mx-auto grid max-w-5xl gap-12 py-16 lg:grid-cols-[1fr_440px] lg:items-center">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#9b9890]">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[#6b6862]">
             OpenVault for teams
           </p>
           <h1 className="mt-5 text-4xl font-semibold tracking-[-0.05em] sm:text-6xl sm:tracking-[-0.07em]">
@@ -106,7 +106,7 @@ Back to landing
             <br />
             <span className="font-serif font-normal italic">better together.</span>
           </h1>
-          <p className="mt-6 max-w-md text-lg leading-relaxed text-[#77746c]">
+          <p className="mt-6 max-w-md text-lg leading-relaxed text-[#6b6862]">
             Bring your organization&apos;s best thinking into one calm, searchable home. Employees
             and admins sign in with their work email; your role is set by your company administrator.
           </p>
@@ -165,7 +165,20 @@ Back to landing
                 {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
                 Sign in {!busy && <ArrowRight className="size-4" aria-hidden />}
               </button>
-              <p className="text-center text-xs text-[#9b9890]">Demo: admin@openscience.com / demo1234</p>
+              <div className="flex items-center justify-between pt-1 text-xs">
+                <Link
+                  href="/auth/forgot"
+                  className="text-[#6b6862] underline hover:text-[#1d1d1b]"
+                >
+                  Forgot password?
+                </Link>
+                <Link
+                  href="/auth/verify"
+                  className="text-[#6b6862] hover:text-[#1d1d1b]"
+                >
+                  Verify email
+                </Link>
+              </div>
             </form>
           ) : (
             <form
@@ -225,7 +238,7 @@ Back to landing
       <div className="mx-auto max-w-5xl">
         <Link
           href="/"
-          className="inline-flex items-center gap-2 rounded-full text-sm text-[#77746c] transition-colors hover:text-[#1d1d1b] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1d1d1b]/40"
+          className="inline-flex items-center gap-2 rounded-full text-sm text-[#6b6862] transition-colors hover:text-[#1d1d1b] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1d1d1b]/40"
         >
           <ArrowLeft className="size-4" aria-hidden /> Back to OpenVault
         </Link>

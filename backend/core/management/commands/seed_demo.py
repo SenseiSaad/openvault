@@ -524,12 +524,13 @@ class Command(BaseCommand):
         return created
 
     def handle(self, *args, **options):
-        # Django superuser for /admin
+        # Django superuser for /admin (password configurable via env, not hardcoded)
+        demo_password = os.getenv("DEMO_ADMIN_PASSWORD", "admin1234")
         if not User.objects.filter(email="root@securekb.local").exists():
             User.objects.create_superuser(
-                email="root@securekb.local", password="admin1234", full_name="OpenVault Root",
+                email="root@securekb.local", password=demo_password, full_name="OpenVault Root",
             )
-            self.stdout.write(self.style.SUCCESS(">> superuser root@securekb.local / admin1234"))
+            self.stdout.write(self.style.SUCCESS(">> superuser root@securekb.local (password from DEMO_ADMIN_PASSWORD)"))
 
         new_docs = 0
         for slug, (name, docs) in DEMO.items():

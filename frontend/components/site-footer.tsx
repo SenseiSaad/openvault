@@ -34,13 +34,13 @@ export function SiteFooter() {
       <div className="mx-auto grid max-w-7xl gap-10 sm:grid-cols-2 lg:grid-cols-[1.4fr_repeat(3,1fr)]">
         <div className="max-w-xs">
           <Logo />
-          <p className="mt-4 text-sm leading-relaxed text-[#77746c]">
+          <p className="mt-4 text-sm leading-relaxed text-[#6b6862]">
             A private company knowledge system for secure documents, AI assisted answers, cross company collaboration, and CPA ready evidence trails.
           </p>
         </div>
         {COLUMNS.map((col) => (
           <div key={col.title}>
-            <p className="mb-4 text-xs font-semibold uppercase tracking-[0.16em] text-[#8c8a83]">{col.title}</p>
+            <p className="mb-4 text-xs font-semibold uppercase tracking-[0.16em] text-[#6b6862]">{col.title}</p>
             <ul className="flex flex-col gap-3 text-sm text-[#65645f]">
               {col.links.map((l) => (
                 <li key={l.label}><Link href={l.href} className="hover:text-[#1d1d1b]">{l.label}</Link></li>

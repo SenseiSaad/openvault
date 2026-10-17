@@ -40,6 +40,9 @@ API_PORT="${API_PORT:-8000}"
 WEB_PORT="${WEB_PORT:-3000}"
 
 PY="$BACKEND_DIR/.venv/bin/python"
+if [ ! -x "$PY" ] && command -v python3 >/dev/null 2>&1; then
+  PY="python3"
+fi
 NEXT="$FRONTEND_DIR/node_modules/.bin/next"
 
 # Open the backend landing page in a second tab too (set OPEN_BACKEND=0 to skip).

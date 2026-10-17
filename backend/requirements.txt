@@ -7,3 +7,23 @@ pypdf==5.1.0
 python-pptx==1.0.2
 python-docx==1.1.2
 python-dotenv==1.0.1
+gunicorn==23.0.0
+boto3==1.43.114
+botocore==1.43.114
+
+# Optional / lazily-imported integrations. The code degrades gracefully when
+# these are absent (calendar sync is simulated, QR falls back to a plain URL,
+# OCR is skipped), so they are safe to omit in a minimal install.
+google-api-python-client==2.149.0
+google-auth==2.35.0
+qrcode==7.4.2
+
+# ── Production / staging database + cache (optional; SQLite + LocMem by default) ──
+# psycopg2-binary==2.9.10     # PostgreSQL (set POSTGRES_* or DATABASE_URL in .env)
+# dj-database-url==2.3.0      # DATABASE_URL parsing
+# redis==5.2.1                # Redis cache for multi-process rate limiting
+
+# ── Optional OCR for scanned PDFs/images (also needs system tesseract + poppler) ──
+# pytesseract==0.3.13
+# pdf2image==1.17.0
+# Pillow==11.1.0

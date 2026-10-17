@@ -14,7 +14,7 @@ import { useAuth } from '@/lib/auth'
 
 const focusRing =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1d1d1b]/25 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f7f6f2]'
-const eyebrow = 'text-xs font-semibold uppercase tracking-[0.16em] text-[#8c8a83]'
+const eyebrow = 'text-xs font-semibold uppercase tracking-[0.16em] text-[#6b6862]'
 const iconBtn =
   `inline-flex items-center gap-1.5 rounded-full border border-[#dcdad3] bg-[#fffdfa] px-3 py-2 text-sm text-[#1d1d1b] transition-colors hover:border-[#1d1d1b] disabled:cursor-not-allowed disabled:opacity-50 ${focusRing}`
 const ghostBtn =
@@ -75,7 +75,7 @@ export default function SharedWithMePage() {
         <h1 className="mt-3 text-3xl font-semibold tracking-[-0.05em] sm:text-4xl sm:tracking-[-0.06em]">
           Shared <span className="font-serif font-normal italic">with you.</span>
         </h1>
-        <p className="mt-3 max-w-xl text-sm leading-relaxed text-[#77746c]">
+        <p className="mt-3 max-w-xl text-sm leading-relaxed text-[#6b6862]">
           Individual documents that people at other organizations have granted you access to. You can
           read and search these alongside your own company&apos;s library, but nobody else at your
           company can see them unless they were shared too.
@@ -91,7 +91,7 @@ export default function SharedWithMePage() {
         )}
 
         {loading ? (
-          <span className="flex items-center gap-2 text-sm text-[#77746c]">
+          <span className="flex items-center gap-2 text-sm text-[#6b6862]">
             <Loader2 className="size-4 animate-spin" aria-hidden /> Loading shared documents…
           </span>
         ) : loadError ? (
@@ -106,7 +106,7 @@ export default function SharedWithMePage() {
               <Share2 className="size-6" aria-hidden />
             </span>
             <p className="mt-4 font-serif text-2xl italic">Nothing shared yet.</p>
-            <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-[#98958c]">
+            <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-[#6b6862]">
               When someone at another company shares a specific document with you, it will appear here.
             </p>
           </div>
@@ -126,8 +126,8 @@ export default function SharedWithMePage() {
                           <Building2 className="size-3" aria-hidden /> {doc.company_name || 'External company'}
                         </span>
                       </div>
-                      {doc.description && <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-[#77746c]">{doc.description}</p>}
-                      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#98958c]">
+                      {doc.description && <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-[#6b6862]">{doc.description}</p>}
+                      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#6b6862]">
                         <span className="rounded-full bg-[#f2efe8] px-2 py-0.5 font-medium text-[#5d5b55]">{doc.category || 'Uncategorized'}</span>
                         {doc.shared_by && <span>Shared by {doc.shared_by}</span>}
                       </div>
@@ -140,7 +140,7 @@ export default function SharedWithMePage() {
                         Download
                       </button>
                     ) : (
-                      <span className="text-xs text-[#98958c]">View only</span>
+                      <span className="text-xs text-[#6b6862]">View only</span>
                     )}
                   </div>
                 </div>

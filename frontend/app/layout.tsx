@@ -1,6 +1,8 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { AuthProvider } from '@/lib/auth'
+import { ThemeProvider } from '@/components/theme-provider'
+import { Toaster } from '@/components/toaster'
 import './globals.css'
 
 export const metadata: Metadata = {
@@ -46,10 +48,13 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className="antialiased">
-        <AuthProvider>{children}</AuthProvider>
-        {process.env.NODE_ENV === 'production' && <Analytics />}
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+          <AuthProvider>{children}</AuthProvider>
+          <Toaster />
+          {process.env.NODE_ENV === 'production' && <Analytics />}
+        </ThemeProvider>
       </body>
     </html>
   )
