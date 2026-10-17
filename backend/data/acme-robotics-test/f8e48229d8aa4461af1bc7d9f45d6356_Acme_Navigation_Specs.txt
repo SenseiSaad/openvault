@@ -1,6 +1,0 @@
-ACME ROBOTICS SYSTEM ARCHITECTURE 2026
-
-The Autonomous Navigation Module operates on real-time LIDAR telemetry.
-Emergency shutdown triggers if obstacles are detected within 1.5 meters.
-Battery management system enters sleep mode at 15 percent charge.
-Maintenance protocol requires calibration every 500 operating hours.

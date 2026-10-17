@@ -1125,8 +1125,13 @@ def llm_config(request):
             if not (plan and plan.allow_custom_llm):
                 return Response({"detail": "Custom AI settings are not part of your plan."},
                                 status=402)
-        cfg, _created = LLMConfig.objects.get_or_create(company=request.user.company)
-        is_override = True
+            cfg, _created = LLMConfig.objects.get_or_create(company=request.user.company)
+            is_override = True
+        else:
+            # Read-only: show the company's override if one exists, otherwise the
+            # platform/.env default WITHOUT persisting a row that shadows .env.
+            cfg = LLMConfig.for_company(request.user.company) or LLMConfig.load()
+            is_override = cfg.pk is not None and cfg.company_id is not None
 
     if request.method == "GET":
         data = LLMConfigSerializer(cfg).data
