@@ -1,5 +1,6 @@
 """Database tables. Every tenant-owned row carries `company` — that FK is the
 backbone of multi-tenant isolation (one company can never see another's data)."""
+import os
 import secrets
 import string
 from datetime import timedelta
@@ -469,8 +470,17 @@ class LLMConfig(models.Model):
 
     @classmethod
     def load(cls):
-        obj, _ = cls.objects.get_or_create(company=None)
-        return obj
+        """The platform-wide row when one exists; otherwise an UNSAVED default
+        derived from the environment. Never auto-creates a row, so `.env` stays
+        the source of truth until a platform admin explicitly saves settings."""
+        obj = cls.objects.filter(company=None).first()
+        if obj is not None:
+            return obj
+        provider = os.getenv("LLM_PROVIDER", "ollama").strip().lower()
+        if provider not in dict(cls.PROVIDERS):
+            provider = "ollama"
+        model_env = "LLM_MODEL" if provider == "ollama" else f"{provider.upper()}_MODEL"
+        return cls(provider=provider, chat_model=os.getenv(model_env, "").strip())
 
     @classmethod
     def for_company(cls, company):
