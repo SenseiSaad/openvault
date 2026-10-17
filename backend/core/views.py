@@ -3,33 +3,49 @@
 Multi-tenant rule enforced everywhere: a request only ever touches rows where
 `company == request.user.company`. Document reads additionally pass the
 per-document ACL before metadata, downloads, or RAG retrieval are returned.
+
+Authentication uses HttpOnly JWT cookies (see core.auth); the Authorization
+header still works for scripts. Open endpoints are rate-limited (core.ratelimit).
+Platform-level authority is the `is_platform_admin` flag — never an email.
 """
+import io
+import json
 import os
+import threading
 import uuid
 
 from django.contrib.auth import authenticate
-from django.db.models import Q
-from django.http import StreamingHttpResponse, Http404, FileResponse
+from django.db.models import Q, Avg, Count, Sum
+from django.http import StreamingHttpResponse, Http404, FileResponse, JsonResponse
+from django.utils import timezone
 from django.utils.text import slugify
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework_simplejwt.tokens import RefreshToken
 
 from django.conf import settings
 
 from . import rag
 from . import providers
+from . import moderation
+from . import attendance as attendance_svc
+from .auth import set_auth_cookies, clear_auth_cookies, ACCESS_COOKIE, REFRESH_COOKIE
+from .ratelimit import rate_limit
 from .models import (
-    Company, User, Document, DocumentAccess, AuditLog, DocumentShare, LLMConfig,
+    Announcement, AskLog, AuditLog, ChatConversation, ChatMessage, Company, Department,
+    Document, DocumentAccess, DocumentShare, DocumentVersion, LLMConfig, Plan,
+    AttendanceRecord, UserStrike, User, OneTimeToken,
 )
-from .permissions import IsAdmin, IsEditor
+from .permissions import IsAdmin, IsEditor, IsPlatformAdmin, is_platform_admin
 from .serializers import (
-    CompanySerializer, CompanyDirectorySerializer, MemberDirectorySerializer,
-    UserSerializer, DocumentSerializer, AuditSerializer,
+    AnnouncementSerializer, AskLogSerializer, AuditSerializer, ChatConversationSerializer,
+    ChatMessageSerializer, CompanyDirectorySerializer, CompanyProfileSerializer,
+    DepartmentSerializer, DocumentSerializer, DocumentVersionSerializer,
+    MemberDirectorySerializer, PlanSerializer, UserSerializer,
     RegisterCompanySerializer, LoginSerializer, UserCreateSerializer, AskSerializer,
     DocumentShareSerializer, LLMConfigSerializer,
+    AttendanceRecordSerializer, UserStrikeSerializer,
 )
 
 
@@ -37,6 +53,27 @@ def client_ip(request):
     """Best-effort caller IP for the audit log (honours X-Forwarded-For)."""
     fwd = request.META.get("HTTP_X_FORWARDED_FOR")
     return (fwd.split(",")[0].strip() if fwd else request.META.get("REMOTE_ADDR", "")) or ""
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def health(request):
+    """Liveness/readiness probe for load balancers and uptime monitors.
+    DB is exercised with a real query; everything else is static info."""
+    from django.db import connection
+    db_ok = True
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+    except Exception:
+        db_ok = False
+    payload = {
+        "status": "ok" if db_ok else "degraded",
+        "db": db_ok,
+        "time": timezone.now().isoformat(),
+    }
+    return JsonResponse(payload, status=200 if db_ok else 503)
 
 
 def audit(request, action, detail=""):
@@ -52,16 +89,32 @@ def audit(request, action, detail=""):
 
 def token_for(user):
     """Mint a short-lived JWT access token for this user."""
+    from rest_framework_simplejwt.tokens import RefreshToken
     return str(RefreshToken.for_user(user).access_token)
+
+
+def _is_platform_level(user):
+    """Platform-level authority: the DB flag or a Django superuser."""
+    return bool(
+        user and user.is_authenticated and (user.is_superuser or user.is_platform_admin)
+    )
 
 
 def visible_documents(user):
     """Return only documents the signed-in user is allowed to read."""
+    if _is_platform_level(user):
+        if getattr(user, "company_id", None):
+            return Document.objects.filter(company_id=user.company_id).distinct()
+        return Document.objects.all().distinct()
     if not getattr(user, "company_id", None):
         return Document.objects.none()
+    dept_q = (
+        Q(access_scope="department", department_id=user.department_id)
+        if getattr(user, "department_id", None) else Q()
+    )
     return (
         Document.objects.filter(company_id=user.company_id)
-        .filter(Q(access_scope="company") | Q(access_grants__user=user))
+        .filter(Q(access_scope="company") | dept_q | Q(access_grants__user=user))
         .distinct()
     )
 
@@ -69,38 +122,56 @@ def visible_documents(user):
 def share_target(request):
     """Resolve a registered target user from a company code + member id.
 
-    The code is required for the new sharing flow. Email remains accepted as a
-    backwards-compatible API path for existing integrations, but the frontend
-    never needs to expose a global email directory.
+    The code is required so a caller can never probe arbitrary user ids; the
+    member must belong to the company the code resolved to.
     """
     access_code = (request.data.get("access_code") or "").strip().upper()
     raw_user_id = request.data.get("user_id")
-    email = (request.data.get("email") or "").strip()
-    company = None
-    if access_code:
-        company = Company.objects.filter(access_code__iexact=access_code).first()
-        if not company:
-            return None, "No registered company uses that access code."
+    if not access_code or raw_user_id is None:
+        return None, "A company code and a member are required."
+    company = Company.objects.filter(access_code__iexact=access_code).first()
+    if not company:
+        return None, "No registered company uses that access code."
     try:
-        if raw_user_id is not None:
-            target = User.objects.get(pk=int(raw_user_id), is_active=True)
-        elif email:
-            target = User.objects.get(email__iexact=email, is_active=True)
-        else:
-            return None, "Select a registered company member."
+        target = User.objects.get(pk=int(raw_user_id), is_active=True)
     except (User.DoesNotExist, TypeError, ValueError):
         return None, "That registered member could not be found."
-    if company and target.company_id != company.id:
+    if target.company_id != company.id:
         return None, "That member does not belong to the selected company."
     if not target.company_id or target.role == "public":
         return None, "Only registered enterprise members can receive documents."
     return target, None
 
+
+# ------------------------------------------------------------------ helpers
+def _email_user(user, subject, body):
+    """Send a transactional email; console backend in dev, never raises."""
+    from django.core.mail import send_mail
+    try:
+        send_mail(subject=subject, message=body,
+                  from_email=settings.DEFAULT_FROM_EMAIL, recipient_list=[user.email],
+                  fail_silently=True)
+        return True
+    except Exception:
+        return False
+
+
+def _frontend_url(path=""):
+    base = (settings.PUBLIC_BASE_URL or "http://localhost:3000").rstrip("/")
+    return f"{base}/{path.lstrip('/')}" if path else base
+
+
+def _require_email_verification(user):
+    """True when the platform is set to gate login on verified email."""
+    return settings.REQUIRE_EMAIL_VERIFICATION and not user.email_verified
+
+
 # -------------------------------------------------------------------- auth
 @api_view(["POST"])
 @permission_classes([AllowAny])
+@rate_limit("register", rate=5, per_seconds=600, key="ip")
 def register_company(request):
-    """Create a new company and its first admin. Returns a JWT."""
+    """Create a new company and its first admin. Sets auth cookies."""
     s = RegisterCompanySerializer(data=request.data)
     s.is_valid(raise_exception=True)
     d = s.validated_data
@@ -113,32 +184,82 @@ def register_company(request):
         n += 1
         slug = f"{base}-{n}"
 
-    company = Company.objects.create(
-        name=d["company_name"], slug=slug,
-        website=d.get("website", ""), contact_email=d.get("contact_email", ""),
-        phone=d.get("phone", ""), max_employees=d.get("max_employees"),
+    from django.db import transaction
+    with transaction.atomic():
+        company = Company.objects.create(
+            name=d["company_name"], slug=slug,
+            website=d.get("website", ""), contact_email=d.get("contact_email", ""),
+            phone=d.get("phone", ""), max_employees=d.get("max_employees"),
+            plan=Plan.default(),
+        )
+        user = User.objects.create_user(
+            email=d["email"], password=d["password"],
+            full_name=d.get("admin_name", ""), title=d.get("admin_title", ""),
+            role="admin", company=company,
+        )
+        AuditLog.objects.create(company=company, user=user, action="register",
+                                detail=f"company {company.name}", ip=client_ip(request))
+
+    # Email verification (no-op link when email delivery is console-backed).
+    tok, raw = OneTimeToken.issue(user, "verify_email", minutes=60 * 24)
+    _email_user(
+        user, "Verify your OpenVault email",
+        f"Welcome to OpenVault.\n\nVerify your email within 24 hours:\n"
+        f"{_frontend_url('/auth/verify?token=' + raw)}\n\n"
+        f"If you did not create this account you can ignore this email.",
     )
-    user = User.objects.create_user(
-        email=d["email"], password=d["password"],
-        full_name=d.get("admin_name", ""), title=d.get("admin_title", ""),
-        role="admin", company=company,
-    )
-    AuditLog.objects.create(company=company, user=user, action="register",
-                            detail=f"company {company.name}", ip=client_ip(request))
-    return Response({"token": token_for(user), "user": UserSerializer(user).data}, status=201)
+    audit(_as(request, user), "verification_email_sent")
+
+    resp = Response({"token": token_for(user), "user": UserSerializer(user).data},
+                    status=201)
+    return set_auth_cookies(resp, user)
 
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
+@rate_limit("login", rate=8, per_seconds=60, key="ip_email")
 def login(request):
-    """Enterprise sign-in with email + password. Returns a JWT."""
+    """Enterprise sign-in with email + password. Sets HttpOnly auth cookies."""
     s = LoginSerializer(data=request.data)
     s.is_valid(raise_exception=True)
     user = authenticate(username=s.validated_data["email"], password=s.validated_data["password"])
     if user is None:
         return Response({"detail": "Invalid email or password."}, status=401)
+    if _require_email_verification(user):
+        return Response({"detail": "Please verify your email before signing in. "
+                                   "Check your inbox for the verification link.",
+                         "code": "email_unverified"}, status=403)
     audit(_as(request, user), "login")
-    return Response({"token": token_for(user), "user": UserSerializer(user).data})
+    resp = Response({"token": token_for(user), "user": UserSerializer(user).data})
+    return set_auth_cookies(resp, user)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def logout(request):
+    """Clear the auth cookies (client-side session end)."""
+    resp = Response({"ok": True})
+    return clear_auth_cookies(resp)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@rate_limit("refresh", rate=30, per_seconds=60, key="ip")
+def refresh(request):
+    """Exchange the refresh cookie for a fresh access cookie."""
+    from rest_framework_simplejwt.tokens import RefreshToken
+    from rest_framework_simplejwt.exceptions import TokenError
+    raw = request.COOKIES.get(REFRESH_COOKIE)
+    if not raw:
+        return Response({"detail": "No refresh token."}, status=401)
+    try:
+        token = RefreshToken(raw)
+        user = User.objects.get(id=token["user_id"], is_active=True)
+    except (TokenError, User.DoesNotExist, KeyError):
+        resp = Response({"detail": "Session expired. Sign in again."}, status=401)
+        return clear_auth_cookies(resp)
+    resp = Response({"ok": True, "user": UserSerializer(user).data})
+    return set_auth_cookies(resp, user)
 
 
 def _as(request, user):
@@ -151,70 +272,367 @@ def _as(request, user):
 @permission_classes([IsAuthenticated])
 def me(request):
     """Return the signed-in user's own profile (used to hydrate the frontend)."""
-    return Response(UserSerializer(request.user).data)
+    return Response(UserSerializer(request.user, context={"request": request}).data)
+
+
+@api_view(["PATCH"])
+@permission_classes([IsAuthenticated])
+def update_me(request):
+    """Let a user edit their own profile: name, title, reply language, password."""
+    user = request.user
+    data = request.data
+    for field in ("full_name", "title"):
+        if field in data:
+            setattr(user, field, str(data.get(field) or "").strip()[:200])
+    if "language" in data:
+        lang = str(data.get("language") or "en").strip().lower()
+        if lang not in ("en", "ur"):
+            return Response({"detail": "language must be 'en' or 'ur'."}, status=400)
+        user.language = lang
+    new_password = data.get("new_password")
+    if new_password:
+        current = data.get("current_password") or ""
+        if not user.check_password(current):
+            return Response({"detail": "Current password is incorrect."}, status=400)
+        if len(new_password) < 6:
+            return Response({"detail": "New password must be at least 6 characters."}, status=400)
+        user.set_password(new_password)
+    user.save()
+    audit(request, "profile_update", "self")
+    return Response(UserSerializer(user, context={"request": request}).data)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@rate_limit("verify_request", rate=5, per_seconds=600, key="ip_email")
+def request_verification(request):
+    """(Re)send the email-verification link for an account."""
+    email = str((request.data or {}).get("email") or "").strip().lower()
+    user = User.objects.filter(email__iexact=email, is_active=True).first()
+    if user and not user.email_verified:
+        tok, raw = OneTimeToken.issue(user, "verify_email", minutes=60 * 24)
+        _email_user(user, "Verify your OpenVault email",
+                    f"Verify your email within 24 hours:\n"
+                    f"{_frontend_url('/auth/verify?token=' + raw)}")
+    # Same response either way: never reveal whether an email exists.
+    return Response({"detail": "If that account exists, a verification link has been sent."})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@rate_limit("verify_confirm", rate=10, per_seconds=600, key="ip")
+def verify_email(request):
+    """Consume a verification token and mark the account verified."""
+    raw = str((request.data or {}).get("token") or "")
+    tok = OneTimeToken.consume(raw, "verify_email")
+    if not tok:
+        return Response({"detail": "This verification link is invalid or has expired."}, status=400)
+    tok.user.email_verified = True
+    tok.user.save(update_fields=["email_verified"])
+    return Response({"detail": "Email verified. You can sign in now."})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@rate_limit("forgot", rate=5, per_seconds=600, key="ip_email")
+def forgot_password(request):
+    """Email a one-time password-reset link (never reveals account existence)."""
+    email = str((request.data or {}).get("email") or "").strip().lower()
+    user = User.objects.filter(email__iexact=email, is_active=True).first()
+    if user:
+        tok, raw = OneTimeToken.issue(user, "password_reset", minutes=30)
+        _email_user(
+            user, "Reset your OpenVault password",
+            f"Reset your password within 30 minutes:\n"
+            f"{_frontend_url('/auth/reset?token=' + raw)}\n\n"
+            f"If you did not request this, ignore this email — your password is unchanged.",
+        )
+    return Response({"detail": "If that account exists, a reset link has been sent."})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@rate_limit("reset_confirm", rate=10, per_seconds=600, key="ip")
+def reset_password(request):
+    """Consume a reset token and set a new password."""
+    raw = str((request.data or {}).get("token") or "")
+    password = str((request.data or {}).get("password") or "")
+    if len(password) < 6:
+        return Response({"detail": "Password must be at least 6 characters."}, status=400)
+    tok = OneTimeToken.consume(raw, "password_reset")
+    if not tok:
+        return Response({"detail": "This reset link is invalid or has expired."}, status=400)
+    tok.user.set_password(password)
+    tok.user.email_verified = True  # a working reset link proves mailbox ownership
+    tok.user.save(update_fields=["password", "email_verified"])
+    return Response({"detail": "Password updated. You can sign in now."})
+
 
 # --------------------------------------------------------------- documents
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def documents(request):
-    """List only documents readable by this member."""
+    """List documents readable by this member. Paginated with ?page=&page_size="""
     qs = visible_documents(request.user).order_by("-created_at")
-    return Response(DocumentSerializer(qs, many=True).data)
+    page_data = _paginate(request, qs)
+    return Response({
+        "results": DocumentSerializer(page_data["qs"], many=True).data,
+        "count": page_data["count"],
+        "page": page_data["page"],
+        "pages": page_data["pages"],
+    })
+
+
+def _paginate(request, qs, default_page_size=50, max_page_size=200):
+    """Minimal pagination helper shared by list endpoints."""
+    try:
+        page = max(1, int(request.query_params.get("page", 1)))
+        page_size = min(max_page_size, max(1, int(request.query_params.get("page_size", default_page_size))))
+    except (TypeError, ValueError):
+        page, page_size = 1, default_page_size
+    count = qs.count()
+    pages = max(1, -(-count // page_size))
+    return {"qs": qs[(page - 1) * page_size: page * page_size],
+            "count": count, "page": page, "pages": pages}
+
+
+def _plan_for(company):
+    """The company's plan, guaranteed non-null for limit checks."""
+    return company.plan or Plan.default()
 
 
 @api_view(["POST"])
 @permission_classes([IsEditor])
 def upload_document(request):
-    """Upload + index a file. `is_okf` marks a curated always-in-context note."""
+    """Upload + index a file. Indexing runs in a background thread so the
+    request returns immediately with indexing_status='pending'."""
     f = request.FILES.get("file")
     if not f:
         return Response({"detail": "No file provided."}, status=400)
+    max_size = getattr(settings, "DATA_UPLOAD_MAX_MEMORY_SIZE", 50 * 1024 * 1024)
+    if f.size > max_size:
+        return Response({"detail": f"File too large. Max size is {max_size // (1024*1024)} MB."},
+                        status=413)
+
     is_okf = str(request.data.get("is_okf", "")).lower() in ("1", "true", "yes", "on")
     access_scope = (request.data.get("access_scope") or "company").strip().lower()
-    if access_scope not in {"company", "restricted"}:
-        return Response({"detail": "access_scope must be company or restricted."}, status=400)
+    if access_scope not in {"company", "restricted", "department"}:
+        return Response({"detail": "access_scope must be company, department or restricted."},
+                        status=400)
     category = request.data.get("category") or "Other"
     description = request.data.get("description") or ""
+    tags = str(request.data.get("tags") or "").strip()[:300]
 
     company = request.user.company
+    if company is None:
+        return Response(
+            {"detail": "Your account is not attached to a company. Platform admins must pick an "
+                       "active company (use the company switcher in the sidebar) before uploading."},
+            status=400,
+        )
+
+    # Plan limits: document count and storage quota (server-enforced).
+    plan = _plan_for(company)
+    if plan:
+        if plan.max_documents is not None and company.documents.count() >= plan.max_documents:
+            return Response({"detail": f"Plan limit reached ({plan.max_documents} documents). "
+                                       "Upgrade your plan to upload more."}, status=402)
+        if plan.storage_mb is not None:
+            used = company.documents.aggregate(total=Sum("size"))["total"] or 0
+            if used + f.size > plan.storage_mb * 1024 * 1024:
+                return Response({"detail": "Storage quota for your plan is full. "
+                                           "Upgrade to upload more."}, status=402)
+
+    # Department scope needs a department (default: the uploader's own).
+    department = None
+    if access_scope == "department":
+        dept_id = request.data.get("department_id")
+        if dept_id:
+            department = Department.objects.filter(pk=dept_id, company=company).first()
+        if department is None and request.user.department_id:
+            department = request.user.department
+        if department is None:
+            return Response({"detail": "Pick a department (or join one) to use department scope."},
+                            status=400)
+        if not (plan and plan.allow_departments):
+            return Response({"detail": "Department scoping is not part of your current plan."},
+                            status=402)
+
     folder = os.path.join(settings.DATA_DIR, company.slug)
     os.makedirs(folder, exist_ok=True)
     stored = os.path.join(folder, f"{uuid.uuid4().hex}_{f.name}")
-    raw = f.read()
-    with open(stored, "wb") as out:
-        out.write(raw)
 
-    doc = Document.objects.create(
-        company=company, filename=f.name, stored_path=stored,
-        content_type=f.content_type or "", size=len(raw),
-        category=category, description=description,
-        is_okf=is_okf, access_scope=access_scope,
-        uploaded_by=request.user,
-    )
-    DocumentAccess.objects.create(document=doc, user=request.user)
-    n = rag.index_document(doc, raw)
-    audit(request, "upload", f"{f.name} ({n} chunks)")
+    with open(stored, "wb") as out:
+        for chunk in f.chunks():
+            out.write(chunk)
+
+    from django.db import transaction
+    with transaction.atomic():
+        doc = Document.objects.create(
+            company=company, filename=f.name, stored_path=stored,
+            content_type=f.content_type or "", size=f.size,
+            category=category, description=description, tags=tags,
+            is_okf=is_okf, access_scope=access_scope, department=department,
+            uploaded_by=request.user, indexing_status="pending",
+        )
+        DocumentAccess.objects.create(document=doc, user=request.user)
+        audit(request, "upload", f"{f.name}")
+
+    _index_in_background(doc)
     return Response(DocumentSerializer(doc).data, status=201)
 
 
-@api_view(["DELETE"])
-@permission_classes([IsEditor])
-def document_detail(request, pk):
-    doc = _get_doc(request, pk)
-    if doc.stored_path and os.path.exists(doc.stored_path):
+def _index_in_background(doc: Document):
+    """Extract/chunk/embed a document off the request thread. Status flips to
+    ready/failed so the UI can show progress. SQLite-safe: one writer at a time,
+    short transaction, and failures leave the row marked failed (retryable)."""
+    def run():
+        from django.db import close_old_connections
+        close_old_connections()
         try:
-            os.remove(doc.stored_path)
-        except OSError:
-            pass
-    name = doc.filename
-    doc.delete()
-    audit(request, "delete", name)
-    return Response(status=204)
+            with open(doc.stored_path, "rb") as disk_file:
+                raw = disk_file.read()
+            n = rag.index_document(doc, raw)
+            doc.indexing_status = "ready" if n >= 0 else "failed"
+            doc.index_error = ""
+        except Exception as exc:
+            doc.indexing_status = "failed"
+            doc.index_error = str(exc)[:300]
+        finally:
+            doc.save(update_fields=["indexing_status", "index_error"])
+            close_old_connections()
+    try:
+        threading.Thread(target=run, daemon=True).start()
+    except Exception:
+        # Thread creation failed (rare): index inline so the doc is searchable.
+        with open(doc.stored_path, "rb") as disk_file:
+            rag.index_document(doc, disk_file.read())
+        doc.indexing_status = "ready"
+        doc.save(update_fields=["indexing_status"])
+
+
+@api_view(["POST"])
+@permission_classes([IsEditor])
+def document_reindex(request, pk):
+    """Retry indexing for a failed/pending document."""
+    doc = _get_doc(request, pk)
+    if doc.indexing_status != "failed":
+        return Response({"detail": "Only failed documents can be re-indexed."}, status=400)
+    doc.indexing_status = "pending"
+    doc.save(update_fields=["indexing_status"])
+    _index_in_background(doc)
+    audit(request, "reindex", doc.filename)
+    return Response(DocumentSerializer(doc).data)
+
+
+@api_view(["GET", "PATCH", "DELETE"])
+@permission_classes([IsAuthenticated])
+def document_detail(request, pk):
+    """Read metadata, edit (category/description/tags/scope), or delete a doc."""
+    doc = _accessible_doc(request, pk)
+    if request.method == "GET":
+        return Response(DocumentSerializer(doc).data)
+    if request.method == "DELETE":
+        if not _is_editor_request(request):
+            return Response({"detail": "Viewers cannot delete documents."}, status=403)
+        if doc.stored_path and os.path.exists(doc.stored_path):
+            try:
+                os.remove(doc.stored_path)
+            except OSError:
+                pass
+        name = doc.filename
+        doc.delete()
+        audit(request, "delete", name)
+        return Response(status=204)
+    # PATCH
+    if not _is_editor_request(request):
+        return Response({"detail": "Viewers cannot edit documents."}, status=403)
+    data = request.data
+    if "category" in data:
+        doc.category = str(data.get("category") or "Other")[:50]
+    if "description" in data:
+        doc.description = str(data.get("description") or "")[:2000]
+    if "tags" in data:
+        doc.tags = str(data.get("tags") or "").strip()[:300]
+    if "access_scope" in data:
+        scope = str(data.get("access_scope") or "company").lower()
+        if scope not in {"company", "restricted", "department"}:
+            return Response({"detail": "access_scope must be company, department or restricted."},
+                            status=400)
+        doc.access_scope = scope
+        if scope == "department":
+            dept_id = data.get("department_id")
+            dept = Department.objects.filter(pk=dept_id, company=doc.company).first() if dept_id else None
+            if dept is None:
+                return Response({"detail": "Pick a valid department for department scope."},
+                                status=400)
+            doc.department = dept
+    doc.save()
+    audit(request, "document_update", f"{doc.filename}")
+    return Response(DocumentSerializer(doc).data)
+
+
+def _is_editor_request(request):
+    u = request.user
+    return bool(u.role in ("admin", "employee") or _is_platform_level(u))
+
+
+@api_view(["POST"])
+@permission_classes([IsEditor])
+def document_new_version(request, pk):
+    """Upload a new version of a document: the old file is archived to
+    DocumentVersion, the new file is indexed, and `version` increments.
+    Plan-gated (allow_versions)."""
+    doc = _get_doc(request, pk)
+    company = doc.company
+    if not (_plan_for(company) and _plan_for(company).allow_versions):
+        return Response({"detail": "Version history is not part of your current plan."}, status=402)
+    f = request.FILES.get("file")
+    if not f:
+        return Response({"detail": "No file provided."}, status=400)
+    max_size = getattr(settings, "DATA_UPLOAD_MAX_MEMORY_SIZE", 50 * 1024 * 1024)
+    if f.size > max_size:
+        return Response({"detail": f"File too large. Max size is {max_size // (1024*1024)} MB."},
+                        status=413)
+
+    # Archive the current file as the previous version.
+    old_path, old_size = doc.stored_path, doc.size
+    DocumentVersion.objects.create(
+        document=doc, version_number=doc.version, stored_path=old_path,
+        filename=doc.filename, size=old_size, uploaded_by=request.user,
+    )
+    folder = os.path.join(settings.DATA_DIR, company.slug)
+    os.makedirs(folder, exist_ok=True)
+    stored = os.path.join(folder, f"{uuid.uuid4().hex}_{f.name}")
+    with open(stored, "wb") as out:
+        for chunk in f.chunks():
+            out.write(chunk)
+    doc.stored_path = stored
+    doc.filename = f.name
+    doc.content_type = f.content_type or ""
+    doc.size = f.size
+    doc.version += 1
+    doc.indexing_status = "pending"
+    doc.save()
+    _index_in_background(doc)
+    audit(request, "new_version", f"{doc.filename} -> v{doc.version}")
+    return Response(DocumentSerializer(doc).data, status=201)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def document_versions(request, pk):
+    """Version history for a document (plan-gated at upload time; viewable always)."""
+    doc = _accessible_doc(request, pk)
+    versions = doc.versions.all()
+    return Response(DocumentVersionSerializer(versions, many=True).data)
 
 
 def _get_doc(request, pk):
-    """Owner-company only. Used for edit / delete / publish / share management."""
+    """Owner-company only, or platform admin."""
     try:
+        if _is_platform_level(request.user):
+            return Document.objects.get(pk=pk)
         return Document.objects.get(pk=pk, company=request.user.company)
     except Document.DoesNotExist:
         raise Http404
@@ -227,8 +645,14 @@ def _accessible_doc(request, pk):
     except Document.DoesNotExist:
         raise Http404
     u = request.user
+    if _is_platform_level(u):
+        return doc
     if getattr(u, "company_id", None) and doc.company_id == u.company_id:
-        if doc.access_scope == "company" or DocumentAccess.objects.filter(document=doc, user=u).exists():
+        if doc.access_scope in ("company",):
+            return doc
+        if doc.access_scope == "department" and doc.department_id and doc.department_id == u.department_id:
+            return doc
+        if DocumentAccess.objects.filter(document=doc, user=u).exists():
             return doc
     if DocumentShare.objects.filter(document=doc, shared_with_user=u).exists():
         return doc
@@ -240,8 +664,10 @@ def _accessible_doc(request, pk):
 def _can_download(request, doc):
     """Enforce download permission server-side, not just in the UI."""
     u = request.user
+    if _is_platform_level(u):
+        return True
     if doc.company_id == getattr(u, "company_id", None):
-        if doc.access_scope == "company":
+        if doc.access_scope in ("company", "department"):
             return True
         grant = DocumentAccess.objects.filter(document=doc, user=u).first()
         return bool(grant and grant.can_download)
@@ -260,35 +686,184 @@ def download_document(request, pk):
         return Response({"detail": "Download is disabled for this document."}, status=403)
     if not doc.stored_path or not os.path.exists(doc.stored_path):
         raise Http404
+    doc.downloads += 1
+    doc.save(update_fields=["downloads"])
     audit(request, "download", doc.filename)
     return FileResponse(open(doc.stored_path, "rb"), as_attachment=True, filename=doc.filename)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def document_preview(request, pk):
+    """Return extracted plain text for in-browser preview (ACL-checked)."""
+    doc = _accessible_doc(request, pk)
+    if not doc.stored_path or not os.path.exists(doc.stored_path):
+        raise Http404
+    from django.utils.text import slugify  # noqa: F401
+    try:
+        with open(doc.stored_path, "rb") as fh:
+            text = rag.extract_text(fh.read(), doc.filename, doc.content_type)
+    except OSError:
+        raise Http404
+    audit(request, "preview", doc.filename)
+    return Response({
+        "id": doc.id, "filename": doc.filename, "content_type": doc.content_type,
+        "size": doc.size, "num_chunks": doc.num_chunks, "text": text[:200000],
+        "truncated": len(text) > 200000, "version": doc.version,
+    })
 
 
 # ------------------------------------------------------------------- chat
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def ask(request):
-    """Stream an answer as NDJSON, grounded only in documents this user may see
-    (their own company's documents plus any explicitly shared with them)."""
+    """Stream an answer as NDJSON, grounded only in documents this user may see.
+    Persists the conversation when conversation_id is supplied (or creates one).
+
+    Feature 4: every incoming question is first run through the policy scanner.
+    A match is recorded as a POLICY_VIOLATION_DETECTED audit row and surfaced to
+    the user as a `flag` event, but it never blocks the conversation."""
     s = AskSerializer(data=request.data)
     s.is_valid(raise_exception=True)
     question = s.validated_data["question"]
-    audit(request, "ask", question)
+    mode = s.validated_data.get("mode")
+    provider = s.validated_data.get("provider")
+    conversation_id = s.validated_data.get("conversation_id")
 
-    resp = StreamingHttpResponse(
-        rag.stream_answer(request.user, question), content_type="application/x-ndjson"
-    )
+    # Plan quota: monthly ask limit counted over AskLog rows.
+    plan = _plan_for(request.user.company) if request.user.company_id else None
+    if plan and plan.monthly_ask_limit is not None:
+        month_start = timezone.localtime().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        used = AskLog.objects.filter(company=request.user.company,
+                                     created_at__gte=month_start).count()
+        if used >= plan.monthly_ask_limit:
+            return Response({"detail": f"Monthly question limit reached ({plan.monthly_ask_limit}). "
+                                       "Upgrade your plan for more."}, status=402)
+
+    # Truncate what the audit trail keeps: signal without storing full PII text.
+    audit(request, "ask", f"[{mode or 'default'}] {question[:120]}")
+
+    conversation = None
+    if request.user.company_id:
+        if conversation_id:
+            conversation = ChatConversation.objects.filter(
+                pk=conversation_id, user=request.user, company=request.user.company
+            ).first()
+            if conversation is None:
+                return Response({"detail": "Conversation not found."}, status=404)
+        else:
+            conversation = ChatConversation.objects.create(
+                company=request.user.company, user=request.user,
+                title=question.strip()[:120],
+            )
+    conv_payload = ({"type": "conversation", "conversation_id": conversation.id}
+                    if conversation else None)
+
+    def stream():
+        if conv_payload:
+            yield json.dumps(conv_payload) + "\n"
+        yield from rag.stream_answer(
+            request.user, question, mode=mode, provider_override=provider,
+            moderation_flags=None, conversation=conversation,
+        )
+
+    scan = moderation.scan(question)
+    moderation_flags = None
+    if scan.flagged:
+        moderation_flags = scan.labels
+        audit(request, "POLICY_VIOLATION_DETECTED",
+              f"{scan.summary()} :: {question[:120]}")
+
+    resp = StreamingHttpResponse(stream(), content_type="application/x-ndjson")
     resp["Cache-Control"] = "no-cache"
     resp["X-Accel-Buffering"] = "no"
     return resp
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def conversations(request):
+    """List the caller's chat threads, or start an empty one."""
+    if not request.user.company_id:
+        return Response([])
+    if request.method == "GET":
+        qs = ChatConversation.objects.filter(user=request.user, company=request.user.company)
+        page = _paginate(request, qs, default_page_size=30)
+        return Response({
+            "results": ChatConversationSerializer(page["qs"], many=True).data,
+            "count": page["count"], "page": page["page"], "pages": page["pages"],
+        })
+    conv = ChatConversation.objects.create(
+        company=request.user.company, user=request.user,
+        title=str((request.data or {}).get("title") or "New chat")[:120],
+    )
+    return Response(ChatConversationSerializer(conv).data, status=201)
+
+
+@api_view(["GET", "DELETE", "PATCH"])
+@permission_classes([IsAuthenticated])
+def conversation_detail(request, pk):
+    """One thread with its messages (own threads only), or delete/rename it."""
+    try:
+        conv = ChatConversation.objects.get(pk=pk, user=request.user)
+    except ChatConversation.DoesNotExist:
+        raise Http404
+    if request.method == "DELETE":
+        conv.delete()
+        return Response(status=204)
+    if request.method == "PATCH":
+        conv.title = str((request.data or {}).get("title") or conv.title)[:120]
+        conv.save(update_fields=["title"])
+        return Response(ChatConversationSerializer(conv).data)
+    return Response({
+        "conversation": ChatConversationSerializer(conv).data,
+        "messages": ChatMessageSerializer(conv.messages.all(), many=True).data,
+    })
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def message_rate(request, pk):
+    """Thumbs up (1) / down (-1) on an assistant message (own messages only)."""
+    try:
+        msg = ChatMessage.objects.get(pk=pk, conversation__user=request.user, role="assistant")
+    except ChatMessage.DoesNotExist:
+        raise Http404
+    rating = (request.data or {}).get("rating")
+    if rating not in (1, -1, "1", "-1"):
+        return Response({"detail": "rating must be 1 or -1."}, status=400)
+    msg.rating = int(rating)
+    msg.save(update_fields=["rating"])
+    return Response({"ok": True, "rating": msg.rating})
 
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def llm_status(request):
     """Lightweight status probe for the chat model (drives the UI status dot)."""
-    prov = providers.get_chat_provider()
-    return Response({"online": prov.available(), "provider": prov.label, "model": prov.chat_model})
+    from .models import LLMConfig as _LLMConfig
+    company = getattr(request.user, "company", None)
+    prov = providers.get_chat_provider(company=company)
+    local_prov = providers.get_chat_provider(mode="local")
+    online_prov = providers.get_chat_provider(mode="online", company=company)
+    return Response({
+        "online": prov.available(),
+        "provider": prov.label,
+        "model": prov.chat_model,
+        "company_override": _LLMConfig.for_company(company) is not None if company else False,
+        "local": {
+            "online": local_prov.available(),
+            "provider": local_prov.label,
+            "model": local_prov.chat_model,
+        },
+        "online_api": {
+            "online": online_prov.available(),
+            "provider": online_prov.label,
+            "model": online_prov.chat_model,
+            "has_key": bool(online_prov.api_key),
+        },
+    })
+
 
 # -------------------------------------------------------- admin (company)
 @api_view(["GET", "POST"])
@@ -296,57 +871,150 @@ def llm_status(request):
 def users(request):
     """List or create users within the admin's own company only."""
     company = request.user.company
+    if company is None:
+        return Response({"detail": "No company context."}, status=400)
     if request.method == "GET":
         qs = User.objects.filter(company=company).order_by("email")
-        return Response(UserSerializer(qs, many=True).data)
+        return Response(UserSerializer(qs, many=True, context={"request": request}).data)
 
     s = UserCreateSerializer(data=request.data)
     s.is_valid(raise_exception=True)
     d = s.validated_data
     if User.objects.filter(email__iexact=d["email"]).exists():
         return Response({"detail": "Email already registered."}, status=400)
-    # Optional seat limit: only enforced when the company set a max_employees.
-    if company.max_employees and company.users.count() >= company.max_employees:
+
+    # Seat limit: the stricter of the company's own cap and the plan's.
+    plan = _plan_for(company)
+    seat_caps = [c for c in (company.max_employees, plan.max_members if plan else None) if c]
+    if seat_caps and company.users.count() >= min(seat_caps):
+        cap = min(seat_caps)
         return Response(
-            {"detail": f"Seat limit reached ({company.max_employees}). "
-                       "Increase it in company settings to add more members."},
+            {"detail": f"Seat limit reached ({cap}). "
+                       "Increase it in company settings or upgrade your plan."},
             status=400,
         )
+
+    department = None
+    if d.get("department_id"):
+        department = Department.objects.filter(pk=d["department_id"], company=company).first()
+        if department is None:
+            return Response({"detail": "Department not found in this company."}, status=400)
+
     user = User.objects.create_user(
         email=d["email"], password=d["password"],
         full_name=d.get("full_name", ""), title=d.get("title", ""),
-        role=d["role"], company=company,
+        role=d["role"], company=company, department=department,
     )
+    # New members verify on first sign-in flow; send them a welcome+verify mail.
+    tok, raw = OneTimeToken.issue(user, "verify_email", minutes=60 * 24 * 3)
+    _email_user(user, "Welcome to OpenVault",
+                f"Your workspace account is ready.\n\nVerify your email:\n"
+                f"{_frontend_url('/auth/verify?token=' + raw)}\n\n"
+                f"Then sign in with the email address your administrator provided.")
     audit(request, "add_user", f"{user.email} ({user.role})")
-    return Response(UserSerializer(user).data, status=201)
+    return Response(UserSerializer(user, context={"request": request}).data, status=201)
 
 
-@api_view(["DELETE"])
+@api_view(["PATCH", "DELETE"])
 @permission_classes([IsAdmin])
 def user_detail(request, pk):
-    """Remove a member of the admin's own company (can't delete yourself)."""
-    if pk == request.user.id:
+    """Edit (role/department/name/title/password) or remove a company member."""
+    if pk == request.user.id and request.method == "DELETE":
         return Response({"detail": "You can't remove yourself."}, status=400)
     try:
         user = User.objects.get(pk=pk, company=request.user.company)
     except User.DoesNotExist:
         raise Http404
-    email = user.email
-    user.delete()
-    audit(request, "remove_user", email)
-    return Response(status=204)
+    if request.method == "DELETE":
+        email = user.email
+        user.delete()
+        audit(request, "remove_user", email)
+        return Response(status=204)
+    data = request.data
+    if "role" in data:
+        role = data.get("role")
+        if role not in ("admin", "employee", "viewer"):
+            return Response({"detail": "Invalid role."}, status=400)
+        if user.id == request.user.id and role != "admin":
+            return Response({"detail": "You can't demote yourself."}, status=400)
+        user.role = role
+    if "department_id" in data:
+        dept_id = data.get("department_id")
+        user.department = (Department.objects.filter(pk=dept_id, company=request.user.company).first()
+                           if dept_id else None)
+    if "full_name" in data:
+        user.full_name = str(data.get("full_name") or "")[:200]
+    if "title" in data:
+        user.title = str(data.get("title") or "")[:120]
+    if data.get("password"):
+        if len(str(data["password"])) < 6:
+            return Response({"detail": "Password must be at least 6 characters."}, status=400)
+        user.set_password(str(data["password"]))
+    if "is_active" in data:
+        user.is_active = bool(data.get("is_active"))
+    user.save()
+    audit(request, "update_user", f"{user.email}")
+    return Response(UserSerializer(user, context={"request": request}).data)
 
 
 @api_view(["GET"])
 @permission_classes([IsAdmin])
 def audit_log(request):
-    """The company's 200 most recent audit entries (admin only)."""
-    qs = AuditLog.objects.filter(company=request.user.company).order_by("-created_at")[:200]
-    return Response(AuditSerializer(qs, many=True).data)
+    """The company's audit entries, paginated, with CSV export (?export=csv)."""
+    qs = AuditLog.objects.filter(company=request.user.company).order_by("-created_at")
+    if request.query_params.get("export") == "csv":
+        import csv as _csv
+        buf = io.StringIO()
+        w = _csv.writer(buf)
+        w.writerow(["created_at", "action", "detail", "ip", "user_id"])
+        for row in qs[:5000]:
+            w.writerow([row.created_at.isoformat(), row.action, row.detail, row.ip, row.user_id])
+        resp = FileResponse(io.BytesIO(buf.getvalue().encode("utf-8")), as_attachment=True,
+                            filename=f"openvault-audit-{timezone.localdate().isoformat()}.csv")
+        return resp
+    page = _paginate(request, qs, default_page_size=100)
+    return Response({
+        "results": AuditSerializer(page["qs"], many=True).data,
+        "count": page["count"], "page": page["page"], "pages": page["pages"],
+    })
+
+
+# --------------------------------------------------------- company settings
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAdmin])
+def company_settings(request):
+    """Read or update the admin's own company profile (name/contact/seat cap)."""
+    company = request.user.company
+    if company is None:
+        return Response({"detail": "No company context."}, status=400)
+    if request.method == "GET":
+        return Response(CompanyProfileSerializer(company).data)
+    data = request.data
+    if "name" in data:
+        name = str(data.get("name") or "").strip()[:200]
+        if name:
+            company.name = name
+    for field in ("website", "contact_email", "phone"):
+        if field in data:
+            setattr(company, field, str(data.get(field) or "").strip()[:200])
+    if "max_employees" in data:
+        raw = data.get("max_employees")
+        if raw in (None, ""):
+            company.max_employees = None
+        else:
+            try:
+                company.max_employees = max(1, int(raw))
+            except (TypeError, ValueError):
+                return Response({"detail": "max_employees must be a positive integer."}, status=400)
+    company.save()
+    audit(request, "company_settings_update", company.name)
+    return Response(CompanyProfileSerializer(company).data)
+
 
 # --------------------------------------------------------- company directory
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+@rate_limit("company_search", rate=20, per_seconds=60, key="ip")
 def company_search(request):
     """Find a registered company by its short share code."""
     code = (request.query_params.get("code") or "").strip().upper()
@@ -360,8 +1028,10 @@ def company_search(request):
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+@rate_limit("company_members", rate=20, per_seconds=60, key="ip")
 def company_members(request, access_code):
-    """List selectable enterprise members for a company found by access code."""
+    """List selectable enterprise members for a company found by access code.
+    Rate-limited so the directory cannot be enumerated at speed."""
     company = Company.objects.filter(access_code__iexact=access_code.strip()).first()
     if not company:
         return Response({"detail": "No registered company uses that access code."}, status=404)
@@ -373,8 +1043,8 @@ def company_members(request, access_code):
 @api_view(["GET", "POST"])
 @permission_classes([IsEditor])
 def document_shares(request, pk):
-    """List (GET) or grant (POST {email}) access to ONE document for ONE user.
-    Only the owning company can manage a document's shares."""
+    """List (GET) or grant (POST {access_code, user_id}) access to ONE document
+    for ONE user. Only the owning company can manage a document's shares."""
     doc = _get_doc(request, pk)
     if request.method == "GET":
         shares = DocumentShare.objects.filter(document=doc).select_related(
@@ -433,29 +1103,54 @@ def shared_with_me(request):
 
 
 # --------------------------------------------------------- LLM provider config
-@api_view(["GET", "PUT"])
-@permission_classes([IsAdmin])
+@api_view(["GET", "PUT", "DELETE"])
+@permission_classes([IsAuthenticated])
 def llm_config(request):
-    """Read or update the platform LLM settings (provider, model, API key, ...).
+    """Read or update LLM settings.
 
-    Note: this is a global platform setting, not tenant-scoped — one shared model
-    serves every company; isolation happens at retrieval, not at the model. In
-    production restrict this to a platform operator and keep keys in .env."""
-    cfg = LLMConfig.load()
+    Platform admins manage the platform-wide default row (company NULL). Company
+    admins manage their OWN company's override row — plan-gated
+    (allow_custom_llm) — which lets a tenant bring its own model/key while
+    everyone else stays on the platform default.
+    """
+    from .permissions import is_platform_admin as _is_plat
+    if _is_plat(request.user) and request.user.company_id is None:
+        cfg = LLMConfig.load()
+        is_override = False
+    else:
+        if request.user.company_id is None:
+            return Response({"detail": "No company context."}, status=400)
+        if request.method != "GET":
+            plan = _plan_for(request.user.company)
+            if not (plan and plan.allow_custom_llm):
+                return Response({"detail": "Custom AI settings are not part of your plan."},
+                                status=402)
+        cfg, _created = LLMConfig.objects.get_or_create(company=request.user.company)
+        is_override = True
+
     if request.method == "GET":
-        return Response(LLMConfigSerializer(cfg).data)
+        data = LLMConfigSerializer(cfg).data
+        if not is_override:
+            # Surface the platform defaults to plain company admins too.
+            pass
+        return Response(data)
+    if request.method == "DELETE" and is_override:
+        cfg.delete()
+        audit(request, "llm_config_reset", "company override removed")
+        return Response(LLMConfigSerializer(LLMConfig.load()).data)
     s = LLMConfigSerializer(cfg, data=request.data, partial=True)
     s.is_valid(raise_exception=True)
     s.save()
-    audit(request, "llm_config", f"provider={cfg.provider} model={cfg.chat_model}")
+    audit(request, "llm_config", f"{'company' if is_override else 'platform'} provider={cfg.provider} model={cfg.chat_model}")
     return Response(LLMConfigSerializer(cfg).data)
 
 
 @api_view(["POST"])
-@permission_classes([IsAdmin])
+@permission_classes([IsAuthenticated])
 def llm_test(request):
-    """Ping the currently-configured provider with a tiny prompt to prove it works."""
-    prov = providers.get_chat_provider()
+    """Ping the currently-configured provider with a tiny prompt."""
+    company = getattr(request.user, "company", None)
+    prov = providers.get_chat_provider(company=company)
     if not prov.available():
         return Response({"ok": False, "provider": prov.label, "model": prov.chat_model,
                          "detail": "Not reachable / no API key set."})
@@ -463,10 +1158,385 @@ def llm_test(request):
         out = "".join(prov.stream_chat(
             [{"role": "system", "content": "Reply with exactly one word: pong."},
              {"role": "user", "content": "ping"}],
-            temperature=0.0, max_tokens=16,
+            temperature=0.0, max_tokens=64,
         ))
         return Response({"ok": True, "provider": prov.label, "model": prov.chat_model,
                          "sample": out.strip()[:120]})
     except Exception as e:
         return Response({"ok": False, "provider": prov.label, "model": prov.chat_model,
                          "detail": str(e)[:200]})
+
+
+# --------------------------------------------------------- departments
+@api_view(["GET", "POST"])
+@permission_classes([IsAdmin])
+def departments(request):
+    """List or create departments in the admin's own company (plan-gated)."""
+    company = request.user.company
+    if company is None:
+        return Response({"detail": "No company context."}, status=400)
+    plan = _plan_for(company)
+    if request.method == "GET":
+        return Response(DepartmentSerializer(company.departments.all(), many=True).data)
+    if not (plan and plan.allow_departments):
+        return Response({"detail": "Departments are not part of your current plan."}, status=402)
+    name = str((request.data or {}).get("name") or "").strip()[:120]
+    if not name:
+        return Response({"detail": "Department name is required."}, status=400)
+    dept, created = Department.objects.get_or_create(company=company, name=name)
+    if not created:
+        return Response({"detail": "That department already exists."}, status=400)
+    audit(request, "department_add", name)
+    return Response(DepartmentSerializer(dept).data, status=201)
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAdmin])
+def department_detail(request, pk):
+    """Delete a department; members keep working, department docs become company-wide? No —
+    they are re-scoped to 'restricted' to the uploader to stay safe."""
+    try:
+        dept = Department.objects.get(pk=pk, company=request.user.company)
+    except Department.DoesNotExist:
+        raise Http404
+    name = dept.name
+    Document.objects.filter(department=dept).update(department=None, access_scope="company")
+    User.objects.filter(department=dept).update(department=None)
+    dept.delete()
+    audit(request, "department_remove", name)
+    return Response(status=204)
+
+
+# --------------------------------------------------------- announcements
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def announcements(request):
+    """Company announcements. Anyone can read; only admins create."""
+    company = request.user.company
+    if company is None:
+        return Response([])
+    if request.method == "GET":
+        qs = company.announcements.all()[:50]
+        return Response(AnnouncementSerializer(qs, many=True).data)
+    if request.user.role != "admin" and not _is_platform_level(request.user):
+        return Response({"detail": "Only admins can post announcements."}, status=403)
+    title = str((request.data or {}).get("title") or "").strip()[:200]
+    body = str((request.data or {}).get("body") or "").strip()
+    if not title or not body:
+        return Response({"detail": "Title and body are required."}, status=400)
+    ann = Announcement.objects.create(company=company, title=title, body=body,
+                                      created_by=request.user)
+    audit(request, "announcement", title)
+    return Response(AnnouncementSerializer(ann).data, status=201)
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAdmin])
+def announcement_detail(request, pk):
+    try:
+        ann = Announcement.objects.get(pk=pk, company=request.user.company)
+    except Announcement.DoesNotExist:
+        raise Http404
+    ann.delete()
+    audit(request, "announcement_remove", ann.title)
+    return Response(status=204)
+
+
+# --------------------------------------------------------- analytics (admin)
+@api_view(["GET"])
+@permission_classes([IsAdmin])
+def analytics(request):
+    """Usage analytics for the admin's company: asks by user/department,
+    unanswered questions, flagged asks, ratings and top documents."""
+    company = request.user.company
+    if company is None:
+        return Response({"detail": "No company context."}, status=400)
+    logs = AskLog.objects.filter(company=company)
+    days = 30
+    try:
+        days = min(90, max(1, int(request.query_params.get("days", 30))))
+    except (TypeError, ValueError):
+        pass
+    since = timezone.now() - timezone.timedelta(days=days)
+    recent = logs.filter(created_at__gte=since)
+
+    by_user = list(
+        recent.values("user__email", "user__full_name")
+        .annotate(asks=Count("id"), unanswered=Count("id", filter=Q(chunks_found=0)))
+        .order_by("-asks")[:20]
+    )
+    by_department = list(
+        recent.exclude(department=None)
+        .values("department__name")
+        .annotate(asks=Count("id"), unanswered=Count("id", filter=Q(chunks_found=0)))
+        .order_by("-asks")[:20]
+    )
+    unanswered = list(
+        recent.filter(chunks_found=0).order_by("-created_at")
+        .values("question", "created_at", "user__email")[:50]
+    )
+    ratings = {
+        "up": ChatMessage.objects.filter(
+            conversation__company=company, rating=1, created_at__gte=since).count(),
+        "down": ChatMessage.objects.filter(
+            conversation__company=company, rating=-1, created_at__gte=since).count(),
+    }
+    top_docs = list(
+        company.documents.order_by("-downloads").values("filename", "downloads")[:10]
+    )
+    # Monthly ask usage vs the plan quota (for the usage meter).
+    month_start = timezone.localtime().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_asks = logs.filter(created_at__gte=month_start).count()
+    plan = _plan_for(company)
+    return Response({
+        "range_days": days,
+        "totals": {
+            "asks": recent.count(),
+            "unanswered": recent.filter(chunks_found=0).count(),
+            "flagged": recent.filter(flagged=True).count(),
+            "avg_latency_ms": int(recent.aggregate(a=Avg("latency_ms"))["a"] or 0),
+        },
+        "by_user": by_user,
+        "by_department": by_department,
+        "unanswered_questions": unanswered,
+        "ratings": ratings,
+        "top_documents": top_docs,
+        "usage": {"asks_this_month": month_asks,
+                  "monthly_ask_limit": plan.monthly_ask_limit if plan else None},
+    })
+
+
+@api_view(["GET"])
+@permission_classes([IsAdmin])
+def usage(request):
+    """Usage & plan dashboard data for the company's own admins: current
+    consumption of every plan quota this month plus the upgrade catalogue."""
+    company = request.user.company
+    if company is None:
+        return Response({"detail": "No company context."}, status=400)
+    plan = _plan_for(company)
+
+    month_start = timezone.localtime().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    asks_used = AskLog.objects.filter(company=company, created_at__gte=month_start).count()
+    doc_count = company.documents.count()
+    storage_bytes = company.documents.aggregate(total=Sum("size"))["total"] or 0
+    member_count = company.users.count()
+    department_count = company.departments.count()
+
+    def remaining(used, cap):
+        return None if cap is None else max(cap - used, 0)
+
+    upgrades = Plan.objects.filter(is_active=True, price_pkr__gt=plan.price_pkr) \
+                           .order_by("price_pkr")
+    return Response({
+        "plan": PlanSerializer(plan).data,
+        "usage": {
+            "asks": {"used": asks_used,
+                     "limit": plan.monthly_ask_limit,
+                     "remaining": remaining(asks_used, plan.monthly_ask_limit)},
+            "documents": {"used": doc_count,
+                          "limit": plan.max_documents,
+                          "remaining": remaining(doc_count, plan.max_documents)},
+            "storage": {"used_bytes": storage_bytes,
+                        "limit_mb": plan.storage_mb,
+                        "used_mb": round(storage_bytes / (1024 * 1024), 1)},
+            "members": {"used": member_count,
+                        "limit": plan.max_members,
+                        "remaining": remaining(member_count, plan.max_members)},
+            "departments": {"used": department_count,
+                            "enabled": bool(plan.allow_departments)},
+        },
+        "upgrades": PlanSerializer(upgrades, many=True).data,
+    })
+
+
+# --------------------------------------------------------- plans (public + admin)
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def plans(request):
+    """Public plan catalogue (PKR pricing) for the pricing page."""
+    qs = Plan.objects.filter(is_active=True)
+    return Response(PlanSerializer(qs, many=True).data)
+
+
+@api_view(["POST"])
+@permission_classes([IsPlatformAdmin])
+def company_set_plan(request, pk):
+    """Platform admin moves a company onto a plan (billing is offline: bank
+    transfer / JazzCash / Easypaisa — record the change here)."""
+    company = Company.objects.filter(pk=pk).first()
+    if not company:
+        return Response({"detail": "Company not found."}, status=404)
+    plan_id = (request.data or {}).get("plan_id")
+    plan = Plan.objects.filter(pk=plan_id, is_active=True).first() if plan_id else None
+    if not plan:
+        return Response({"detail": "Plan not found."}, status=404)
+    company.plan = plan
+    company.save(update_fields=["plan"])
+    AuditLog.objects.create(company=company, user=request.user, action="plan_change",
+                            detail=f"-> {plan.name} (PKR {plan.price_pkr}/{plan.billing_period})",
+                            ip=client_ip(request))
+    return Response({"ok": True, "company": company.name, "plan": PlanSerializer(plan).data})
+
+
+# --------------------------------------------------------- Platform admin tools
+@api_view(["GET"])
+@permission_classes([IsPlatformAdmin])
+def list_companies(request):
+    """List every registered company with usage counters (platform admin only)."""
+    companies = Company.objects.all().order_by("name")
+    out = []
+    for c in companies:
+        out.append({
+            "id": c.id, "name": c.name, "slug": c.slug, "access_code": c.access_code,
+            "member_count": c.users.count(), "doc_count": c.documents.count(),
+            "plan": PlanSerializer(c.plan).data if c.plan else None,
+        })
+    return Response(out)
+
+
+@api_view(["POST"])
+@permission_classes([IsPlatformAdmin])
+def switch_company(request):
+    """Switch the platform admin's active company (for support/testing)."""
+    company_id = request.data.get("company_id")
+    if not company_id:
+        return Response({"detail": "company_id is required."}, status=400)
+    company = Company.objects.filter(pk=company_id).first()
+    if not company:
+        return Response({"detail": "Company not found."}, status=404)
+    request.user.company = company
+    request.user.save(update_fields=["company"])
+    audit(request, "switch_company", f"Switched to {company.name}")
+    return Response(UserSerializer(request.user, context={"request": request}).data)
+
+
+@api_view(["POST"])
+@permission_classes([IsPlatformAdmin])
+def detach_company(request):
+    """Return the platform admin to no-company (all-tenant) view."""
+    request.user.company = None
+    request.user.department = None
+    request.user.save(update_fields=["company", "department"])
+    return Response(UserSerializer(request.user, context={"request": request}).data)
+
+
+# ------------------------------------------------- workflow document downloads
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def workflow_form_download(request, user_id, name):
+    """Serve a generated workflow document (e.g. an auto-filled leave form) to
+    its owner. Path is confined to MEDIA_ROOT/forms/<user_id>/."""
+    if not (_is_platform_level(request.user) or request.user.id == user_id):
+        return Response({"detail": "You can only download your own forms."}, status=403)
+
+    base_dir = os.path.realpath(os.path.join(settings.MEDIA_ROOT, "forms", str(user_id)))
+    requested = os.path.realpath(os.path.join(base_dir, name))
+    if requested != base_dir and not requested.startswith(base_dir + os.sep):
+        raise Http404
+    if not os.path.isfile(requested):
+        raise Http404
+    audit(request, "form_download", os.path.basename(requested))
+    return FileResponse(
+        open(requested, "rb"), as_attachment=True, filename=os.path.basename(requested)
+    )
+
+
+# ------------------------------------------------------------- attendance (F5)
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def attendance_scan(request):
+    """Mark today's attendance for the signed-in user (the QR scan target)."""
+    user = request.user
+    if not getattr(user, "company_id", None):
+        return Response({"detail": "Your account is not linked to a company."}, status=400)
+
+    today = timezone.localdate()
+    existing = AttendanceRecord.objects.filter(user=user, date=today).first()
+    if existing:
+        return Response(
+            {"detail": "Attendance already marked for today.",
+             "record": AttendanceRecordSerializer(existing).data},
+            status=409,
+        )
+    record = AttendanceRecord.objects.create(
+        company=user.company, user=user, date=today, status="Present"
+    )
+    audit(request, "attendance_scan", f"Present {today.isoformat()}")
+    return Response(AttendanceRecordSerializer(record).data, status=201)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def attendance_me(request):
+    """The signed-in user's own attendance history and discipline counters."""
+    user = request.user
+    today = timezone.localdate()
+    records = AttendanceRecord.objects.filter(user=user)[:120]
+    strike = UserStrike.objects.filter(user=user).first()
+    return Response({
+        "today": today.isoformat(),
+        "marked_today": AttendanceRecord.objects.filter(user=user, date=today).exists(),
+        "absences_this_month": attendance_svc.absences_in_month(user, today.year, today.month),
+        "records": AttendanceRecordSerializer(records, many=True).data,
+        "strike": UserStrikeSerializer(strike).data if strike else None,
+    })
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def attendance_qr(request):
+    """Return the attendance check-in target plus an inline SVG QR when the
+    optional `qrcode` library is installed."""
+    base = settings.PUBLIC_BASE_URL or f"{request.scheme}://{request.get_host()}"
+    target = f"{base}/workspace/attendance?scan=1"
+    payload = {"target": target, "svg": None, "qr_available": False}
+    try:
+        import qrcode  # optional dependency
+        import qrcode.image.svg
+
+        img = qrcode.make(target, image_factory=qrcode.image.svg.SvgImage)
+        buf = io.BytesIO()
+        img.save(buf)
+        payload["svg"] = buf.getvalue().decode("utf-8")
+        payload["qr_available"] = True
+    except Exception:
+        pass
+    return Response(payload)
+
+
+@api_view(["POST"])
+@permission_classes([IsAdmin])
+def admin_attendance_evaluate(request):
+    """Run the monthly attendance evaluation for the admin's own company."""
+    company = request.user.company
+    if company is None:
+        return Response({"detail": "No company context for evaluation."}, status=400)
+
+    def _flag(name, default):
+        raw = request.data.get(name, default)
+        return raw if isinstance(raw, bool) else str(raw).lower() in ("1", "true", "yes", "on")
+
+    dry_run = _flag("dry_run", False)
+    freeze = _flag("freeze", True)
+    year, month = request.data.get("year"), request.data.get("month")
+    try:
+        year = int(year) if year not in (None, "") else None
+        month = int(month) if month not in (None, "") else None
+    except (TypeError, ValueError):
+        return Response({"detail": "year and month must be integers."}, status=400)
+
+    results = attendance_svc.evaluate_month(
+        year=year, month=month, company=company, freeze=freeze, dry_run=dry_run
+    )
+    if not dry_run:
+        struck = sum(1 for r in results if r["new_strike"])
+        frozen = sum(1 for r in results if r["deactivated"])
+        audit(request, "attendance_evaluate",
+              f"{len(results)} users, {struck} new strike(s), {frozen} frozen")
+    return Response({
+        "dry_run": dry_run,
+        "freeze": freeze,
+        "evaluated": len(results),
+        "results": results,
+    })

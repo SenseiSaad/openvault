@@ -1,0 +1,116 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens — Certification Academy LMS.
+ * Calm, institutional palette: deep navy primary, restrained accents,
+ * no saturated consumer-grade colors. All pairings meet WCAG 2.2 AA
+ * (>= 4.5:1 body text, >= 3:1 large text and UI boundaries).
+ */
+@layer base {
+  :root {
+    /* Low-fatigue tinted canvas: Slate 50 (#F8FAFC) */
+    --background: 210 40% 98%;
+    /* High contrast text: Slate 900 (#0F172A) */
+    --foreground: 222 47% 11%;
+    /* Pure white elevated cards & popovers (#FFFFFF) */
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    /* Enterprise Primary: Deep Indigo / Electric Sapphire (#4F46E5) */
+    --primary: 239 84% 57%;
+    --primary-foreground: 0 0% 100%;
+    /* Secondary & subtle wells: Slate 100 (#F1F5F9) */
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 18%;
+    /* Muted states & captions: Slate 100 & Slate 500 (#64748B) */
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215 16% 45%;
+    /* Interactive accent: Indigo 50 (#EEF2FF) */
+    --accent: 226 100% 97%;
+    --accent-foreground: 226 71% 36%;
+    /* Semantic statuses: WCAG AA compliant */
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 71% 36%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 42%;
+    --warning-foreground: 0 0% 100%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 239 84% 57%;
+    --radius: 0.75rem;
+
+    /* Enterprise data visualization palette */
+    --chart-1: 239 84% 57%;
+    --chart-2: 199 89% 48%;
+    --chart-3: 160 84% 39%;
+    --chart-4: 262 83% 58%;
+    --chart-5: 38 92% 50%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    @apply scroll-smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "tnum";
+  }
+
+  /* Visible, high-contrast focus everywhere (WCAG 2.4.11 / 2.4.13). */
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
+  /* Reduced motion: disable transitions and smooth scrolling (WCAG 2.3.3). */
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer utilities {
+  .skip-link {
+    @apply sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-lg focus:bg-primary focus:px-4 focus:py-2 focus:text-sm focus:font-medium focus:text-primary-foreground focus:shadow-lg focus:ring-2 focus:ring-primary focus:ring-offset-2;
+  }
+
+  .glass-header {
+    @apply sticky top-0 z-40 border-b border-border/80 bg-background/80 backdrop-blur-md;
+  }
+
+  .glass-card {
+    @apply rounded-xl border border-border/70 bg-card/90 shadow-card backdrop-blur-sm transition-all duration-200 hover:border-border hover:shadow-card-hover;
+  }
+}
+
+/* Custom premium thin scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.2);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.4);
+}

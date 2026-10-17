@@ -3,40 +3,56 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import {
   AlertCircle,
+  Building2,
+  Check,
   CheckCircle2,
   ChevronDown,
+  Cpu,
+  CreditCard,
+  HardDrive,
   KeyRound,
+  Layers,
   Loader2,
+  MessageSquare,
   PlugZap,
+  RotateCcw,
   Save,
   Sparkles,
+  Users,
 } from 'lucide-react'
 import {
+  adminApi,
+  analyticsApi,
+  companyApi2,
   settingsApi,
+  type Analytics,
+  type CompanyProfile,
   type LlmConfig,
   type LlmProvider,
   type LlmTestResult,
+  type Plan,
 } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
+import { toast } from '@/components/toaster'
 
 const focusRing =
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1d1d1b]/25 focus-visible:ring-offset-2 focus-visible:ring-offset-[#f7f6f2]'
-const eyebrow = 'text-xs font-semibold uppercase tracking-[0.16em] text-[#8c8a83]'
+const eyebrow = 'text-xs font-semibold uppercase tracking-[0.16em] text-[#6b6862]'
 const inputClass =
-  'h-12 w-full rounded-xl border border-[#d8d5cc] bg-[#fffdfa] px-4 text-sm text-[#1d1d1b] outline-none transition-colors placeholder:text-[#9b9890] focus:border-[#1d1d1b]'
+  'h-11 w-full rounded-xl border border-[#d8d5cc] bg-[#fffdfa] px-3.5 text-xs text-[#1d1d1b] outline-none transition-colors placeholder:text-[#6b6862] focus:border-[#1d1d1b]'
 const selectClass =
-  `h-12 w-full appearance-none rounded-xl border border-[#d8d5cc] bg-[#fffdfa] pl-4 pr-10 text-sm text-[#1d1d1b] outline-none transition-colors hover:border-[#1d1d1b] focus:border-[#1d1d1b] ${focusRing}`
+  `h-11 w-full appearance-none rounded-xl border border-[#d8d5cc] bg-[#fffdfa] pl-3.5 pr-9 text-xs text-[#1d1d1b] outline-none transition-colors hover:border-[#1d1d1b] focus:border-[#1d1d1b] ${focusRing}`
 const primaryBtn =
-  `inline-flex h-11 items-center justify-center gap-2 rounded-full bg-[#1d1d1b] px-5 text-sm font-medium text-white transition-colors hover:bg-[#3c3b37] disabled:cursor-not-allowed disabled:opacity-60 ${focusRing}`
+  `inline-flex h-10 items-center justify-center gap-2 rounded-full bg-[#1d1d1b] px-5 text-xs font-medium text-white transition-colors hover:bg-[#3c3b37] disabled:cursor-not-allowed disabled:opacity-60 ${focusRing}`
 const ghostBtn =
-  `inline-flex h-11 items-center justify-center gap-2 rounded-full border border-[#dcdad3] bg-[#fffdfa] px-5 text-sm text-[#1d1d1b] transition-colors hover:border-[#1d1d1b] disabled:cursor-not-allowed disabled:opacity-60 ${focusRing}`
-const label = 'mb-1.5 block text-sm font-medium text-[#1d1d1b]'
+  `inline-flex h-10 items-center justify-center gap-2 rounded-full border border-[#dcdad3] bg-[#fffdfa] px-4 text-xs font-medium text-[#1d1d1b] transition-colors hover:border-[#1d1d1b] disabled:cursor-not-allowed disabled:opacity-60 ${focusRing}`
+const label = 'mb-1 block text-xs font-medium text-[#1d1d1b]'
 
-// The four backends the provider layer (backend/core/providers.py) supports.
 const PROVIDERS: {
   value: LlmProvider
   label: string
   blurb: string
+  badge?: string
   keyLabel?: string
   modelHint: string
   usesBaseUrl?: boolean
@@ -44,14 +60,14 @@ const PROVIDERS: {
   {
     value: 'ollama',
     label: 'Local model (Ollama)',
-    blurb: 'Runs entirely on your own machine or server: no API key, fully private. Point the URL at localhost or your EC2 IP.',
+    blurb: 'Runs entirely on your machine/server: no API key, fully private.',
     modelHint: 'e.g. qwen2.5:1.5b',
     usesBaseUrl: true,
   },
   {
     value: 'openai',
-    label: 'OpenAI / OpenAI-compatible',
-    blurb: 'OpenAI, or any OpenAI-compatible endpoint (vLLM, Groq, LM Studio). Paste one key to test.',
+    label: 'OpenAI / Compatible',
+    blurb: 'OpenAI or compatible endpoint (vLLM, Groq, LM Studio).',
     keyLabel: 'OpenAI API key',
     modelHint: 'e.g. gpt-4o-mini',
     usesBaseUrl: true,
@@ -59,72 +75,143 @@ const PROVIDERS: {
   {
     value: 'anthropic',
     label: 'Anthropic (Claude)',
-    blurb: 'Claude models. Anthropic has no embeddings API, so retrieval falls back to keyword search automatically.',
+    blurb: 'Claude models. Retrieval uses keyword search.',
     keyLabel: 'Anthropic API key',
     modelHint: 'e.g. claude-3-5-haiku-latest',
   },
   {
     value: 'gemini',
     label: 'Google Gemini',
-    blurb: 'Gemini chat and embeddings via a Google AI Studio key.',
+    blurb: 'Gemini chat and embeddings via Google AI Studio.',
     keyLabel: 'Gemini API key',
-    modelHint: 'e.g. gemini-1.5-flash',
+    modelHint: 'e.g. gemini-3.8-flash',
+  },
+  {
+    value: 'bedrock',
+    label: 'AWS Bedrock (India)',
+    blurb:
+      'Claude on AWS Bedrock via the India inference profile — documents are processed within India AWS infrastructure only, never used for training, never shared with the model provider.',
+    badge: 'Data stays in India',
+    keyLabel: 'AWS credentials — ACCESS_KEY_ID:SECRET_ACCESS_KEY (blank = IAM role)',
+    modelHint: 'e.g. in.anthropic.claude-3-5-haiku-20241022-v1:0',
+    usesBaseUrl: true,
   },
 ]
 
+type Tab = 'company' | 'plan' | 'ai'
+
 export default function SettingsPage() {
-  const { user } = useAuth()
+  const { user, isPlatformAdmin } = useAuth()
+  const [tab, setTab] = useState<Tab>('company')
 
+  // Company profile
+  const [profile, setProfile] = useState<CompanyProfile | null>(null)
+  const [compLoading, setCompLoading] = useState(true)
+  const [compName, setCompName] = useState('')
+  const [compWebsite, setCompWebsite] = useState('')
+  const [compEmail, setCompEmail] = useState('')
+  const [compPhone, setCompPhone] = useState('')
+  const [compMaxSeats, setCompMaxSeats] = useState<string>('')
+  const [savingComp, setSavingComp] = useState(false)
+
+  // Plans & usage
+  const [plans, setPlans] = useState<Plan[]>([])
+  const [analytics, setAnalytics] = useState<Analytics | null>(null)
+  const [planLoading, setPlanLoading] = useState(true)
+
+  // AI config
   const [cfg, setCfg] = useState<LlmConfig | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState('')
-
-  // editable form state
+  const [aiLoading, setAiLoading] = useState(true)
   const [provider, setProvider] = useState<LlmProvider>('ollama')
   const [chatModel, setChatModel] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [temperature, setTemperature] = useState('0.2')
   const [maxTokens, setMaxTokens] = useState('512')
-
-  const [saving, setSaving] = useState(false)
-  const [saveOk, setSaveOk] = useState('')
-  const [saveError, setSaveError] = useState('')
-  const [testing, setTesting] = useState(false)
+  const [savingAi, setSavingAi] = useState(false)
+  const [resettingAi, setResettingAi] = useState(false)
+  const [testingAi, setTestingAi] = useState(false)
   const [testResult, setTestResult] = useState<LlmTestResult | null>(null)
 
-  const hydrate = useCallback((c: LlmConfig) => {
+  const hydrateAi = useCallback((c: LlmConfig) => {
     setCfg(c)
     setProvider(c.provider)
     setChatModel(c.chat_model)
     setBaseUrl(c.base_url)
     setTemperature(String(c.temperature))
     setMaxTokens(String(c.max_tokens))
-    setApiKey('') // never returned by the API; blank means "keep existing"
+    setApiKey('')
   }, [])
 
-  const load = useCallback(() => {
-    setLoading(true)
-    setLoadError('')
+  // Loaders
+  const loadCompany = useCallback(() => {
+    setCompLoading(true)
+    companyApi2
+      .settings()
+      .then((res) => {
+        setProfile(res)
+        setCompName(res.name || '')
+        setCompWebsite(res.website || '')
+        setCompEmail(res.contact_email || '')
+        setCompPhone(res.phone || '')
+        setCompMaxSeats(res.max_employees != null ? String(res.max_employees) : '')
+      })
+      .catch(() => setProfile(null))
+      .finally(() => setCompLoading(false))
+  }, [])
+
+  const loadPlans = useCallback(() => {
+    setPlanLoading(true)
+    Promise.all([
+      adminApi.plans().catch(() => []),
+      analyticsApi.get(30).catch(() => null),
+    ])
+      .then(([plansRes, analyticsRes]) => {
+        setPlans(plansRes)
+        setAnalytics(analyticsRes)
+      })
+      .finally(() => setPlanLoading(false))
+  }, [])
+
+  const loadAi = useCallback(() => {
+    setAiLoading(true)
     settingsApi
       .llmConfig()
-      .then(hydrate)
-      .catch((e) => setLoadError(e instanceof Error ? e.message : 'Could not load AI settings.'))
-      .finally(() => setLoading(false))
-  }, [hydrate])
+      .then(hydrateAi)
+      .catch(() => setCfg(null))
+      .finally(() => setAiLoading(false))
+  }, [hydrateAi])
 
   useEffect(() => {
-    load()
-  }, [load])
+    loadCompany()
+    loadPlans()
+    loadAi()
+  }, [loadCompany, loadPlans, loadAi])
 
-  const active = PROVIDERS.find((p) => p.value === provider) ?? PROVIDERS[0]
-
-  async function onSave(e: FormEvent<HTMLFormElement>) {
+  async function onSaveCompany(e: FormEvent) {
     e.preventDefault()
-    setSaveOk('')
-    setSaveError('')
+    setSavingComp(true)
+    try {
+      const updated = await companyApi2.updateSettings({
+        name: compName.trim(),
+        website: compWebsite.trim(),
+        contact_email: compEmail.trim(),
+        phone: compPhone.trim(),
+        max_employees: compMaxSeats ? Number(compMaxSeats) : null,
+      })
+      setProfile(updated)
+      toast.success('Company settings saved.')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not save company settings.')
+    } finally {
+      setSavingComp(false)
+    }
+  }
+
+  async function onSaveAi(e: FormEvent) {
+    e.preventDefault()
+    setSavingAi(true)
     setTestResult(null)
-    setSaving(true)
     try {
       const updated = await settingsApi.updateLlmConfig({
         provider,
@@ -134,21 +221,34 @@ export default function SettingsPage() {
         max_tokens: Number(maxTokens) || 0,
         ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
       })
-      hydrate(updated)
-      setSaveOk('Saved. New chats use these settings immediately; no restart needed.')
+      hydrateAi(updated)
+      toast.success('AI settings saved.')
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Could not save settings.')
+      toast.error(err instanceof Error ? err.message : 'Could not save AI settings.')
     } finally {
-      setSaving(false)
+      setSavingAi(false)
     }
   }
 
-  async function onTest() {
-    setTestResult(null)
-    setSaveError('')
-    setTesting(true)
+  async function onResetAi() {
+    setResettingAi(true)
     try {
-      setTestResult(await settingsApi.llmTest())
+      const updated = await settingsApi.resetLlmConfig()
+      hydrateAi(updated)
+      toast.success('Reset to platform default AI settings.')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not reset AI settings.')
+    } finally {
+      setResettingAi(false)
+    }
+  }
+
+  async function onTestAi() {
+    setTestingAi(true)
+    setTestResult(null)
+    try {
+      const res = await settingsApi.llmTest()
+      setTestResult(res)
     } catch (err) {
       setTestResult({
         ok: false,
@@ -157,149 +257,537 @@ export default function SettingsPage() {
         detail: err instanceof Error ? err.message : 'Test failed.',
       })
     } finally {
-      setTesting(false)
+      setTestingAi(false)
+    }
+  }
+
+  async function onSelectPlan(planId: number) {
+    if (!profile || !isPlatformAdmin) return
+    try {
+      await adminApi.setCompanyPlan(profile.id, planId)
+      toast.success('Plan updated for company.')
+      loadCompany()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not update plan.')
     }
   }
 
   if (!user) return null
 
+  const activeProvider = PROVIDERS.find((p) => p.value === provider) ?? PROVIDERS[0]
+  const currentPlan = profile?.plan
+
   return (
-    <div className="pb-6">
-      <header className="border-b border-[#e6e3dc] pb-8">
-        <p className={eyebrow}>Platform configuration</p>
-        <h1 className="mt-3 text-3xl font-semibold tracking-[-0.05em] sm:text-4xl sm:tracking-[-0.06em]">
-          AI <span className="font-serif font-normal italic">settings.</span>
+    <div className="mx-auto max-w-4xl pb-10">
+      <header className="border-b border-[#e6e3dc] pb-6">
+        <p className={eyebrow}>Workspace Management</p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-[-0.05em] sm:text-4xl">
+          Settings &amp; <span className="font-serif font-normal italic">plans.</span>
         </h1>
-        <p className="mt-3 max-w-2xl text-sm leading-relaxed text-[#77746c]">
-          Choose the model that answers questions across the platform: run one locally with Ollama, or
-          plug in an API key for OpenAI, Anthropic, or Gemini. This is the one place you put your key;
-          changes take effect on the next question, with no restart.
+        <p className="mt-2 max-w-xl text-xs leading-relaxed text-[#6b6862]">
+          Manage company profile, subscription quotas (PKR), and AI model configurations.
         </p>
+
+        {/* Tab Switcher */}
+        <div className="mt-6 flex gap-2 border-b border-[#eae7df] pb-px text-xs font-medium">
+          <button
+            type="button"
+            onClick={() => setTab('company')}
+            className={`flex items-center gap-2 border-b-2 px-4 py-2 transition ${
+              tab === 'company'
+                ? 'border-[#1d1d1b] font-semibold text-[#1d1d1b]'
+                : 'border-transparent text-[#6b6862] hover:text-[#1d1d1b]'
+            }`}
+          >
+            <Building2 className="size-3.5" /> Company Profile
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('plan')}
+            className={`flex items-center gap-2 border-b-2 px-4 py-2 transition ${
+              tab === 'plan'
+                ? 'border-[#1d1d1b] font-semibold text-[#1d1d1b]'
+                : 'border-transparent text-[#6b6862] hover:text-[#1d1d1b]'
+            }`}
+          >
+            <CreditCard className="size-3.5" /> Plan &amp; Quotas
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('ai')}
+            className={`flex items-center gap-2 border-b-2 px-4 py-2 transition ${
+              tab === 'ai'
+                ? 'border-[#1d1d1b] font-semibold text-[#1d1d1b]'
+                : 'border-transparent text-[#6b6862] hover:text-[#1d1d1b]'
+            }`}
+          >
+            <Cpu className="size-3.5" /> AI Engine
+          </button>
+        </div>
       </header>
 
-      {loading ? (
-        <p className="mt-8 flex items-center gap-2 text-sm text-[#77746c]">
-          <Loader2 className="size-4 animate-spin" aria-hidden /> Loading settings…
-        </p>
-      ) : loadError ? (
-        <div role="alert" className="mt-8 rounded-3xl border border-[#e6c9c1] bg-[#fbe4e0] p-10 text-center">
-          <AlertCircle className="mx-auto size-6 text-[#9a3b2c]" aria-hidden />
-          <p className="mt-3 text-sm font-medium text-[#9a3b2c]">{loadError}</p>
-          <button type="button" onClick={load} className={`mt-5 ${ghostBtn}`}>Try again</button>
-        </div>
-      ) : (
-        <form onSubmit={onSave} className="mt-8 max-w-2xl space-y-6">
-          <div>
-            <label htmlFor="provider" className={label}>Provider</label>
-            <div className="relative">
-              <select
-                id="provider"
-                value={provider}
-                onChange={(e) => {
-                  setProvider(e.target.value as LlmProvider)
-                  setTestResult(null)
-                }}
-                className={selectClass}
-              >
-                {PROVIDERS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-[#8c8a83]" aria-hidden />
-            </div>
-            <p className="mt-2 flex items-start gap-2 text-xs leading-relaxed text-[#8c8a83]">
-              <Sparkles className="mt-0.5 size-3.5 shrink-0" aria-hidden /> {active.blurb}
+      {/* Tab 1: Company Profile */}
+      {tab === 'company' && (
+        <section className="mt-6">
+          {compLoading ? (
+            <p className="flex items-center gap-2 text-xs text-[#6b6862]">
+              <Loader2 className="size-4 animate-spin" /> Loading company profile…
             </p>
-          </div>
+          ) : !profile ? (
+            <p className="text-xs text-[#6b6862]">No company attached to current session.</p>
+          ) : (
+            <form onSubmit={onSaveCompany} className="max-w-xl space-y-4">
+              <div className="rounded-2xl border border-[#eae7df] bg-[#faf8f3] p-4 text-xs">
+                <p className="font-semibold text-[#1d1d1b]">Company Access Code</p>
+                <div className="mt-1 flex items-center justify-between">
+                  <span className="font-mono text-sm font-semibold tracking-wider text-[#1d1d1b]">
+                    {profile.access_code || '—'}
+                  </span>
+                  <span className="text-[11px] text-[#6b6862]">
+                    Share with partners for granular cross-tenant sharing
+                  </span>
+                </div>
+              </div>
 
-          <div>
-            <label htmlFor="chat-model" className={label}>Model</label>
-            <input id="chat-model" value={chatModel} onChange={(e) => setChatModel(e.target.value)} placeholder={active.modelHint} className={inputClass} />
-            <p className="mt-1.5 text-xs text-[#8c8a83]">Leave blank to use the provider default ({active.modelHint.replace('e.g. ', '')}).</p>
-          </div>
-
-          {active.usesBaseUrl && (
-            <div>
-              <label htmlFor="base-url" className={label}>
-                {provider === 'ollama' ? 'Ollama URL' : 'Base URL (optional)'}
-              </label>
-              <input id="base-url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={provider === 'ollama' ? 'http://localhost:11434' : 'https://api.openai.com/v1'} className={inputClass} />
-            </div>
-          )}
-
-          {active.keyLabel && (
-            <div>
-              <label htmlFor="api-key" className={label}>{active.keyLabel}</label>
-              <div className="relative">
-                <KeyRound className="pointer-events-none absolute left-4 top-1/2 size-4 -translate-y-1/2 text-[#8c8a83]" aria-hidden />
+              <div>
+                <label className={label}>Company Name</label>
                 <input
-                  id="api-key"
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder={cfg?.has_api_key ? '•••••••• (a key is saved, type to replace)' : 'Paste your key'}
-                  autoComplete="off"
-                  className={`${inputClass} pl-11`}
+                  required
+                  value={compName}
+                  onChange={(e) => setCompName(e.target.value)}
+                  className={inputClass}
                 />
               </div>
-              <p className="mt-1.5 text-xs text-[#8c8a83]">
-                {cfg?.has_api_key ? 'A key is already stored. Leave blank to keep it.' : 'Stored server-side; never shown again after saving.'}
-                {' '}For local testing only; in production keep keys in the backend .env.
-              </p>
-            </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className={label}>Website</label>
+                  <input
+                    value={compWebsite}
+                    onChange={(e) => setCompWebsite(e.target.value)}
+                    placeholder="https://acme.org"
+                    className={inputClass}
+                  />
+                </div>
+                <div>
+                  <label className={label}>Contact Email</label>
+                  <input
+                    type="email"
+                    value={compEmail}
+                    onChange={(e) => setCompEmail(e.target.value)}
+                    placeholder="info@acme.org"
+                    className={inputClass}
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className={label}>Phone</label>
+                  <input
+                    value={compPhone}
+                    onChange={(e) => setCompPhone(e.target.value)}
+                    placeholder="+92 300 1234567"
+                    className={inputClass}
+                  />
+                </div>
+                <div>
+                  <label className={label}>Seat Cap (Maximum Employees)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={compMaxSeats}
+                    onChange={(e) => setCompMaxSeats(e.target.value)}
+                    placeholder="Leave blank for plan default"
+                    className={inputClass}
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <button type="submit" disabled={savingComp} className={primaryBtn}>
+                  {savingComp ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+                  Save Profile
+                </button>
+              </div>
+            </form>
           )}
+        </section>
+      )}
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label htmlFor="temperature" className={label}>Temperature</label>
-              <input id="temperature" type="number" step="0.1" min="0" max="2" value={temperature} onChange={(e) => setTemperature(e.target.value)} className={inputClass} />
-              <p className="mt-1.5 text-xs text-[#8c8a83]">Lower = more grounded.</p>
-            </div>
-            <div>
-              <label htmlFor="max-tokens" className={label}>Max answer tokens</label>
-              <input id="max-tokens" type="number" step="16" min="16" max="4096" value={maxTokens} onChange={(e) => setMaxTokens(e.target.value)} className={inputClass} />
-              <p className="mt-1.5 text-xs text-[#8c8a83]">Caps reply length.</p>
-            </div>
-          </div>
-
-          {saveError && (
-            <p role="alert" className="flex items-start gap-2 rounded-xl bg-[#fbe4e0] px-4 py-3 text-sm text-[#9a3b2c]">
-              <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden /> {saveError}
+      {/* Tab 2: Plan & Usage */}
+      {tab === 'plan' && (
+        <section className="mt-6 space-y-8">
+          {planLoading ? (
+            <p className="flex items-center gap-2 text-xs text-[#6b6862]">
+              <Loader2 className="size-4 animate-spin" /> Loading plans and usage…
             </p>
+          ) : (
+            <>
+              {/* Current Plan Overview & Usage Bars */}
+              <div className="rounded-3xl border border-[#e6e3dc] bg-[#fffdfa] p-6 shadow-sm">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[#6b6862]">
+                      Current Subscription
+                    </span>
+                    <h2 className="mt-1 text-2xl font-bold tracking-tight text-[#1d1d1b]">
+                      {currentPlan?.name || 'Free'} Plan
+                    </h2>
+                    <p className="mt-1 text-xs text-[#6b6862]">
+                      PKR {currentPlan?.price_pkr?.toLocaleString() || 0} / {currentPlan?.billing_period || 'month'}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {currentPlan?.allow_versions && (
+                      <span className="rounded-full bg-[#f4f2ec] px-2.5 py-1 text-[11px] font-medium text-[#4a7a5a]">
+                        ✓ Versioning
+                      </span>
+                    )}
+                    {currentPlan?.allow_departments && (
+                      <span className="rounded-full bg-[#f4f2ec] px-2.5 py-1 text-[11px] font-medium text-[#2d529f]">
+                        ✓ Departments
+                      </span>
+                    )}
+                    {currentPlan?.allow_custom_llm && (
+                      <span className="rounded-full bg-[#f4f2ec] px-2.5 py-1 text-[11px] font-medium text-[#6b46c1]">
+                        ✓ BYO AI Key
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Usage bars */}
+                <div className="mt-6 grid gap-4 border-t border-[#f0ede6] pt-5 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-[#eae7df] bg-[#faf8f3] p-4">
+                    <div className="flex items-center justify-between text-xs font-medium">
+                      <span className="flex items-center gap-1.5 text-[#1d1d1b]">
+                        <MessageSquare className="size-3.5 text-[#6b6862]" /> Monthly Questions
+                      </span>
+                      <span className="text-[#6b6862]">
+                        {analytics?.usage?.asks_this_month ?? 0} /{' '}
+                        {currentPlan?.monthly_ask_limit ?? 'Unlimited'}
+                      </span>
+                    </div>
+                    {currentPlan?.monthly_ask_limit ? (
+                      <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-[#e6e3dc]">
+                        <div
+                          className="h-full bg-[#1d1d1b] transition-all"
+                          style={{
+                            width: `${Math.min(
+                              100,
+                              ((analytics?.usage?.asks_this_month ?? 0) /
+                                currentPlan.monthly_ask_limit) *
+                                100,
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="rounded-2xl border border-[#eae7df] bg-[#faf8f3] p-4">
+                    <div className="flex items-center justify-between text-xs font-medium">
+                      <span className="flex items-center gap-1.5 text-[#1d1d1b]">
+                        <Users className="size-3.5 text-[#6b6862]" /> Member Seats
+                      </span>
+                      <span className="text-[#6b6862]">
+                        {profile?.max_employees || currentPlan?.max_members || 'Unlimited'} max
+                      </span>
+                    </div>
+                    <p className="mt-2 text-[11px] text-[#6b6862]">
+                      Admin controls seats in Company Profile.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* PKR Tier Table */}
+              <div>
+                <h3 className="text-sm font-semibold uppercase tracking-[0.1em] text-[#6b6862]">
+                  Available Tiers (PKR)
+                </h3>
+                <div className="mt-4 grid gap-4 md:grid-cols-4">
+                  {plans.map((p) => {
+                    const isCurrent = currentPlan?.id === p.id
+                    return (
+                      <div
+                        key={p.id}
+                        className={`flex flex-col justify-between rounded-3xl border p-5 transition ${
+                          isCurrent
+                            ? 'border-[#1d1d1b] bg-white ring-2 ring-[#1d1d1b]/10'
+                            : 'border-[#e6e3dc] bg-[#fffdfa]'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-[#1d1d1b]">{p.name}</span>
+                            {isCurrent && (
+                              <span className="rounded-full bg-[#1d1d1b] px-2 py-0.5 text-[10px] text-white">
+                                Current
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-3 text-xl font-bold tracking-tight text-[#1d1d1b]">
+                            PKR {p.price_pkr.toLocaleString()}
+                            <span className="text-xs font-normal text-[#6b6862]">/mo</span>
+                          </p>
+
+                          <ul className="mt-4 space-y-2 text-xs text-[#4f4d47]">
+                            <li className="flex items-center gap-2">
+                              <Check className="size-3.5 text-[#4a7a5a]" />
+                              {p.max_members ? `${p.max_members} members` : 'Unlimited members'}
+                            </li>
+                            <li className="flex items-center gap-2">
+                              <Check className="size-3.5 text-[#4a7a5a]" />
+                              {p.max_documents ? `${p.max_documents} docs` : 'Unlimited docs'}
+                            </li>
+                            <li className="flex items-center gap-2">
+                              <Check className="size-3.5 text-[#4a7a5a]" />
+                              {p.storage_mb ? `${p.storage_mb >= 1024 ? `${p.storage_mb / 1024} GB` : `${p.storage_mb} MB`} storage` : 'Unlimited storage'}
+                            </li>
+                            <li className="flex items-center gap-2">
+                              <Check className="size-3.5 text-[#4a7a5a]" />
+                              {p.monthly_ask_limit
+                                ? `${p.monthly_ask_limit.toLocaleString()} asks/mo`
+                                : 'Unlimited asks'}
+                            </li>
+                            {p.allow_versions && (
+                              <li className="flex items-center gap-2">
+                                <Check className="size-3.5 text-[#4a7a5a]" /> File versioning
+                              </li>
+                            )}
+                            {p.allow_departments && (
+                              <li className="flex items-center gap-2">
+                                <Check className="size-3.5 text-[#4a7a5a]" /> Departments
+                              </li>
+                            )}
+                            {p.allow_custom_llm && (
+                              <li className="flex items-center gap-2">
+                                <Check className="size-3.5 text-[#4a7a5a]" /> BYO AI API Key
+                              </li>
+                            )}
+                          </ul>
+                        </div>
+
+                        {isPlatformAdmin && !isCurrent && (
+                          <div className="mt-6 border-t border-[#f0ede6] pt-3">
+                            <button
+                              type="button"
+                              onClick={() => onSelectPlan(p.id)}
+                              className="w-full rounded-full border border-[#1d1d1b] py-1.5 text-xs font-medium text-[#1d1d1b] hover:bg-[#1d1d1b] hover:text-white"
+                            >
+                              Assign Plan (Admin)
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </>
           )}
-          {saveOk && (
-            <p role="status" className="flex items-start gap-2 rounded-xl bg-[#e6f1e4] px-4 py-3 text-sm text-[#3f6b4f]">
-              <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden /> {saveOk}
+        </section>
+      )}
+
+      {/* Tab 3: AI Engine */}
+      {tab === 'ai' && (
+        <section className="mt-6">
+          {aiLoading ? (
+            <p className="flex items-center gap-2 text-xs text-[#6b6862]">
+              <Loader2 className="size-4 animate-spin" /> Loading AI engine settings…
             </p>
-          )}
+          ) : (
+            <div className="max-w-2xl space-y-6">
+              {/* Company Override Banner */}
+              <div className="rounded-2xl border border-[#eae7df] bg-[#faf8f3] p-4 text-xs">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="font-semibold text-[#1d1d1b]">
+                      {cfg?.is_company_override
+                        ? 'Custom Company Override Active'
+                        : isPlatformAdmin
+                        ? 'Platform Default Settings'
+                        : 'Inheriting Platform Default AI'}
+                    </span>
+                    <p className="mt-0.5 text-[#6b6862]">
+                      {cfg?.is_company_override
+                        ? 'Your organization is overriding the platform LLM with its own model/key.'
+                        : 'Currently using the system-wide default LLM provider.'}
+                    </p>
+                  </div>
 
-          <div className="flex flex-wrap items-center gap-3">
-            <button type="submit" disabled={saving} aria-busy={saving} className={primaryBtn}>
-              {saving ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Save className="size-4" aria-hidden />}
-              {saving ? 'Saving…' : 'Save settings'}
-            </button>
-            <button type="button" onClick={onTest} disabled={testing || saving} className={ghostBtn}>
-              {testing ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <PlugZap className="size-4" aria-hidden />}
-              {testing ? 'Testing…' : 'Test connection'}
-            </button>
-          </div>
+                  {cfg?.is_company_override && (
+                    <button
+                      type="button"
+                      onClick={onResetAi}
+                      disabled={resettingAi}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-[#dcdad3] bg-white px-3 py-1.5 text-xs text-[#9a3b2c] hover:bg-[#fbe4e0]"
+                    >
+                      <RotateCcw className="size-3" />
+                      {resettingAi ? 'Resetting…' : 'Reset to platform'}
+                    </button>
+                  )}
+                </div>
+              </div>
 
-          {testResult && (
-            <div
-              role="status"
-              className={`rounded-2xl border p-4 text-sm ${testResult.ok ? 'border-[#c9e2c4] bg-[#eef6ec] text-[#3f6b4f]' : 'border-[#e6c9c1] bg-[#fbe4e0] text-[#9a3b2c]'}`}
-            >
-              <p className="flex items-center gap-2 font-medium">
-                {testResult.ok ? <CheckCircle2 className="size-4" aria-hidden /> : <AlertCircle className="size-4" aria-hidden />}
-                {testResult.ok ? 'Connected' : 'Not reachable'} · {testResult.provider} / {testResult.model}
-              </p>
-              {testResult.ok && testResult.sample && (
-                <p className="mt-1 text-[#5d5b55]">Model replied: “{testResult.sample}”</p>
-              )}
-              {!testResult.ok && testResult.detail && (
-                <p className="mt-1 break-words">{testResult.detail}</p>
-              )}
+              <form onSubmit={onSaveAi} className="space-y-4">
+                <div>
+                  <label htmlFor="provider" className={label}>Provider</label>
+                  <div className="relative">
+                    <select
+                      id="provider"
+                      value={provider}
+                      onChange={(e) => {
+                        setProvider(e.target.value as LlmProvider)
+                        setTestResult(null)
+                      }}
+                      className={selectClass}
+                    >
+                      {PROVIDERS.map((p) => (
+                        <option key={p.value} value={p.value}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-[#6b6862]" />
+                  </div>
+                  <p className="mt-1 text-[11px] text-[#6b6862]">
+                    {activeProvider.blurb}
+                    {activeProvider.badge && (
+                      <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-[#e8f0e4] px-2 py-0.5 text-[10px] font-semibold text-[#4a7a5a]">
+                        <Check className="size-3" aria-hidden />
+                        {activeProvider.badge}
+                      </span>
+                    )}
+                  </p>
+                </div>
+
+                <div>
+                  <label htmlFor="chat-model" className={label}>Model Name</label>
+                  <input
+                    id="chat-model"
+                    value={chatModel}
+                    onChange={(e) => setChatModel(e.target.value)}
+                    placeholder={activeProvider.modelHint}
+                    className={inputClass}
+                  />
+                </div>
+
+                {activeProvider.usesBaseUrl && (
+                  <div>
+                    <label htmlFor="base-url" className={label}>
+                      {provider === 'ollama'
+                        ? 'Ollama URL'
+                        : provider === 'bedrock'
+                        ? 'AWS Region (optional)'
+                        : 'Base URL (optional)'}
+                    </label>
+                    <input
+                      id="base-url"
+                      value={baseUrl}
+                      onChange={(e) => setBaseUrl(e.target.value)}
+                      placeholder={
+                        provider === 'ollama'
+                          ? 'http://localhost:11434'
+                          : provider === 'bedrock'
+                          ? 'ap-south-1'
+                          : 'https://api.openai.com/v1'
+                      }
+                      className={inputClass}
+                    />
+                  </div>
+                )}
+
+                {activeProvider.keyLabel && (
+                  <div>
+                    <label htmlFor="api-key" className={label}>{activeProvider.keyLabel}</label>
+                    <div className="relative">
+                      <KeyRound className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-[#6b6862]" />
+                      <input
+                        id="api-key"
+                        type="password"
+                        value={apiKey}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        placeholder={cfg?.has_api_key ? '•••••••• (stored, type to replace)' : 'Paste API key'}
+                        className={`${inputClass} pl-10`}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label htmlFor="temperature" className={label}>Temperature</label>
+                    <input
+                      id="temperature"
+                      type="number"
+                      step="0.05"
+                      min="0"
+                      max="1"
+                      value={temperature}
+                      onChange={(e) => setTemperature(e.target.value)}
+                      className={inputClass}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="max-tokens" className={label}>Max Tokens</label>
+                    <input
+                      id="max-tokens"
+                      type="number"
+                      min="64"
+                      max="4096"
+                      value={maxTokens}
+                      onChange={(e) => setMaxTokens(e.target.value)}
+                      className={inputClass}
+                    />
+                  </div>
+                </div>
+
+                {testResult && (
+                  <div
+                    className={`rounded-2xl border p-4 text-xs ${
+                      testResult.ok
+                        ? 'border-[#cfe0d0] bg-[#f1f7f0] text-[#2f5b36]'
+                        : 'border-[#f0c8c0] bg-[#fbe4e0] text-[#9a3b2c]'
+                    }`}
+                  >
+                    <p className="font-semibold">
+                      {testResult.ok ? 'Connection successful!' : 'Connection test failed.'}
+                    </p>
+                    <p className="mt-1">
+                      {testResult.ok
+                        ? `Tested model ${testResult.model} on ${testResult.provider}.`
+                        : testResult.detail || 'Could not connect.'}
+                    </p>
+                    {testResult.sample && (
+                      <p className="mt-2 rounded-xl bg-white/70 p-2 font-mono text-[11px]">
+                        {testResult.sample}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 pt-2">
+                  <button type="submit" disabled={savingAi} className={primaryBtn}>
+                    {savingAi ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+                    Save Configuration
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onTestAi}
+                    disabled={testingAi}
+                    className={ghostBtn}
+                  >
+                    {testingAi ? <Loader2 className="size-3.5 animate-spin" /> : <PlugZap className="size-3.5" />}
+                    Test Connectivity
+                  </button>
+                </div>
+              </form>
             </div>
           )}
-        </form>
+        </section>
       )}
     </div>
   )

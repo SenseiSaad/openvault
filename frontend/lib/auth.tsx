@@ -1,12 +1,17 @@
 'use client'
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
-import { authApi, clearToken, getToken, setToken, type AuthResponse, type User } from './api'
+import {
+  authApi, type AuthResponse, type User, type UiLanguage,
+} from './api'
 
 interface AuthContextValue {
   user: User | null
   loading: boolean // true while restoring the session on first load
   isEnterprise: boolean
+  isPlatformAdmin: boolean
+  language: UiLanguage
+  setLanguage: (lang: UiLanguage) => Promise<void>
   enterpriseLogin: (email: string, password: string) => Promise<User>
   enterpriseRegister: (p: {
     company_name: string
@@ -19,7 +24,8 @@ interface AuthContextValue {
     email: string
     password: string
   }) => Promise<User>
-  logout: () => void
+  refreshUser: () => Promise<User | null>
+  logout: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null)
@@ -28,21 +34,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
 
-  // Restore the session from a stored token on first mount.
+  // The session lives in HttpOnly cookies: ask the server who we are.
+  // A 401 triggers one silent refresh inside the API client automatically.
   useEffect(() => {
-    if (!getToken()) {
-      setLoading(false)
-      return
-    }
     authApi
       .me()
       .then(setUser)
-      .catch(() => clearToken()) // token expired/invalid
+      .catch(() => setUser(null))
       .finally(() => setLoading(false))
   }, [])
 
   const apply = useCallback((res: AuthResponse) => {
-    setToken(res.token)
     setUser(res.user)
     return res.user
   }, [])
@@ -65,8 +67,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }) => authApi.enterpriseRegister(p).then(apply),
     [apply],
   )
-  const logout = useCallback(() => {
-    clearToken()
+  const refreshUser = useCallback(() => {
+    return authApi
+      .me()
+      .then((u) => {
+        setUser(u)
+        return u
+      })
+      .catch(() => null)
+  }, [])
+
+  const setLanguage = useCallback(
+    async (lang: UiLanguage) => {
+      setUser((u) => (u ? { ...u, language: lang } : u)) // optimistic
+      try {
+        const updated = await authApi.updateMe({ language: lang })
+        setUser(updated)
+      } catch {
+        /* keep the optimistic value; next refresh reconciles */
+      }
+    },
+    [],
+  )
+
+  const logout = useCallback(async () => {
+    try {
+      await authApi.logout()
+    } catch {
+      /* clearing cookies server-side is best-effort */
+    }
     setUser(null)
   }, [])
 
@@ -76,8 +105,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         user,
         loading,
         isEnterprise: !!user,
+        isPlatformAdmin: !!user && (!!user.is_platform_admin || !!user.is_superuser),
+        language: user?.language === 'ur' ? 'ur' : 'en',
+        setLanguage,
         enterpriseLogin,
         enterpriseRegister,
+        refreshUser,
         logout,
       }}
     >
@@ -88,6 +121,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
 export function useAuth() {
   const ctx = useContext(AuthContext)
-  if (!ctx) throw new Error('useAuth must be used within <AuthProvider>')
+  if (!ctx) throw new Error('useAuth must be within <AuthProvider>')
   return ctx
 }

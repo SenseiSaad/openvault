@@ -1,342 +1,290 @@
 # OpenVault
 
-A private, AI-powered knowledge base for organizations.
+> **Private, Zero-Trust Knowledge Infrastructure & Permission-Aware AI for Registered Organizations.**
 
-Each organization gets an isolated document library. Staff ask questions in
-plain language, and the assistant answers using only the documents that person
-is allowed to see. Organizations can also publish selected documents to a
-public library.
-
-This repository is a working local prototype: a Next.js public site plus
-enterprise workspace, and a Django REST API with retrieval-augmented
-generation (RAG).
+OpenVault is an enterprise document repository and retrieval-augmented generation (RAG) assistant designed for organizations that require strict tenant isolation, zero-trust intra-company access controls, auditable cross-company collaboration, multi-turn AI chat history, attendance tracking, and CPA/assurance compliance readiness.
 
 ---
 
-## What it does
+## Table of Contents
 
-- **Private knowledge base.** Upload policies, manuals, reports, and notes.
-  Documents stay inside the owning organization by default.
-- **Ask in plain language.** The assistant retrieves the most relevant
-  passages, then writes an answer from those passages and shows the source
-  document names.
-- **Flexible AI.** Run a local model with [Ollama](https://ollama.com), or
-  point the settings page at OpenAI, Anthropic, or Google Gemini.
-- **Roles.** Admin, employee, and viewer inside an organization. Public
-  consumer accounts can browse published documents and save favorites.
-- **Controlled sharing.** Grant one named person from another organization
-  access to one specific document, and revoke it later.
-- **Public library.** An organization can deliberately publish a document.
-  Until then it stays private.
-
----
-
-## Repository layout
-
-```
-OpenVault/
-├── frontend/          Next.js 16 app (public site + enterprise workspace)
-├── backend/           Django 5 API, RAG pipeline, SQLite database
-├── OpenVault.pptx     Project presentation
-├── amplify.yml        AWS Amplify build spec for the frontend
-├── run.sh             Start both servers and open them in the browser
-├── start-dev.sh       Start / stop / restart both local servers
-└── README.md
-```
-
-### Frontend (`frontend/`)
-
-Next.js App Router, React 19, TypeScript, Tailwind CSS.
-
-| Path | Purpose |
-| --- | --- |
-| `app/page.tsx` | Public home |
-| `app/discover` | Browse and search published documents |
-| `app/publishers` | Public publisher / organization pages |
-| `app/favorites` | Saved documents (signed-in consumers) |
-| `app/auth` | Public and enterprise sign-in / register |
-| `app/enterprise` | Enterprise landing / onboarding |
-| `app/workspace` | Private workspace (overview, documents, chat, members, shares, audit, AI settings) |
-| `app/about`, `app/help`, `app/policy` | Static pages |
-| `lib/api.ts` | API client |
-| `lib/auth.tsx` | JWT session and role helpers |
-| `components/` | Shared UI (header, footer, document cards) |
-
-The frontend talks to the Django API on port `8000`. It auto-detects
-`http://<same-host>:8000` unless `NEXT_PUBLIC_API_URL` is set.
-
-### Backend (`backend/`)
-
-Django + Django REST Framework + SimpleJWT.
-
-| Path | Purpose |
-| --- | --- |
-| `config/` | Project settings, root URLs, landing page |
-| `core/models.py` | Companies, users, documents, chunks, shares, audit, LLM config |
-| `core/views.py` | REST endpoints |
-| `core/rag.py` | Chunking, embeddings, keyword fallback, answer generation |
-| `core/providers.py` | Ollama / OpenAI / Anthropic / Gemini adapters |
-| `core/management/commands/seed_demo.py` | Demo tenants and documents |
-| `data/` | Uploaded and seeded document files (created at runtime) |
-| `db.sqlite3` | Development database |
-
-Every tenant-owned row is scoped by `company`. Queries filter on that foreign
-key before listing, searching, or answering.
+1. [Executive Summary](#executive-summary)
+2. [Key Implemented Features](#key-implemented-features)
+3. [Architecture & How It Works](#architecture--how-it-works)
+4. [Security & Authentication Flow](#security--authentication-flow)
+5. [Plans & PKR Billing](#plans--pkr-billing)
+6. [Data Privacy: Google Gemini vs. Local Ollama](#data-privacy-google-gemini-vs-local-ollama)
+7. [API Endpoints Reference](#api-endpoints-reference)
+8. [Data Models & Schema](#data-models--schema)
+9. [Roles & Permission Hierarchy](#roles--permission-hierarchy)
+10. [Local Development & Quick Start](#local-development--quick-start)
+11. [Docker Compose Quick Start](#docker-compose-quick-start)
+12. [Platform Administration Commands](#platform-administration-commands)
+13. [Project Team & Attribution](#project-team--attribution)
 
 ---
 
-## Requirements
+## Executive Summary
 
-- **Python** 3.11+ (3.12 is fine)
-- **Node.js** 20+
-- **pnpm** 9+ (or npm)
-- **Ollama** (optional, for local answers and embeddings)
+Unlike conventional document repositories or public search tools, OpenVault is built around **employer-controlled private access**:
+
+- **Strict Multi-Tenancy:** Every document, vector chunk, user account, attendance record, and audit entry is bound to a verified `Company` tenant.
+- **Zero-Trust Document Scoping:** Documents can be scoped company-wide, to a specific department, or locked to selected people (`restricted`). Even same-company executives cannot search or view restricted files without explicit grant.
+- **Controlled Cross-Company Collaboration:** Organizations locate partner companies via unique 5-character share codes (`access_code`). Admins can grant exactly one document to one specific registered employee at a partner company, with immediate revocation and download restrictions.
+- **Permission-Aware RAG:** Chat retrieval filters documents based on the requesting user's explicit permissions *before* running hybrid retrieval (BM25 + cosine similarity), ensuring the AI never leaks unauthorized information.
+- **Multi-Turn Persistent Chat:** Interactive threaded conversations with the last 6 turns supplied to the LLM, thumbs up/down user feedback, and live citations.
+- **CPA & Assurance Audit Readiness:** Every sign-in, upload, download, share, revocation, member modification, and AI prompt is logged in an immutable audit trail with IP tracking and CSV export.
 
 ---
 
-## Quick start
+## Key Implemented Features
 
-From the repository root:
+### 🏢 Multi-Tenancy & Subscriptions
+- Isolated company workspaces identified by slug and unique 5-character `access_code`.
+- Company self-service settings: name, website, contact email, phone, and seat cap.
+- Tiered subscription plans (Free, Starter, SME, Enterprise) priced in **Pakistani Rupees (PKR)** with server-side quota enforcement on seats, documents, storage, and monthly AI asks.
+- Cross-tenant platform administration for root operators with an active tenant switcher.
 
+### 🔐 Zero-Trust Document Management
+- Supported formats: **PDF (`.pdf`)**, **Word (`.docx`)**, **PowerPoint (`.pptx`)**, **Markdown (`.md`)**, **Plain Text (`.txt`, `.csv`)**, and scanned PDFs/images via OCR.
+- Three-tier access scoping:
+  - `Entire company`: Searchable and downloadable by all active members of the tenant.
+  - `Department`: Scoped strictly to colleagues in the assigned department.
+  - `Selected people`: Searchable and downloadable only by the uploader and explicitly authorized colleagues.
+- **Async Indexing:** Uploads return immediately (`indexing_status="pending"`), indexing proceeds in background workers with retry capability.
+- **Document Versioning:** Upload new versions of existing documents while preserving archive history and sharing rules.
+- **In-Browser Text Preview:** View extracted text chunks directly without forced downloads.
+- **Tagging & Filtering:** Categorize documents with custom tags and filter chips.
+- **Batch Management:** Select multiple documents for bulk deletion.
+
+### 🤝 Granular Cross-Company Collaboration
+- Tenant lookup via 5-character access code (`GET /api/companies/search?code=...`).
+- Granular per-user, per-document grants (`POST /api/documents/<id>/shares`).
+- Configurable download permission per grant (`can_download: true/false`).
+- Instant revocation (`DELETE /api/documents/<id>/shares/<user_id>`).
+- Dedicated "Shared with me" view displaying externally granted files.
+
+### 🤖 Multi-Provider Hybrid RAG Assistant
+- Dual-mode chat interface:
+  - **Local Mode:** Offline, privacy-first inference via **Ollama** (`qwen2.5:1.5b` or `llama3.2:3b`, `nomic-embed-text`).
+  - **Online Mode:** Cloud inference via **Google Gemini** (`gemini-3.8-flash`, `text-embedding-004`), with support for **OpenAI** (`gpt-4o-mini`) and **Anthropic Claude** (`claude-3-5-haiku-latest`).
+- **Hybrid Retrieval:** Blended 70% dense cosine similarity + 30% BM25 keyword retrieval.
+- **Persistent Threads:** Threaded chat history sidebar, title renaming, and deletion.
+- **User Feedback:** Thumbs up / down rating on assistant answers.
+- **Automated Workflows:** Detects intent to schedule meetings (Google Calendar / email simulation) and generate leave application forms (`.docx`).
+- **Policy Flagging:** Non-blocking audit-logged safety alerts for compliance tripping.
+- **Urdu Language Support:** Bilingual UI with Roman Urdu toggle and auto-matching AI reply instructions.
+
+### 📋 Member Administration, Attendance & Audit
+- Department assignment for teammates.
+- Inline member role editing (`admin`, `employee`, `viewer`) and account activation/deactivation.
+- QR-code attendance check-in with 3-strike policy tracking.
+- Broadcast company announcements posted by administrators.
+- 30-day analytics dashboard: total asks, unanswered questions, flagged questions, user satisfaction, and monthly quota usage.
+- 100-event paginated audit log with client-side filtering and **CSV export**.
+
+---
+
+## Security & Authentication Flow
+
+OpenVault uses **HttpOnly cookie-based JWT sessions** to guard against token theft:
+
+1. **Sign-In:** When a user logs in via `POST /api/auth/login`, the server returns standard JSON metadata while setting two secure cookies:
+   - `openvault_access`: Access token (15-minute lifetime), `HttpOnly`, `SameSite=Lax`.
+   - `openvault_refresh`: Refresh token (7-day lifetime), `HttpOnly`, `SameSite=Lax`.
+2. **Automatic Request Signing:** The browser automatically attaches credentials with every request (`credentials: 'include'`). Raw tokens never touch JavaScript `localStorage`, neutralizing XSS exfiltration.
+3. **Silent Refresh Interceptor:** When an API request returns `401 Unauthorized`, the client interceptor (`lib/api.ts`) transparently issues `POST /api/auth/refresh` to renew the access cookie and replays the original request without user interruption.
+4. **Token Rotation:** On every refresh, old refresh tokens are blacklisted and a fresh refresh cookie is issued (`ROTATE_REFRESH_TOKENS=True`).
+5. **Rate Limiting:** Sliding-window rate limiters prevent brute-force attacks:
+   - Login: 8 attempts/minute per IP + email.
+   - Registration / Password Reset: 5 attempts/10 minutes per IP.
+   - Company code lookup: 20 attempts/minute.
+6. **Password Reset & Verification:** Secure 30-minute one-time hashed tokens sent via email (`POST /api/auth/forgot-password` and `POST /api/auth/reset-password`).
+
+---
+
+## Plans & PKR Billing
+
+OpenVault subscription tiers are denominated in **Pakistani Rupees (PKR)** and enforced server-side:
+
+| Tier | Price | Member Seats | Documents | Storage | Monthly Asks | Advanced Features |
+|---|---|---|---|---|---|---|
+| **Free** | PKR 0 / mo | 5 | 50 | 512 MB | 100 | Basic RAG, Audit log |
+| **Starter** | PKR 2,500 / mo | 15 | 500 | 5 GB | 2,000 | + File versioning |
+| **SME** | PKR 6,000 / mo | 50 | 5,000 | 25 GB | 10,000 | + Departments, BYO Custom LLM key |
+| **Enterprise** | Custom quote | Unlimited | Unlimited | Unlimited | Unlimited | All features enabled, Dedicated support |
+
+### Infrastructure Cost Basis
+- A typical deployment running on an AWS EC2 `t3.small` instance (~$15/month ≈ PKR 4,200/month) easily supports the cloud-API configuration (Gemini / OpenAI).
+- Deployments running local models via Ollama run smoothly on an EC2 `t3.medium` or GPU-backed instance (~$30/month ≈ PKR 8,400/month).
+
+To seed or refresh plans in the database:
 ```bash
-# 1. Backend
+backend/.venv/bin/python backend/manage.py seed_plans
+```
+
+---
+
+## Data Privacy: Google Gemini vs. Local Ollama
+
+Organizations often ask about data security when querying documents with AI. OpenVault provides complete clarity and control:
+
+### 1. Cloud AI: Google Gemini (Online Mode)
+- **What is sent:** When a user asks a question, the question and the top retrieved passages from permitted documents are transmitted over TLS to the Google Gemini API.
+- **Paid / Commercial API Tier:** Under Google's enterprise API terms, **customer data is NOT used to train Google models**. Data is processed solely for inference and retained only temporarily for abuse monitoring.
+- **Free AI Studio Tier:** Prompt data may be sampled by Google for product improvement. Use paid API keys in enterprise production.
+
+### 2. Local AI: Ollama (Offline Mode)
+- **Zero Data Leakage:** Both the embedding model (`nomic-embed-text`) and chat model (`qwen2.5` or `llama3.2`) run 100% on your own server.
+- **Strict Privacy:** No text, vectors, or questions ever leave your server or network. Ideal for classified, healthcare, or sensitive legal documents.
+
+---
+
+## API Endpoints Reference
+
+All application endpoints are served under `/api/`:
+
+### Authentication
+- `POST /api/auth/register` — Register a new company and primary admin.
+- `POST /api/auth/login` — Sign in; sets HttpOnly access & refresh cookies.
+- `POST /api/auth/refresh` — Silent refresh of access cookie.
+- `POST /api/auth/logout` — Blacklists refresh token and clears cookies.
+- `GET /api/auth/me` — Retrieve current authenticated user profile.
+- `PATCH /api/auth/update-me` — Update full name, title, language (`en`/`ur`), or password.
+- `POST /api/auth/forgot-password` — Request password reset email.
+- `POST /api/auth/reset-password` — Complete password reset with token.
+- `POST /api/auth/request-verification` — Send email verification link.
+- `POST /api/auth/verify` — Verify email token.
+
+### Documents
+- `GET /api/documents?page=1&page_size=50` — List permitted documents (paginated).
+- `POST /api/documents/upload` — Upload file (multipart: file, category, description, access_scope, department, tags).
+- `GET|PATCH|DELETE /api/documents/<id>` — View, update metadata, or delete document.
+- `GET /api/documents/<id>/download` — Authenticated file download.
+- `GET /api/documents/<id>/preview` — In-browser preview of extracted text chunks.
+- `POST /api/documents/<id>/reindex` — Trigger re-indexing.
+- `GET /api/documents/<id>/versions` — View document version history.
+- `POST /api/documents/<id>/versions/new` — Upload a new document version.
+
+### Collaboration & Sharing
+- `GET /api/companies/search?code=<code>` — Look up company by access code.
+- `GET /api/companies/<code>/members` — List selectable partner employees.
+- `GET|POST /api/documents/<id>/shares` — Manage external document access grants.
+- `DELETE /api/documents/<id>/shares/<user_id>` — Revoke external access grant.
+- `GET /api/shared-with-me` — List documents shared with caller by other companies.
+
+### Chat & AI Inference
+- `POST /api/ask` — Stream NDJSON RAG response (supports `conversation_id`, `mode`, `provider`).
+- `GET /api/conversations` — List chat threads (paginated).
+- `GET|PATCH|DELETE /api/conversations/<id>` — Load, rename, or delete conversation.
+- `POST /api/messages/<id>/rate` — Rate an assistant response (thumbs `+1` / `-1`).
+- `GET /api/llm-status` — Health status of local and online models.
+
+### Administration & Operations
+- `GET /api/admin/company` · `PATCH /api/admin/company` — Manage company profile and seat limit.
+- `GET|POST /api/admin/users` · `PATCH|DELETE /api/admin/users/<id>` — Manage teammates, roles, and status.
+- `GET|POST /api/admin/departments` · `DELETE .../<id>` — Manage departments.
+- `GET|POST /api/admin/announcements` · `DELETE .../<id>` — Broadcast company announcements.
+- `GET /api/admin/analytics?days=30` — Usage analytics, unanswered questions, ratings.
+- `GET /api/admin/audit?page=1&page_size=100` — Activity audit trail (JSON).
+- `GET /api/admin/audit?export=csv` — Export audit trail to CSV file.
+- `GET|PUT|DELETE /api/admin/llm-config` — Manage company or platform LLM configuration.
+- `POST /api/admin/llm-test` — Live connectivity test for configured LLM.
+- `GET /api/plans` — Public catalogue of subscription plans.
+- `POST /api/admin/companies/<id>/plan` — Platform admin assigns tenant subscription plan.
+- `GET /api/health` — Platform health check (returns 200 OK or 503 Service Unavailable).
+
+---
+
+## Local Development & Quick Start
+
+### Prerequisites
+- **Python 3.11+**
+- **Node.js 20+**
+- **pnpm** (or npm)
+- **Ollama** (optional, for offline models)
+
+### 1. Backend Setup
+```bash
+# Create and activate virtual environment
 python3 -m venv backend/.venv
-backend/.venv/bin/pip install -r backend/requirements.txt
+source backend/.venv/bin/activate
+
+# Install requirements
+pip install -r backend/requirements.txt
+
+# Configure environment
 cp backend/.env.example backend/.env
-backend/.venv/bin/python backend/manage.py migrate
-backend/.venv/bin/python backend/manage.py seed_demo
 
-# 2. Frontend
+# Run migrations and seed subscription plans
+python backend/manage.py migrate
+python backend/manage.py seed_plans
+```
+
+### 2. Frontend Setup
+```bash
 cd frontend
-pnpm install          # or: npm install
-cp .env.example .env.local
+pnpm install
 cd ..
-
-# 3. Run both (starts the servers and opens the browser)
-./run.sh
 ```
 
-Then open:
+### 3. Launching Dev Servers
+```bash
+# Starts Django on :8000 and Next.js on :3000
+./start.sh
 
-| Service | URL |
-| --- | --- |
-| Public site + workspace | http://localhost:3000 |
-| Django API + landing | http://localhost:8000 |
-| Django admin | http://localhost:8000/admin/ |
+# To stop both servers
+./stop.sh
+```
 
-Useful launcher commands:
+---
+
+## Docker Compose Quick Start
+
+To run the entire stack in containers:
 
 ```bash
-./run.sh                # start both + open the browser (logs in .dev-logs/)
-./run.sh status
-./run.sh stop
-./run.sh restart
+# Build and start frontend and backend with SQLite
+docker compose up --build
 
-./start-dev.sh          # same servers, without opening a browser
+# Or with PostgreSQL profile
+docker compose --profile pg up --build
 ```
 
-`run.sh` also works around the Linux `Too many open files (os error 24)`
-crash in `next dev`: if the per-user inotify instance limit is exhausted, it
-falls back to webpack with polling file-watching automatically.
+Access points:
+- **Web Application:** [http://localhost:3000](http://localhost:3000)
+- **API Health Check:** [http://localhost:8000/api/health](http://localhost:8000/api/health)
+- **Django Admin:** [http://localhost:8000/admin/](http://localhost:8000/admin/)
 
-To run the servers yourself instead of the script:
+---
+
+## Platform Administration Commands
+
+### Create or Promote a Root Platform Admin
+Root platform administrators have global cross-tenant visibility, can switch active tenant contexts in the workspace, and manage subscription plans.
 
 ```bash
-# terminal 1
-cd backend
-.venv/bin/python manage.py runserver 0.0.0.0:8000
+# Create a new platform admin:
+python backend/manage.py create_platform_admin root@openvault.internal --password "YourStrongPassword!123"
 
-# terminal 2
-cd frontend
-pnpm dev                # or: npm run dev
+# Promote an existing user:
+python backend/manage.py create_platform_admin user@company.com --promote
 ```
 
----
-
-## Demo accounts
-
-`seed_demo` creates publishers, private tenants, documents, and one
-cross-company share.
-
-| Account | Password | What it is |
-| --- | --- | --- |
-| `admin@openscience.com` | `demo1234` | Public publisher admin |
-| `staff@openscience.com` | `demo1234` | Publisher employee |
-| `admin@company-a.com` | `demo1234` | Private tenant admin |
-| `hr@company-a.com` | `demo1234` | Private employee (receives a shared document from Company C) |
-| `viewer@company-a.com` | `demo1234` | Read-only viewer |
-| `admin@company-b.com` / `admin@company-c.com` | `demo1234` | Other isolated tenants |
-| `root@securekb.local` | `admin1234` | Django `/admin/` superuser |
-
-Company C shares `Vendor Security Requirements.md` with `hr@company-a.com`
-only. Use that to demonstrate one-document, one-person sharing.
-
-To rebuild the demo from scratch:
-
+### Seed Subscription Plans
 ```bash
-rm backend/db.sqlite3
-backend/.venv/bin/python backend/manage.py migrate
-backend/.venv/bin/python backend/manage.py seed_demo
+python backend/manage.py seed_plans
 ```
 
 ---
 
-## AI setup
+## Project Team & Attribution
 
-The default is a **local Ollama** model. Nothing is sent to an external
-provider unless you change the settings.
+**OpenVault — Final Year Project (FYP)**  
+*University of South Asia*
 
-```bash
-# install from https://ollama.com, then:
-ollama pull llama3.2:3b
-ollama pull nomic-embed-text
-```
+- **Saad Waseem**
+- **M Akmal**
+- **M Talha**
 
-`backend/.env` (copied from `.env.example`) controls the fallback provider:
-
-```
-LLM_PROVIDER=ollama
-LLM_URL=http://localhost:11434
-LLM_MODEL=llama3.2:3b
-EMBED_PROVIDER=ollama
-EMBED_MODEL=nomic-embed-text
-```
-
-You can also switch providers from **Workspace → Settings** without editing
-the file. Supported providers:
-
-- **Ollama** — local, data stays on the machine
-- **OpenAI** (or any OpenAI-compatible endpoint)
-- **Anthropic**
-- **Google Gemini**
-
-Chat and embeddings are configured separately, so changing the answer model
-does not invalidate stored vectors.
-
-If embeddings are unavailable, search falls back to keyword matching so
-questions still work.
-
----
-
-## How answering works
-
-1. A user asks a question in the workspace chat.
-2. The API keeps only documents the user may see: their company's files, plus
-   any document shared specifically with them.
-3. Those documents are searched (embedding similarity, or keyword fallback).
-4. The top passages, plus any notes marked as always-included, are sent to
-   the language model.
-5. The model is instructed to answer only from that context and to say when
-   the answer is not present.
-6. The reply is streamed back with the names of the source documents.
-
-Supported upload types include PDF, DOCX, PPTX, Markdown, and plain text.
-
----
-
-## API overview
-
-All application routes live under `/api/`.
-
-**Auth**
-
-- `POST /api/auth/register` — create an organization and its first admin
-- `POST /api/auth/login` — enterprise login (email + password)
-- `GET /api/auth/me` — current user
-- `POST /api/public/register` — consumer account
-- `POST /api/public/login` — consumer login (username + password)
-
-**Private workspace** (JWT required)
-
-- `GET /api/documents` · `POST /api/documents/upload`
-- `GET|PATCH|DELETE /api/documents/<id>`
-- `GET /api/documents/<id>/download`
-- `GET|POST /api/documents/<id>/shares`
-- `DELETE /api/documents/<id>/shares/<user_id>`
-- `GET /api/shared-with-me`
-- `POST /api/ask` — streamed RAG answer
-- `GET /api/llm-status`
-- `GET|POST /api/admin/users` · `PATCH|DELETE /api/admin/users/<id>`
-- `GET /api/admin/audit`
-- `GET|PUT /api/admin/llm-config` · `POST /api/admin/llm-test`
-
-**Public portal** (no login)
-
-- `GET /api/public/companies`
-- `GET /api/public/categories`
-- `GET /api/public/documents` · `GET /api/public/documents/<id>`
-- `GET /api/public/documents/<id>/download`
-
-**Favorites** (signed-in consumer)
-
-- `GET|POST /api/favorites` · `DELETE /api/favorites/<id>`
-
----
-
-## Roles
-
-| Role | Typical use | Can do |
-| --- | --- | --- |
-| `admin` | Organization manager | Upload, publish, members, AI settings, sharing, audit |
-| `employee` | Staff | Ask questions, work with documents they can access |
-| `viewer` | Read-only colleague | View / download allowed documents |
-| `public` | Consumer on the open library | Browse published documents and save favorites |
-
-An enterprise user belongs to exactly one organization.
-
----
-
-## Environment files
-
-Copy the examples. Do not commit real secrets.
-
-**`backend/.env`**
-
-```
-SECRET_KEY=change-me
-DEBUG=true
-DATA_DIR=./data
-LLM_PROVIDER=ollama
-LLM_URL=http://localhost:11434
-LLM_MODEL=llama3.2:3b
-EMBED_PROVIDER=ollama
-EMBED_MODEL=nomic-embed-text
-```
-
-**`frontend/.env.local`** (optional)
-
-```
-# only if the API is not on the same host, port 8000
-# NEXT_PUBLIC_API_URL=http://localhost:8000
-```
-
----
-
-## Deployment notes
-
-This is a local prototype. Intended production direction:
-
-- **Frontend:** AWS Amplify using `amplify.yml` (`appRoot: frontend`, Node 20, pnpm)
-- **API + files:** a single server (planned Amazon EC2) with PostgreSQL and
-  object storage (planned Amazon S3)
-- **Packaging:** Docker is planned; it is not in this tree yet
-
-Do not treat `DEBUG=true`, `ALLOWED_HOSTS=["*"]`, or
-`CORS_ALLOW_ALL_ORIGINS = True` as production-ready. Change the secret key,
-restrict hosts, and tighten CORS before exposing the API.
-
----
-
-## Presentation
-
-`OpenVault.pptx` is the project presentation for the current prototype.
-
----
-
-## Team
-
-Saad Waseem, M Akmal, M Talha
-
-University of South Asia — Final Year Project
-
-
+*Project Presentation: `OpenVault.pptx`*

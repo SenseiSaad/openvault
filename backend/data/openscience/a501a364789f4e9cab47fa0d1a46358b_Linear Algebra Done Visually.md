@@ -1,3 +1,0 @@
-Linear Algebra Done Visually
-
-Linear algebra is the mathematics of vectors and the linear transformations that act on them. Matrices are best understood as functions that stretch, rotate and project space. Eigenvectors are the directions a transformation leaves unchanged. This geometric view demystifies determinants, rank and the dot product, and grounds applications from computer graphics to machine learning.

@@ -14,18 +14,26 @@ import {
   Loader2,
   Lock,
   Mail,
+  Megaphone,
   Phone,
+  Plus,
   ScrollText,
   Share2,
   ShieldCheck,
   Sparkles,
+  Trash2,
   Users,
+  X,
   type LucideIcon,
 } from 'lucide-react'
 import { useAuth } from '@/lib/auth'
 import {
   adminApi,
+  analyticsApi,
+  companyApi2,
   workApi,
+  type Analytics,
+  type Announcement,
   type AuditRow,
   type CompanyProfile,
   type EnterpriseDoc,
@@ -33,43 +41,55 @@ import {
   type User,
 } from '@/lib/api'
 import { formatDate, titleFromName } from '@/lib/utils'
+import { toast } from '@/components/toaster'
+import { t } from '@/lib/i18n'
 
 export default function WorkspaceOverviewPage() {
-  const { user } = useAuth()
+  const { user, language } = useAuth()
   const isAdmin = user?.role === 'admin'
 
   const [docs, setDocs] = useState<EnterpriseDoc[]>([])
   const [llm, setLlm] = useState<LlmStatus | null>(null)
   const [members, setMembers] = useState<User[]>([])
   const [audit, setAudit] = useState<AuditRow[]>([])
+  const [announcements, setAnnouncements] = useState<Announcement[]>([])
+  const [analytics, setAnalytics] = useState<Analytics | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // One fetch for everything the dashboard needs. Admin-only endpoints are
-  // called only when the caller is an admin, and their failure is swallowed
-  // so the core document view still renders for a non-admin member.
+  // New announcement modal
+  const [showAnnounceModal, setShowAnnounceModal] = useState(false)
+  const [announceTitle, setAnnounceTitle] = useState('')
+  const [announceBody, setAnnounceBody] = useState('')
+  const [postingAnnounce, setPostingAnnounce] = useState(false)
+
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const [docsRes, llmRes] = await Promise.all([
-        workApi.documents(),
+      const [docsRes, llmRes, announceRes] = await Promise.all([
+        workApi.documents(1, 50),
         workApi.llmStatus().catch(() => null),
+        companyApi2.announcements().catch(() => []),
       ])
-      setDocs(docsRes)
+      setDocs(docsRes.results || [])
       setLlm(llmRes)
+      setAnnouncements(announceRes)
 
       if (isAdmin) {
         try {
-          const [usersRes, auditRes] = await Promise.all([
+          const [usersRes, auditRes, analyticsRes] = await Promise.all([
             adminApi.users(),
-            adminApi.audit(),
+            adminApi.audit(1, 10),
+            analyticsApi.get(30).catch(() => null),
           ])
           setMembers(usersRes)
-          setAudit(auditRes)
+          setAudit(auditRes.results || [])
+          setAnalytics(analyticsRes)
         } catch {
           setMembers([])
           setAudit([])
+          setAnalytics(null)
         }
       }
     } catch (e) {
@@ -83,6 +103,37 @@ export default function WorkspaceOverviewPage() {
     if (!user) return
     void load()
   }, [user, load])
+
+  async function onPostAnnouncement(e: React.FormEvent) {
+    e.preventDefault()
+    if (!announceTitle.trim() || !announceBody.trim()) return
+    setPostingAnnounce(true)
+    try {
+      const created = await companyApi2.addAnnouncement({
+        title: announceTitle.trim(),
+        body: announceBody.trim(),
+      })
+      setAnnouncements((prev) => [created, ...prev])
+      setAnnounceTitle('')
+      setAnnounceBody('')
+      setShowAnnounceModal(false)
+      toast.success('Announcement broadcasted.')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not post announcement.')
+    } finally {
+      setPostingAnnounce(false)
+    }
+  }
+
+  async function onDeleteAnnouncement(id: number) {
+    try {
+      await companyApi2.removeAnnouncement(id)
+      setAnnouncements((prev) => prev.filter((a) => a.id !== id))
+      toast.success('Announcement removed.')
+    } catch {
+      toast.error('Could not remove announcement.')
+    }
+  }
 
   const stats = useMemo(() => {
     const total = docs.length
@@ -107,16 +158,16 @@ export default function WorkspaceOverviewPage() {
   const greetingName = user?.full_name || user?.username || user?.email || 'there'
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="mx-auto max-w-5xl pb-10">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-xs font-medium uppercase tracking-[0.16em] text-[#8c8a83]">Overview</p>
-          <h1 className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-[#1d1d1b] sm:text-4xl">
-            Welcome back,{' '}
+          <p className="text-xs font-medium uppercase tracking-[0.16em] text-[#6b6862]">Overview</p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-[#1d1d1b] sm:text-4xl">
+            {t('welcomeBack', language)}{' '}
             <span className="font-serif font-normal italic">{greetingName}</span>
           </h1>
-          <p className="mt-3 max-w-md text-sm leading-relaxed text-[#77746c]">
-            Here&apos;s a snapshot of your company&apos;s knowledge base: documents, downloads, and everything indexed for AI search.
+          <p className="mt-2 max-w-md text-xs leading-relaxed text-[#6b6862]">
+            Here&apos;s a snapshot of your company&apos;s knowledge base: documents, downloads, and AI search activity.
           </p>
         </div>
         <LlmPill llm={llm} loading={loading} />
@@ -144,7 +195,8 @@ export default function WorkspaceOverviewPage() {
             />
           ) : null}
 
-          <section className="mt-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
+          {/* Quick Stats Grid */}
+          <section className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
             {[
               { icon: FileText, tint: '#dfe7f7', label: 'Total documents', value: stats.total.toLocaleString() },
               { icon: Lock, tint: '#fff0d3', label: 'Restricted files', value: stats.restricted.toLocaleString(), hint: `${(stats.total - stats.restricted).toLocaleString()} company-wide` },
@@ -154,6 +206,117 @@ export default function WorkspaceOverviewPage() {
             ].map((data, i) => (
               <StatCard key={data.label} {...data} index={i} />
             ))}
+          </section>
+
+          {/* Analytics Cards (Admin) */}
+          {isAdmin && analytics && (
+            <section className="mt-6 rounded-3xl border border-[#e6e3dc] bg-[#fffdfa] p-6 shadow-sm">
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="size-4 text-[#6b6862]" />
+                  <h2 className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6b6862]">
+                    AI Analytics &amp; Usage (Past 30 Days)
+                  </h2>
+                </div>
+                <span className="text-[11px] text-[#6b6862]">
+                  Avg Response Latency: {Math.round(analytics.totals.avg_latency_ms || 0)}ms
+                </span>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-5">
+                <div className="rounded-2xl border border-[#eae7df] bg-[#faf8f3] p-3.5">
+                  <p className="text-[11px] text-[#6b6862]">Total Asks</p>
+                  <p className="mt-1 text-2xl font-bold tracking-tight text-[#1d1d1b]">
+                    {analytics.totals.asks}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-[#eae7df] bg-[#faf8f3] p-3.5">
+                  <p className="text-[11px] text-[#6b6862]">Unanswered</p>
+                  <p className="mt-1 text-2xl font-bold tracking-tight text-[#9a3b2c]">
+                    {analytics.totals.unanswered}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-[#eae7df] bg-[#faf8f3] p-3.5">
+                  <p className="text-[11px] text-[#6b6862]">Policy Flags</p>
+                  <p className="mt-1 text-2xl font-bold tracking-tight text-[#8a6316]">
+                    {analytics.totals.flagged}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-[#eae7df] bg-[#faf8f3] p-3.5">
+                  <p className="text-[11px] text-[#6b6862]">Satisfaction</p>
+                  <div className="mt-1 flex items-center gap-2 text-sm font-semibold">
+                    <span className="text-[#3f6b45]">👍 {analytics.ratings.up}</span>
+                    <span className="text-[#9a3b2c]">👎 {analytics.ratings.down}</span>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-[#eae7df] bg-[#faf8f3] p-3.5">
+                  <p className="text-[11px] text-[#6b6862]">This Month&apos;s Asks</p>
+                  <p className="mt-1 text-base font-bold text-[#1d1d1b]">
+                    {analytics.usage.asks_this_month} /{' '}
+                    {analytics.usage.monthly_ask_limit ? analytics.usage.monthly_ask_limit.toLocaleString() : '∞'}
+                  </p>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* Announcements Section */}
+          <section className="mt-6 rounded-3xl border border-[#e6e3dc] bg-[#fffdfa] p-6 shadow-sm">
+            <div className="flex items-center justify-between border-b border-[#f0ede6] pb-4">
+              <div className="flex items-center gap-2">
+                <Megaphone className="size-4 text-[#1d1d1b]" />
+                <h2 className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6b6862]">
+                  {t('announcements', language)}
+                </h2>
+              </div>
+              {isAdmin && (
+                <button
+                  type="button"
+                  onClick={() => setShowAnnounceModal(true)}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-[#1d1d1b] px-3.5 py-1 text-xs font-medium text-white hover:bg-[#3c3b37]"
+                >
+                  <Plus className="size-3" /> Post Announcement
+                </button>
+              )}
+            </div>
+
+            <div className="mt-4">
+              {announcements.length === 0 ? (
+                <p className="text-xs text-[#8c8a83]">{t('noAnnouncements', language)}</p>
+              ) : (
+                <ul className="space-y-3">
+                  {announcements.map((a) => (
+                    <li
+                      key={a.id}
+                      className="flex items-start justify-between gap-3 rounded-2xl border border-[#eae7df] bg-[#faf8f3] p-4 text-xs"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold text-[#1d1d1b]">{a.title}</p>
+                        <p className="mt-1 leading-relaxed text-[#4f4d47] whitespace-pre-wrap">{a.body}</p>
+                        <p className="mt-2 text-[10px] text-[#8c8a83]">
+                          {a.created_by_name ? `By ${a.created_by_name} · ` : ''}
+                          {formatDate(a.created_at)}
+                        </p>
+                      </div>
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => onDeleteAnnouncement(a.id)}
+                          className="rounded p-1 text-[#9a3b2c] hover:bg-[#fbe4e0]"
+                          title="Delete announcement"
+                        >
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </section>
 
           {isAdmin ? (
@@ -203,7 +366,7 @@ export default function WorkspaceOverviewPage() {
           </section>
 
           <section className="mt-6">
-            <h2 className="text-xs font-medium uppercase tracking-[0.16em] text-[#8c8a83]">Quick actions</h2>
+            <h2 className="text-xs font-medium uppercase tracking-[0.16em] text-[#6b6862]">Quick actions</h2>
             <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <ActionCard
                 href="/workspace/chat"
@@ -215,13 +378,13 @@ export default function WorkspaceOverviewPage() {
                 href="/workspace/documents"
                 icon={FileText}
                 title="Manage documents"
-                desc="Upload files and choose company-wide or named-person access."
+                desc="Upload files and choose company-wide, department, or restricted access."
               />
               <ActionCard
                 href="/workspace/documents"
                 icon={Lock}
                 title="Access controls"
-                desc="Upload files as company-wide or restrict to named people. Even same-company executives cannot view restricted files without explicit access."
+                desc="Upload files as company-wide or restrict to named people or specific departments."
               />
               <ActionCard
                 href="/workspace/shared"
@@ -247,7 +410,7 @@ export default function WorkspaceOverviewPage() {
                     href="/workspace/members"
                     icon={Users}
                     title="Manage team"
-                    desc="Invite teammates and assign their roles."
+                    desc="Invite teammates and assign their roles and departments."
                   />
                   <ActionCard
                     href="/workspace/audit"
@@ -261,6 +424,73 @@ export default function WorkspaceOverviewPage() {
           </section>
         </>
       )}
+
+      {/* Post Announcement Modal */}
+      {showAnnounceModal && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"
+          onClick={() => setShowAnnounceModal(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-3xl border border-[#e6e3dc] bg-[#fffdfa] p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-[#eae7df] pb-3">
+              <h2 className="text-sm font-semibold text-[#1d1d1b]">Post Announcement</h2>
+              <button
+                type="button"
+                onClick={() => setShowAnnounceModal(false)}
+                className="rounded-lg p-1 text-[#6b6862] hover:bg-[#efece4]"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+
+            <form onSubmit={onPostAnnouncement} className="mt-4 space-y-3.5">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-[#1d1d1b]">Title</label>
+                <input
+                  required
+                  value={announceTitle}
+                  onChange={(e) => setAnnounceTitle(e.target.value)}
+                  placeholder="e.g. Office Closed on Friday"
+                  className="h-11 w-full rounded-xl border border-[#d8d5cc] bg-white px-3.5 text-xs outline-none focus:border-[#1d1d1b]"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs font-medium text-[#1d1d1b]">Message</label>
+                <textarea
+                  required
+                  rows={4}
+                  value={announceBody}
+                  onChange={(e) => setAnnounceBody(e.target.value)}
+                  placeholder="Write the company-wide announcement body…"
+                  className="w-full resize-none rounded-xl border border-[#d8d5cc] bg-white p-3 text-xs outline-none focus:border-[#1d1d1b]"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAnnounceModal(false)}
+                  className="rounded-full border border-[#dcdad3] px-4 py-2 text-xs font-medium text-[#6b6862] hover:bg-[#efece4]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={postingAnnounce}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-[#1d1d1b] px-5 py-2 text-xs font-medium text-white hover:bg-[#3c3b37] disabled:opacity-50"
+                >
+                  {postingAnnounce ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+                  Broadcast
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -268,7 +498,7 @@ export default function WorkspaceOverviewPage() {
 function LlmPill({ llm, loading }: { llm: LlmStatus | null; loading: boolean }) {
   if (loading) {
     return (
-      <span className="inline-flex shrink-0 items-center gap-2 rounded-full border border-[#e6e3dc] bg-[#fffdfa] px-3.5 py-2 text-xs font-medium text-[#77746c]">
+      <span className="inline-flex shrink-0 items-center gap-2 rounded-full border border-[#e6e3dc] bg-[#fffdfa] px-3.5 py-2 text-xs font-medium text-[#6b6862]">
         <Loader2 className="size-3.5 animate-spin" aria-hidden /> Checking AI…
       </span>
     )
@@ -279,7 +509,7 @@ function LlmPill({ llm, loading }: { llm: LlmStatus | null; loading: boolean }) 
       className={`inline-flex shrink-0 items-center gap-2 rounded-full border px-3.5 py-2 text-xs font-medium ${
         online
           ? 'border-[#cfe3d1] bg-[#e8f2e8] text-[#3f6b45]'
-          : 'border-[#e6e3dc] bg-[#f2f0ec] text-[#77746c]'
+          : 'border-[#e6e3dc] bg-[#f2f0ec] text-[#6b6862]'
       }`}
     >
       <span
@@ -321,19 +551,21 @@ function CompanyCard({
         </span>
         <div className="min-w-0 flex-1">
           <h2 className="text-sm font-semibold text-[#1d1d1b]">{company.name}</h2>
-          <p className="mt-0.5 text-xs uppercase tracking-[0.12em] text-[#98958c]">Company profile</p>
-          <p className="mt-2 inline-flex items-center gap-2 rounded-full bg-[#f0ede5] px-3 py-1 text-xs font-semibold tracking-[0.16em] text-[#4f4d47]">Company code <span className="font-mono">{company.access_code || '—'}</span></p>
+          <p className="mt-0.5 text-xs uppercase tracking-[0.12em] text-[#6b6862]">Company profile</p>
+          <p className="mt-2 inline-flex items-center gap-2 rounded-full bg-[#f0ede5] px-3 py-1 text-xs font-semibold tracking-[0.16em] text-[#4f4d47]">
+            Company code <span className="font-mono">{company.access_code || '—'}</span>
+          </p>
         </div>
       </div>
 
       <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
         <div className="flex items-center gap-2 text-[#4f4d47]">
-          <Users className="size-4 shrink-0 text-[#98958c]" aria-hidden />
+          <Users className="size-4 shrink-0 text-[#6b6862]" aria-hidden />
           <span>{seats}</span>
         </div>
         {websiteHref ? (
           <div className="flex items-center gap-2 text-[#4f4d47]">
-            <Globe className="size-4 shrink-0 text-[#98958c]" aria-hidden />
+            <Globe className="size-4 shrink-0 text-[#6b6862]" aria-hidden />
             <a
               href={websiteHref}
               target="_blank"
@@ -346,7 +578,7 @@ function CompanyCard({
         ) : null}
         {company.contact_email ? (
           <div className="flex items-center gap-2 text-[#4f4d47]">
-            <Mail className="size-4 shrink-0 text-[#98958c]" aria-hidden />
+            <Mail className="size-4 shrink-0 text-[#6b6862]" aria-hidden />
             <a
               href={`mailto:${company.contact_email}`}
               className="truncate transition hover:text-[#1d1d1b]"
@@ -357,7 +589,7 @@ function CompanyCard({
         ) : null}
         {company.phone ? (
           <div className="flex items-center gap-2 text-[#4f4d47]">
-            <Phone className="size-4 shrink-0 text-[#98958c]" aria-hidden />
+            <Phone className="size-4 shrink-0 text-[#6b6862]" aria-hidden />
             <span className="truncate">{company.phone}</span>
           </div>
         ) : null}
@@ -391,16 +623,30 @@ function StatCard({
       </span>
       <p className="mt-4 text-3xl font-semibold tracking-[-0.03em] text-[#1d1d1b]">{value}</p>
       <p className="mt-1 text-sm text-[#74726c]">{label}</p>
-      {hint ? <p className="mt-0.5 text-xs text-[#98958c]">{hint}</p> : null}
+      {hint ? <p className="mt-0.5 text-xs text-[#6b6862]">{hint}</p> : null}
     </div>
   )
 }
 
 function VisibilityBadge({ scope }: { scope: EnterpriseDoc['access_scope'] }) {
-  return scope === 'restricted' ? (
-    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#fff0d3] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.1em] text-[#8a6316]"><Lock className="size-3" aria-hidden /> Restricted</span>
-  ) : (
-    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#e6f1e4] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.1em] text-[#4a7a5a]"><Users className="size-3" aria-hidden /> Company-wide</span>
+  if (scope === 'restricted') {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#fff0d3] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.1em] text-[#8a6316]">
+        <Lock className="size-3" aria-hidden /> Restricted
+      </span>
+    )
+  }
+  if (scope === 'department') {
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#e8edfb] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.1em] text-[#2d529f]">
+        <Users className="size-3" aria-hidden /> Department
+      </span>
+    )
+  }
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#e6f1e4] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.1em] text-[#4a7a5a]">
+      <Users className="size-3" aria-hidden /> Company-wide
+    </span>
   )
 }
 
@@ -425,7 +671,7 @@ function RecentUploads({ docs }: { docs: EnterpriseDoc[] }) {
               </span>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-[#1d1d1b]">{titleFromName(d.filename)}</p>
-                <p className="mt-0.5 flex items-center gap-2 text-xs text-[#98958c]">
+                <p className="mt-0.5 flex items-center gap-2 text-xs text-[#6b6862]">
                   <span className="truncate">{d.category || 'Uncategorised'}</span>
                   <span aria-hidden>·</span>
                   <span className="shrink-0">{formatDate(d.created_at)}</span>
@@ -436,7 +682,7 @@ function RecentUploads({ docs }: { docs: EnterpriseDoc[] }) {
           ))}
         </ul>
       ) : (
-        <p className="mt-6 text-sm text-[#98958c]">No documents yet. Upload your first file to get started.</p>
+        <p className="mt-6 text-sm text-[#6b6862]">No documents yet. Upload your first file to get started.</p>
       )}
     </div>
   )
@@ -457,14 +703,14 @@ function RecentActivity({ rows }: { rows: AuditRow[] }) {
                 <span className="rounded-full bg-[#f4f2ec] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.1em] text-[#74726c]">
                   {prettyAction(r.action)}
                 </span>
-                <span className="shrink-0 text-xs text-[#98958c]">{formatDate(r.created_at)}</span>
+                <span className="shrink-0 text-xs text-[#6b6862]">{formatDate(r.created_at)}</span>
               </div>
               {r.detail ? <p className="mt-1.5 truncate text-sm text-[#4f4d47]">{r.detail}</p> : null}
             </li>
           ))}
         </ul>
       ) : (
-        <p className="mt-6 text-sm text-[#98958c]">No activity recorded yet.</p>
+        <p className="mt-6 text-sm text-[#6b6862]">No activity recorded yet.</p>
       )}
     </div>
   )
@@ -498,7 +744,7 @@ function ActionCard({
           {title}
           <ArrowRight className="size-3.5 -translate-x-1 opacity-0 transition group-hover:translate-x-0 group-hover:opacity-100" aria-hidden />
         </p>
-        <p className="mt-1 text-xs leading-relaxed text-[#77746c]">{desc}</p>
+        <p className="mt-1 text-xs leading-relaxed text-[#6b6862]">{desc}</p>
       </div>
     </Link>
   )
