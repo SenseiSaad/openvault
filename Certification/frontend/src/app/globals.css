@@ -10,6 +10,10 @@
  */
 @layer base {
   :root {
+    /* Typography — system stacks keep builds offline and rendering fast. The heading stack
+       prefers Plus Jakarta Sans when installed locally, then falls back gracefully. */
+    --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-heading: "Plus Jakarta Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     /* Low-fatigue tinted canvas: Slate 50 (#F8FAFC) */
     --background: 210 40% 98%;
     /* High contrast text: Slate 900 (#0F172A) */

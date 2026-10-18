@@ -74,10 +74,10 @@ export function displayName(user: CurrentUser | null): string {
 }
 
 /**
- * Resolves a URL-safe public identifier for an agency. Returns null when the
- * backend has not yet supplied one (see IB-1) — callers must render the
- * integration blocker in that case, never fall back to a numeric id.
+ * Resolves the opaque public identifier used in agency-scoped API calls. The backend's
+ * agency routes resolve the stable UUID; the slug remains available for display. Never
+ * falls back to an internal numeric id.
  */
 export function agencyPublicId(membership: AgencyMembership): string | null {
-  return membership.slug ?? membership.uuid ?? null;
+  return membership.uuid ?? membership.slug ?? null;
 }

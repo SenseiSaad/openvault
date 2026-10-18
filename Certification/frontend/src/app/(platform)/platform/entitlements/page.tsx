@@ -8,20 +8,17 @@ import { PageHeader } from "@/components/common/page-header";
 import { DataTable, useListParams } from "@/components/common/data-table";
 import { StatusBadge } from "@/components/common/status-badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { FormMessage } from "@/components/ui/form-message";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { ApiError } from "@/lib/api/error";
 
-/** Entitlement controls across agencies. INTEGRATION-UNVERIFIED (IB-5). */
+/**
+ * Entitlement controls across agencies. Seat counts are immutable by schema design
+ * (existing grants cannot be resized); additional seats are bought as a new order.
+ * Revocation is the supported platform action here.
+ */
 export default function PlatformEntitlementsPage() {
   const listParams = useListParams();
   const queryClient = useQueryClient();
-  const [adjustTarget, setAdjustTarget] = useState<PlatformEntitlement | null>(null);
-  const [seatsDraft, setSeatsDraft] = useState("");
-  const [seatsError, setSeatsError] = useState<string | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<PlatformEntitlement | null>(null);
 
   const entitlements = useQuery({
@@ -30,17 +27,6 @@ export default function PlatformEntitlementsPage() {
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["platform", "entitlements"] });
-
-  const adjust = useMutation({
-    mutationFn: (input: { uuid: string; seats: number }) =>
-      platformApi.updateEntitlement(input.uuid, { seats_granted: input.seats }),
-    onSuccess: async () => {
-      toast.success("Entitlement seats updated.");
-      setAdjustTarget(null);
-      await invalidate();
-    },
-    onError: (error) => toast.error(error instanceof ApiError ? error.message : "The change could not be saved.")
-  });
 
   const revoke = useMutation({
     mutationFn: (uuid: string) => platformApi.updateEntitlement(uuid, { status: "revoked" }),
@@ -52,20 +38,12 @@ export default function PlatformEntitlementsPage() {
     onError: (error) => toast.error(error instanceof ApiError ? error.message : "The entitlement could not be revoked.")
   });
 
-  const saveSeats = () => {
-    if (!adjustTarget) return;
-    const seats = Number(seatsDraft);
-    if (!Number.isInteger(seats) || seats < 1) {
-      setSeatsError("Enter a whole number of seats (at least 1).");
-      return;
-    }
-    setSeatsError(null);
-    adjust.mutate({ uuid: adjustTarget.uuid, seats });
-  };
-
   return (
     <div>
-      <PageHeader title="Entitlements" description="Seat grants issued to agencies across the platform." />
+      <PageHeader
+        title="Entitlements"
+        description="Seat grants issued to agencies. Seat counts are fixed at purchase; additional seats are bought as a new order."
+      />
 
       <DataTable<PlatformEntitlement>
         data={entitlements.data}
@@ -94,61 +72,15 @@ export default function PlatformEntitlementsPage() {
             id: "actions",
             header: <span className="sr-only">Actions</span>,
             className: "text-right",
-            render: (e) => (
-              <div className="flex justify-end gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setAdjustTarget(e);
-                    setSeatsDraft(String(e.seats_granted));
-                    setSeatsError(null);
-                  }}
-                >
-                  Adjust seats
+            render: (e) =>
+              e.status !== "revoked" ? (
+                <Button size="sm" variant="outline" className="text-destructive" onClick={() => setRevokeTarget(e)}>
+                  Revoke
                 </Button>
-                {e.status !== "revoked" && (
-                  <Button size="sm" variant="outline" className="text-destructive" onClick={() => setRevokeTarget(e)}>
-                    Revoke
-                  </Button>
-                )}
-              </div>
-            )
+              ) : null
           }
         ]}
       />
-
-      <Dialog open={Boolean(adjustTarget)} onOpenChange={(open) => !open && setAdjustTarget(null)}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Adjust seats</DialogTitle>
-            <DialogDescription>
-              {adjustTarget?.agency?.name} — {adjustTarget?.product?.name}. Reducing below current usage will fail.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-1.5">
-            <Label htmlFor="seats-granted">Seats granted</Label>
-            <Input
-              id="seats-granted"
-              type="number"
-              min="1"
-              step="1"
-              value={seatsDraft}
-              onChange={(event) => setSeatsDraft(event.target.value)}
-              aria-invalid={Boolean(seatsError)}
-            />
-            {seatsError && <FormMessage tone="error">{seatsError}</FormMessage>}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAdjustTarget(null)}>
-              Cancel
-            </Button>
-            <Button onClick={saveSeats} disabled={adjust.isPending}>
-              {adjust.isPending ? "Saving…" : "Save"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <ConfirmDialog
         open={Boolean(revokeTarget)}

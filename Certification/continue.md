@@ -1,8 +1,35 @@
 # Certification Academy LMS — Frontend Build Progress
 
-**Project root:** `/home/saad/Desktop/Certification/frontend` (Next.js 15 App Router, React 19, TypeScript strict, Tailwind, Radix-based primitives, TanStack Query, RHF+Zod, Vitest/RTL, Playwright)
+**Project root:** `/home/saad/Desktop/OpenVault/Certification/frontend` (Next.js 15 App Router, React 19, TypeScript strict, Tailwind, Radix-based primitives, TanStack Query, RHF+Zod, Vitest/RTL, Playwright)
 
-**Important context:** No backend exists anywhere on this machine (`/home/saad/Desktop/Certification` was empty; no LMS backend found elsewhere). Per requirements, the frontend is built against the documented API contracts (auth + `/api/store/products` + "agency, member, invitation, order, entitlement, seat, billing and catalog endpoints under /api"), with every unverified route marked `INTEGRATION-UNVERIFIED` and tracked in `docs/INTEGRATION_BLOCKERS.md`. No mock data anywhere; unimplemented backend capabilities are behind feature flags (`src/config/feature-flags.ts`) rendering explicit "integration pending" boundaries.
+## STATUS 2026-10-18 — COMPLETE & INTEGRATED
+
+The frontend is wired to the real backend at `/home/saad/Desktop/Certification/cpmi-backend`
+(Express + MySQL, slices 1–10). All feature flags are enabled in `.env.local`; no screen uses mock
+data. Verified in a real browser against the live API (in-memory Stripe for purchase):
+
+- Learner: login → dashboard (real enrollment) → course player (server-delivered lesson HTML) →
+  mark complete → assessment start/answer/submit (100%, feedback) → certificate vault (PDF) →
+  public `/verify?token=…` (valid).
+- Agency admin: dashboard (completion/pass-rate/certificates + real audit feed), members,
+  invitations, seats/entitlements, orders, team report + CSV/PDF links.
+- Platform: overview (real revenue/completion/pass rates), agencies, products/pricing, entitlements,
+  audit log (real hash-chained events).
+- Gates: frontend `tsc` clean, 43 Vitest tests, production build; backend 151 tests, 22/22 integrity,
+  typecheck/lint/build.
+
+Bugs found and fixed during live integration: anonymous `/auth/me` 401 triggered session-expired;
+dynamic `process.env[name]` feature flags were never inlined; API `304` responses were treated as
+errors; agency resolver preferred slug while backend routes require the UUID; dashboards contained
+fabricated chart/activity data (removed, replaced with reports + audit APIs).
+
+**Remaining:** Playwright suite needs a seeded live environment (manual browser run completed); real
+card payment completion requires Stripe keys + webhook (backend tested with the in-memory gateway);
+email delivery requires SMTP credentials.
+
+**Original build record (superseded context):** No backend existed when the UI was first built; it was
+built against documented API contracts, with every unverified route marked `INTEGRATION-UNVERIFIED`.
+That is now resolved — see `docs/INTEGRATION_BLOCKERS.md` for the integration record.
 
 ## COMPLETED
 

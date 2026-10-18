@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -46,6 +46,21 @@ interface EnrollmentDetail {
   progress_percent?: number;
 }
 
+interface LessonContent {
+  lesson: {
+    uuid: string;
+    title: string;
+    lessonType: string;
+    bodyHtml: string | null;
+    video: { provider: string; assetId: string } | null;
+    durationSeconds: number | null;
+    completionRule: string;
+    completionThreshold: number | null;
+    resources: { name: string; mimeType: string; byteSize: string; position: number }[];
+  };
+  enrollment: { uuid: string; status: string };
+}
+
 export default function CoursePlayerPage({ params }: { params: Promise<{ courseId: string }> }) {
   const { courseId } = use(params);
   const queryClient = useQueryClient();
@@ -65,6 +80,26 @@ export default function CoursePlayerPage({ params }: { params: Promise<{ courseI
   const progressPercent = lessons.length > 0
     ? Math.round((completedCount / lessons.length) * 100)
     : 0;
+
+  const content = useQuery({
+    queryKey: ["learner", "lesson", courseId, current?.uuid],
+    queryFn: ({ signal }) =>
+      api.get<LessonContent>(`/api/me/enrollments/${courseId}/lessons/${current!.uuid}`, { signal }),
+    enabled: featureFlags.learnerLearning && Boolean(current?.uuid),
+    retry: false
+  });
+
+  // Opening a lesson records server-side activity (idempotent); failures never block the UI.
+  useEffect(() => {
+    if (!featureFlags.learnerLearning || !current?.uuid || current.completed) return;
+    void api
+      .post("/api/me/progress", {
+        enrollment_uuid: courseId,
+        lesson_uuid: current.uuid,
+        action: "open"
+      })
+      .catch(() => undefined);
+  }, [courseId, current?.uuid, current?.completed]);
 
   const completeLesson = useMutation({
     mutationFn: (lessonUuid: string) =>
@@ -254,20 +289,59 @@ export default function CoursePlayerPage({ params }: { params: Promise<{ courseI
                 )}
               </div>
 
-              {/* Realistic Interactive Viewer Placeholder */}
-              <div className="relative overflow-hidden rounded-xl border border-border bg-gradient-to-b from-secondary/50 to-secondary/20 p-10 text-center">
-                <div className="mx-auto max-w-md space-y-4 py-8">
-                  <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10 text-primary shadow-sm">
-                    <BookOpen className="h-8 w-8" />
+              {/* Lesson content from the backend (HTML is sanitized on write). */}
+              {content.isPending ? (
+                <div className="flex justify-center rounded-xl border border-border bg-secondary/20 py-16">
+                  <Spinner label="Loading lesson content" />
+                </div>
+              ) : content.isError ? (
+                <div className="rounded-xl border border-border bg-secondary/20 p-8 text-center text-sm text-muted-foreground">
+                  Lesson content could not be loaded. Please try again.
+                </div>
+              ) : content.data?.lesson.video ? (
+                <div className="space-y-3">
+                  <div className="overflow-hidden rounded-xl border border-border bg-black">
+                    <iframe
+                      title={content.data.lesson.title}
+                      src={`https://player.vimeo.com/video/${encodeURIComponent(content.data.lesson.video.assetId)}`}
+                      className="aspect-video w-full"
+                      allow="autoplay; fullscreen; picture-in-picture"
+                      allowFullScreen
+                    />
                   </div>
-                  <h3 className="font-heading text-lg font-semibold text-foreground">
-                    Interactive Lesson Player
-                  </h3>
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    Module content streams directly from the government-authorized CDN when integrated with the backend content repository (IB-4).
+                  <p className="text-xs text-muted-foreground">
+                    Your playback position is tracked server-side. Mark the lesson complete once you
+                    have watched the required portion.
                   </p>
                 </div>
-              </div>
+              ) : content.data?.lesson.bodyHtml ? (
+                <article
+                  className="max-w-none space-y-3 text-sm leading-relaxed text-foreground [&_a]:text-primary [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:pl-4 [&_blockquote]:italic [&_h2]:text-xl [&_h2]:font-bold [&_h3]:text-lg [&_h3]:font-semibold [&_img]:max-w-full [&_li]:ml-5 [&_li]:list-disc [&_p]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-secondary [&_pre]:p-3 [&_table]:w-full [&_td]:border [&_td]:border-border [&_td]:p-2 [&_th]:border [&_th]:border-border [&_th]:p-2 [&_ul]:my-2"
+                  // Server-sanitized on write (allowlist); never raw author input.
+                  dangerouslySetInnerHTML={{ __html: content.data.lesson.bodyHtml }}
+                />
+              ) : (
+                <div className="rounded-xl border border-border bg-secondary/20 p-8 text-center text-sm text-muted-foreground">
+                  This lesson has no content attached yet.
+                </div>
+              )}
+
+              {content.data && content.data.lesson.resources.length > 0 && (
+                <div className="rounded-xl border border-border/80 bg-secondary/20 p-4">
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                    Lesson resources
+                  </p>
+                  <ul className="space-y-1 text-sm">
+                    {content.data.lesson.resources.map((resource) => (
+                      <li key={`${resource.position}-${resource.name}`} className="flex items-center gap-2">
+                        <BookOpen aria-hidden="true" className="h-3.5 w-3.5 text-primary" />
+                        <span>{resource.name}</span>
+                        <span className="text-xs text-muted-foreground">({resource.mimeType})</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               {/* Navigation Controls */}
               <div className="flex flex-wrap items-center justify-between gap-3 pt-2">

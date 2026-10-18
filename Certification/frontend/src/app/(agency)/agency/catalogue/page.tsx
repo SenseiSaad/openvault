@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { BookOpen, ShoppingCart, Award } from "lucide-react";
-import { api } from "@/lib/api/client";
+import { agencyApi } from "@/features/agency/api";
 import { ApiError } from "@/lib/api/error";
 import { formatCurrency } from "@/lib/utils";
 import { PageHeader } from "@/components/common/page-header";
@@ -30,11 +30,7 @@ interface StoreProduct {
 export default function AgencyCataloguePage() {
   const products = useQuery({
     queryKey: ["store", "products", 1],
-    queryFn: ({ signal }) =>
-      api.get<{ items?: StoreProduct[]; pages?: number; total?: number }>("/api/store/products", {
-        query: { page: 1, page_size: 24 },
-        signal
-      }),
+    queryFn: () => agencyApi.storeProducts(),
     staleTime: 60_000
   });
 
@@ -69,7 +65,7 @@ export default function AgencyCataloguePage() {
           {(products.data.items ?? []).map((product, index) => {
             const publicId = product.uuid ?? product.slug; // public id only — never product.id
             return (
-              <StaggerItem key={product.uuid ?? product.slug ?? product.id ?? `product-${index}`}>
+              <StaggerItem key={product.uuid ?? `product-${index}`}>
                 <Card className="group flex h-full flex-col overflow-hidden border-border/80 shadow-card transition-all duration-200 hover:-translate-y-1 hover:shadow-card-hover">
                   <div className="relative h-28 bg-gradient-to-br from-primary/95 to-indigo-900 p-4 text-white overflow-hidden">
                     <div className="absolute right-0 top-0 -mr-6 -mt-6 h-24 w-24 rounded-full bg-white/10 blur-xl" />

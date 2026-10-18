@@ -75,10 +75,16 @@ describe("ApiClient", () => {
     expect((lastHeaders.headers as Record<string, string>)["X-CSRF-Token"]).toBe("token-3");
   });
 
-  it("notifies unauthenticated listeners on 401 but not on 403", async () => {
+  it("notifies unauthenticated listeners on 401 but not on 403 or the session probe", async () => {
     const listener = vi.fn();
     const unsubscribe = client.onUnauthenticated(listener);
 
+    fetchMock.mockResolvedValueOnce(jsonResponse(401, { detail: "Unauthenticated" }));
+    await expect(client.get("/api/me/enrollments")).rejects.toBeInstanceOf(ApiError);
+    expect(listener).toHaveBeenCalledTimes(1);
+
+    // Anonymous visitors always get 401 from the session probe; it must not redirect them
+    // to the session-expired screen.
     fetchMock.mockResolvedValueOnce(jsonResponse(401, { detail: "Unauthenticated" }));
     await expect(client.get("/api/auth/me")).rejects.toBeInstanceOf(ApiError);
     expect(listener).toHaveBeenCalledTimes(1);
@@ -91,7 +97,7 @@ describe("ApiClient", () => {
 
     unsubscribe();
     fetchMock.mockResolvedValueOnce(jsonResponse(401, {}));
-    await expect(client.get("/api/auth/me")).rejects.toThrow();
+    await expect(client.get("/api/me/enrollments")).rejects.toThrow();
     expect(listener).toHaveBeenCalledTimes(1); // unsubscribed
   });
 

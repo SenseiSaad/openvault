@@ -21,7 +21,22 @@ export function Providers({ children }: { children: ReactNode }) {
   const pathname = usePathname();
 
   useEffect(() => {
+    const PUBLIC_PATHS = [
+      "/login",
+      "/forgot-password",
+      "/reset-password",
+      "/accept-invitation",
+      "/session-expired",
+      "/catalogue",
+      "/verify",
+      "/privacy",
+      "/terms",
+      "/accessibility"
+    ];
     const unsubscribe = api.onUnauthenticated(() => {
+      // Anonymous visitors on public pages (including the login form) must never be bounced
+      // to "session expired"; a 401 there is just an unauthenticated request.
+      if (pathname === "/" || PUBLIC_PATHS.some((path) => pathname?.startsWith(path))) return;
       const next = pathname?.startsWith("/") && !pathname.startsWith("//") ? pathname : "/";
       router.replace(`/session-expired?next=${encodeURIComponent(next)}`);
     });

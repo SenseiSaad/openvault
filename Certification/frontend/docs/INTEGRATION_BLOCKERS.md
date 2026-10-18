@@ -1,68 +1,47 @@
-# Integration blockers
+# Integration record
 
-No backend exists on this machine — the frontend was built against the documented contracts only. Every route below is marked `INTEGRATION-UNVERIFIED` at its call site. **Verification steps**: confirm path, method, payload and response shape; fix the typed model in the matching `features/*/api.ts`; run `npm run typecheck && npm test`; then remove the marker.
+**Status: resolved (2026-10-18).** The frontend runs against the real Certification Academy API in
+`/home/saad/Desktop/Certification/cpmi-backend`. Feature flags are enabled in `.env.local`; there is
+no mock data. This document records what was verified and the backend additions the UI required.
 
-Verified today: **auth contracts** (`GET /api/auth/csrf|me`, `POST /api/auth/login|logout`, password reset, `POST /api/invitations/accept`) and **`GET /api/store/products`**. Everything else is a blocker.
+## Verified end to end
 
-## IB-1 — Public agency identifiers in `/api/auth/me`
-
-**Need** — per membership (in `GET /api/auth/me` or `GET /api/me/agencies`):
-
-```json
-{ "agencies": [ { "uuid": "…", "slug": "…", "name": "…", "role": "agency_admin" } ] }
-```
-
-**Why**: agency-scoped URLs must never be built from internal numeric ids. Until `slug`/`uuid` arrive, `agencyPublicId()` returns `null`, agency pages render `PublicIdBlocker`, and the selector hides those memberships.
-
-**Frontend**: `src/features/auth/types.ts` (contract comment), `agency-context.tsx`, `agency-selector.tsx`.
-
-## IB-2 — Agency administration endpoints
-
-Expected (all scoped by the **public** agency id, all under cookie session + CSRF):
-
-| Method | Route | Used by |
+| Area | Routes used | Result |
 | --- | --- | --- |
-| GET | `/api/agencies/{id}/overview` | `/agency` |
-| GET/PATCH | `/api/agencies/{id}/members` · `/members/{memberUuid}` | members page (role change, suspend/reactivate) |
-| GET/POST | `/api/agencies/{id}/invitations` · `…/{invUuid}/revoke` | invitations page |
-| GET | `/api/agencies/{id}/entitlements` | seats page |
-| GET | `/api/agencies/{id}/seats`, POST `/api/seats/{uuid}/release|assign` | seats page |
-| GET | `/api/agencies/{id}/orders`, GET `/api/orders/{orderUuid}` | orders |
-| GET | `/api/agencies/{id}/billing` | billing page (or a hosted portal URL) |
+| Auth | `GET /api/auth/csrf|me`, `POST /api/auth/login|logout`, password reset, `POST /api/invitations/accept` | Login/restore, role redirect, generic errors |
+| Request shape | `/api/auth/me` and login include `agencies: [{uuid, slug, name, role}]` | Agency selector + scoped URLs work |
+| Agency admin | `overview`, `members` (+ status/role), `invitations` (status filter, revoke), `entitlements`, `seats`, `seats/:id/release|reassign`, `orders` (+ detail), `billing-portal`, `store/products` (+ detail), `reports/learners(.csv|.pdf)`, `audit-log` | Real dashboard/members/invitations/seats/orders/reports |
+| Checkout | `POST /api/agencies/:id/orders` (price × quantity, `card`/`invoice`) | Card → Stripe Checkout URL; invoice → order recorded |
+| Learner | `GET /api/me/enrollments` (+ detail, lessons), `POST /api/me/progress`, assessments start/answers/submit, `GET /api/me/certificates`, `GET/PATCH /api/me/profile` | Lesson content, server-side progress, 100% grading, certificate + PDF, profile |
+| Platform | `/api/platform/stats`, `agencies`, `courses` (+ versions/create/publish), `products` (price update), `entitlements` (revoke), `reports/*`, `audit-log`, `observability` | Overview, directories, publishing, pricing, audit |
+| Public | `GET /api/store/products` (+ detail), `GET /api/public/certificates/verify?token=` | Anonymous catalogue and certificate verification |
 
-**Verify**: pagination envelope matches `Paginated<T>` (`items/total/page/page_size/pages`) or adapt `src/lib/api/types.ts`.
+## Backend additions made for the UI
 
-## IB-3 — Bulk invitations & checkout
+- `/api/auth/me` + login now return the public agency list and role codes.
+- `GET|PATCH /api/me/profile` (new `users.job_title`, migration `0010`).
+- Public storefront (`GET /api/store/products` and `/:publicId` no longer require a session).
+- `GET /api/agencies/:id/overview`, `GET /api/agencies/:id/seats`, `GET /api/agencies/:id/audit-log`.
+- `GET /api/platform/stats|agencies|courses|products|entitlements` plus the supported mutations.
+- `GET /api/platform/reports/*` and `GET /api/platform/observability` (already built for slices 9–10).
 
-- `POST` bulk CSV invitations (flag `NEXT_PUBLIC_FEATURE_BULK_INVITATIONS`).
-- `GET /api/store/products/{productId}` (single product) and `POST /api/orders` with `{ product_uuid, quantity }` — checkout page exists at `/agency/checkout/[productId]` but renders the integration boundary while `NEXT_PUBLIC_FEATURE_STORE_CHECKOUT=false`.
-- Confirm order → entitlement/seat fulfilment semantics before enabling the flag.
+## Deliberate UI/API conventions
 
-## IB-4 — Learner LMS endpoints
+- Agency URLs use the **public UUID** from `/auth/me`. Memberships, invitations, seats and
+  entitlements are addressed by their backend ids as opaque path segments; every call is
+  server-authorized and agency-scoped, and internal ids are never used to scope a query.
+- Entitlement seat counts are immutable by schema design; the platform UI shows them read-only and
+  offers revocation. Additional seats are purchased as a new order.
+- Score policy is recorded per assessment version; reports show the highest graded score and a pass
+  is any graded passing attempt (see the backend `AGENTS.md`).
+- The HTTP cache is disabled for API calls (`cache: "no-store"`) so an authenticated `304` can never
+  be mistaken for an error; the anonymous `/auth/me` probe never triggers the session-expired redirect.
 
-Flag `NEXT_PUBLIC_FEATURE_LEARNER_LEARNING` (also gates player):
+## Remaining non-blocking gaps
 
-- `GET /api/me/enrollments` — dashboard & my-learning lists
-- `GET /api/courses/{id}` + `GET /api/courses/{id}/lessons/{id}` — overview/player
-- `POST …/progress` — mark lesson complete (UI: optimistic update + rollback, already built)
-- Assessments (`NEXT_PUBLIC_FEATURE_LEARNER_ASSESSMENTS`): `GET /api/me/assessments`, attempt submit endpoints
-- Certificates (`NEXT_PUBLIC_FEATURE_LEARNER_CERTIFICATES`): `GET /api/me/certificates` (+ download link)
-- Profile: `GET/PATCH /api/me/profile` (profile page calls it today — returns honest error state until it exists)
-
-## IB-5 — Platform administration endpoints
-
-All under `/api/platform/*` (`src/features/platform/api.ts`), super_admin/TM only:
-
-- `GET /platform/stats` — overview cards
-- `GET /platform/agencies`, `GET /platform/agencies/{uuid}`, `PATCH …/{uuid}` (suspend/reactivate)
-- `GET /platform/courses`, `GET …/{uuid}/versions`, `POST …/{uuid}/versions`, `POST /platform/course-versions/{uuid}/publish`
-- `GET /platform/products`, `PATCH /platform/products/{uuid}` (price/status)
-- `GET /platform/entitlements`, `PATCH /platform/entitlements/{uuid}`
-- `GET /platform/audit-log` (flag `NEXT_PUBLIC_FEATURE_PLATFORM_AUDIT_LOG`) — server-side pagination/filtering; persist the `X-Request-Id` the frontend already sends on every mutation for audit correlation
-
-## Rules while blockers stand
-
-1. **No mock data** — flagged screens show `IntegrationPending`/`PublicIdBlocker`; unflagged screens show real API errors/empty states.
-2. **Public ids only** in any URL or path parameter.
-3. Flags default `false`; enabling one is an env change (`NEXT_PUBLIC_FEATURE_*=true`), never a code edit.
-4. Every fix lands with a test (`npm test`) and `npm run typecheck` clean.
+- The Playwright suite still requires a seeded live environment; the manual/scripted browser run above
+  covered the main role flows.
+- Card checkout ends at the Stripe-hosted page; completing payment requires real/test Stripe keys and
+  the signed webhook. The backend suite exercises fulfilment with an in-memory gateway.
+- Email delivery requires Gmail SMTP credentials (or another `Mailer`); the UI only depends on the
+  notification being queued.

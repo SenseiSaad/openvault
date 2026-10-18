@@ -71,6 +71,7 @@ export class ApiClient {
           const response = await fetch(this.buildUrl("/api/auth/csrf"), {
             method: "GET",
             credentials: "include",
+            cache: "no-store",
             headers: { Accept: "application/json" }
           });
           if (!response.ok) return null;
@@ -171,6 +172,9 @@ export class ApiClient {
       response = await fetch(this.buildUrl(path, options.query), {
         method,
         credentials: "include",
+        // Authenticated API responses must never be served from the HTTP cache: a 304 has
+        // no body and would surface as a failed request to the UI.
+        cache: "no-store",
         headers,
         signal: options.signal,
         body: body !== undefined ? JSON.stringify(body) : undefined
@@ -193,7 +197,12 @@ export class ApiClient {
     const responseBody = await this.parseBody(response);
 
     if (!response.ok) {
-      if (response.status === 401) this.notifyUnauthenticated();
+      // The session probe on a public page is expected to 401 for anonymous visitors, and a
+      // failed login is a form error. Neither means "the session expired", so they must not
+      // trigger the global session-expired redirect.
+      const expectedAuthProbe =
+        path === "/api/auth/me" || path === "/api/auth/login" || path === "/api/auth/csrf";
+      if (response.status === 401 && !expectedAuthProbe) this.notifyUnauthenticated();
       throw this.normalizeError(response.status, responseBody, requestId);
     }
 

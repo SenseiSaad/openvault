@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { useAgencyMembers, useUpdateMember, useAgencyScope, type AgencyMember } from "@/features/agency/api";
+import { useSession } from "@/features/auth/session-context";
 import { ApiError } from "@/lib/api/error";
 import { formatDate } from "@/lib/utils";
 import { MoreHorizontal } from "lucide-react";
@@ -28,6 +29,10 @@ const STATUSES = ["active", "suspended", "inactive"];
 
 export default function MembersPage() {
   const listParams = useListParams();
+  const { user } = useSession();
+  const isPlatformAdmin = Boolean(
+    user?.roles.includes("super_admin") || user?.roles.includes("training_manager")
+  );
   const members = useAgencyMembers(listParams);
   const updateMember = useUpdateMember();
   const [roleDialog, setRoleDialog] = useState<AgencyMember | null>(null);
@@ -101,14 +106,16 @@ export default function MembersPage() {
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuLabel>Manage</DropdownMenuLabel>
-                  <DropdownMenuItem
-                    onSelect={() => {
-                      setRoleDialog(member);
-                      setNextRole(member.role);
-                    }}
-                  >
-                    Change role
-                  </DropdownMenuItem>
+                  {isPlatformAdmin && (
+                    <DropdownMenuItem
+                      onSelect={() => {
+                        setRoleDialog(member);
+                        setNextRole(member.role);
+                      }}
+                    >
+                      Change role
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuSeparator />
                   {member.status !== "suspended" && (
                     <DropdownMenuItem

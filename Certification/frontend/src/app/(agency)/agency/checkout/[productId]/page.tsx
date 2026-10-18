@@ -9,7 +9,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
 import { ArrowLeft, ShoppingCart, ShieldCheck, CheckCircle2 } from "lucide-react";
-import { agencyApi, agencyKeys } from "@/features/agency/api";
+import { agencyApi, agencyKeys, useAgencyScope } from "@/features/agency/api";
 import { featureFlags } from "@/config/feature-flags";
 import { PageHeader } from "@/components/common/page-header";
 import { EmptyState } from "@/components/common/empty-state";
@@ -18,6 +18,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FormMessage } from "@/components/ui/form-message";
 import { ApiError } from "@/lib/api/error";
@@ -31,7 +32,8 @@ const checkoutSchema = z.object({
     .number({ invalid_type_error: "Enter a number of seats" })
     .int("Enter a whole number of seats")
     .min(1, "At least 1 seat is required")
-    .max(1000, "For orders above 1000 seats, contact sales")
+    .max(1000, "For orders above 1000 seats, contact sales"),
+  paymentMethod: z.enum(["card", "invoice"], { message: "Choose a payment method" })
 });
 
 type CheckoutForm = z.infer<typeof checkoutSchema>;
@@ -40,6 +42,7 @@ export default function CheckoutPage({ params }: { params: Promise<{ productId: 
   const { productId } = use(params);
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { agencyId } = useAgencyScope();
   const isPublicId = PUBLIC_ID.test(productId);
 
   const product = useQuery({
@@ -50,11 +53,21 @@ export default function CheckoutPage({ params }: { params: Promise<{ productId: 
   });
 
   const placeOrder = useMutation({
-    mutationFn: (payload: { product_uuid: string; quantity: number }) => agencyApi.createOrder(payload),
-    onSuccess: async (order) => {
-      toast.success("Order placed. Seats become assignable once fulfilled.");
+    mutationFn: (payload: { priceId: string; quantity: number; paymentMethod: "card" | "invoice" }) =>
+      agencyApi.createOrder({
+        agencyId: agencyId as string,
+        priceId: payload.priceId,
+        quantity: payload.quantity,
+        paymentMethod: payload.paymentMethod
+      }),
+    onSuccess: async (result) => {
+      toast.success("Order placed. Seats become assignable once fulfilment completes.");
       await queryClient.invalidateQueries({ queryKey: agencyKeys.orders(null, { page: 1 }) });
-      router.replace(order?.uuid ? `/agency/orders/${order.uuid}` : "/agency/orders");
+      if (result.checkoutUrl) {
+        window.location.assign(result.checkoutUrl);
+        return;
+      }
+      router.replace(result.order?.uuid ? `/agency/orders/${result.order.uuid}` : "/agency/orders");
     },
     onError: (error) => toast.error(error instanceof ApiError ? error.message : "The order could not be placed.")
   });
@@ -63,8 +76,12 @@ export default function CheckoutPage({ params }: { params: Promise<{ productId: 
     register,
     handleSubmit,
     watch,
+    setValue,
     formState: { errors, isSubmitting }
-  } = useForm<CheckoutForm>({ resolver: zodResolver(checkoutSchema), defaultValues: { quantity: 1 } });
+  } = useForm<CheckoutForm>({
+    resolver: zodResolver(checkoutSchema),
+    defaultValues: { quantity: 1, paymentMethod: "card" }
+  });
 
   if (!featureFlags.storeCheckout) {
     return (
@@ -122,12 +139,25 @@ export default function CheckoutPage({ params }: { params: Promise<{ productId: 
   }
 
   const data = product.data;
-  const unitPrice = data.price_cents ?? 0;
+  const price =
+    data.prices?.find((p) => p.billingPeriod === "annual" && p.isActive) ??
+    data.prices?.find((p) => p.isActive) ??
+    data.prices?.[0];
+  const unitPrice = price?.unitAmountMinor ?? data.price_cents ?? 0;
   const quantity = Number(watch("quantity")) || 0;
   const totalCents = unitPrice * quantity;
+  const paymentMethod = watch("paymentMethod");
 
   const onSubmit = (values: CheckoutForm) => {
-    placeOrder.mutate({ product_uuid: data.uuid, quantity: values.quantity });
+    if (!price) {
+      toast.error("This product has no active price yet. Contact the platform administrator.");
+      return;
+    }
+    placeOrder.mutate({
+      priceId: price.id,
+      quantity: values.quantity,
+      paymentMethod: values.paymentMethod
+    });
   };
 
   return (
@@ -184,6 +214,26 @@ export default function CheckoutPage({ params }: { params: Promise<{ productId: 
                     One seat entitlement per agency staff member. Seats can be reassigned flexibly as personnel rotate.
                   </p>
                 )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="payment-method" className="text-xs font-semibold">Payment method</Label>
+                <Select
+                  value={paymentMethod}
+                  onValueChange={(value) => setValue("paymentMethod", value as "card" | "invoice")}
+                >
+                  <SelectTrigger id="payment-method" className="max-w-72">
+                    <SelectValue placeholder="Choose a payment method" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="card">Government purchase card (Stripe Checkout)</SelectItem>
+                    <SelectItem value="invoice">Invoice / purchase order</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Card orders open Stripe Checkout. Invoice orders are emailed to your billing contact
+                  and access is granted when the invoice is paid.
+                </p>
               </div>
 
               <div className="rounded-xl border border-border/80 bg-secondary/30 p-4 space-y-2 text-xs text-muted-foreground">

@@ -3,7 +3,7 @@
 import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api/client";
+import { agencyApi } from "@/features/agency/api";
 import { ApiError } from "@/lib/api/error";
 import { formatCurrency } from "@/lib/utils";
 import { StatusBadge } from "@/components/common/status-badge";
@@ -36,10 +36,7 @@ function CatalogueContent() {
 
   const products = useQuery({
     queryKey: ["store", "products", page],
-    queryFn: ({ signal }) =>
-      api.get<{ items?: StoreProduct[]; total?: number; pages?: number }>("/api/store/products", {
-        query: { page }
-      }),
+    queryFn: () => agencyApi.storeProducts(),
     staleTime: 60_000
   });
 

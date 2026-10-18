@@ -11,21 +11,21 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { api } from "@/lib/api/client";
 import { ApiError } from "@/lib/api/error";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
-import type { AgencyOrder } from "@/features/agency/api";
+import { agencyApi, useAgencyScope } from "@/features/agency/api";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Order detail. Route parameter is a PUBLIC uuid — internal ids are never used in URLs. */
 export default function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const { agencyId } = useAgencyScope();
   const isPublicId = UUID_PATTERN.test(id) || /^[a-z0-9-]{3,64}$/i.test(id);
 
   const order = useQuery({
     queryKey: ["agency", "orders", id],
-    queryFn: ({ signal }) => api.get<AgencyOrder>(`/api/orders/${id}`, { signal }),
+    queryFn: () => agencyApi.order(agencyId as string, id),
     enabled: isPublicId,
     retry: false
   });

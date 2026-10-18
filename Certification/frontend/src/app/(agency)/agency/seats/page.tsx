@@ -44,7 +44,8 @@ export default function SeatsPage() {
   };
 
   const release = useMutation({
-    mutationFn: (seatUuid: string) => agencyApi.releaseSeat(seatUuid),
+    mutationFn: (seat: SeatAssignment) =>
+      agencyApi.releaseSeat(agencyId as string, seat.entitlement.uuid, seat.uuid),
     onSuccess: () => {
       toast.success("Seat released.", { description: "The seat is now available to assign to another member." });
       setReleaseTarget(null);
@@ -54,7 +55,13 @@ export default function SeatsPage() {
   });
 
   const reassign = useMutation({
-    mutationFn: (input: { seatUuid: string; memberUuid: string }) => agencyApi.reassignSeat(input.seatUuid, input.memberUuid),
+    mutationFn: (input: { seat: SeatAssignment; memberUuid: string }) =>
+      agencyApi.reassignSeat(
+        agencyId as string,
+        input.seat.entitlement.uuid,
+        input.seat.uuid,
+        input.memberUuid
+      ),
     onSuccess: () => {
       toast.success("Seat reassigned.");
       setReassignTarget(null);
@@ -158,7 +165,7 @@ export default function SeatsPage() {
                     <TableCell className="font-medium">
                       {seat.learner ? memberName(seat.learner) : "Unassigned"}
                     </TableCell>
-                    <TableCell>{seat.entitlement?.product?.name ?? "—"}</TableCell>
+                    <TableCell>{seat.entitlement?.name ?? "—"}</TableCell>
                     <TableCell>
                       <StatusBadge status={seat.status} />
                     </TableCell>
@@ -187,13 +194,13 @@ export default function SeatsPage() {
         title="Release this seat?"
         description={
           releaseTarget?.learner
-            ? `${memberName(releaseTarget.learner)} will lose access to ${releaseTarget.entitlement?.product?.name ?? "this training"}. Their progress history is retained. The seat returns to your available pool.`
+            ? `${memberName(releaseTarget.learner)} will lose access to ${releaseTarget.entitlement?.name ?? "this training"}. Their progress history is retained. The seat returns to your available pool.`
             : "The seat will return to your available pool."
         }
         confirmLabel="Release seat"
         destructive
         loading={release.isPending}
-        onConfirm={() => releaseTarget && release.mutateAsync(releaseTarget.uuid)}
+        onConfirm={() => releaseTarget && release.mutateAsync(releaseTarget)}
       />
 
       <Dialog open={Boolean(reassignTarget)} onOpenChange={(open) => !open && setReassignTarget(null)}>
@@ -201,7 +208,7 @@ export default function SeatsPage() {
           <DialogHeader>
             <DialogTitle>Reassign seat</DialogTitle>
             <DialogDescription>
-              Choose a different member for the {reassignTarget?.entitlement?.product?.name ?? "selected"} seat.
+              Choose a different member for the {reassignTarget?.entitlement?.name ?? "selected"} seat.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-1.5">
@@ -225,7 +232,10 @@ export default function SeatsPage() {
             </Button>
             <Button
               disabled={!reassignMember || reassign.isPending}
-              onClick={() => reassignTarget && reassign.mutateAsync({ seatUuid: reassignTarget.uuid, memberUuid: reassignMember })}
+              onClick={() =>
+                reassignTarget &&
+                reassign.mutateAsync({ seat: reassignTarget, memberUuid: reassignMember })
+              }
             >
               {reassign.isPending ? "Reassigning…" : "Reassign seat"}
             </Button>

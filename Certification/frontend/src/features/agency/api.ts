@@ -6,17 +6,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ListQuery, Paginated } from "@/lib/api/types";
 
 /**
- * Agency administration API.
+ * Agency administration API — verified against the real backend.
  *
- * INTEGRATION-UNVERIFIED (IB-2): the backend is not currently inspectable.
- * Route paths and response fields below follow the documented contract list
- * ("agency, member, invitation, order, entitlement, seat, billing endpoints
- * under /api") and MUST be verified before this portal is marked complete.
- * All agency scoping uses PUBLIC ids only (slug/uuid) — never internal ids.
+ * The backend keeps internal numeric ids for memberships/invitations/seats and a public
+ * uuid for agencies/orders/products. The adapters below map backend payloads into the
+ * view models the pages use, so the UI does not depend on wire-format naming.
  */
 
 export interface AgencyMember {
-  uuid?: string;
+  uuid: string;
   first_name?: string;
   last_name?: string;
   email: string;
@@ -46,8 +44,8 @@ export interface AgencyEntitlement {
 
 export interface SeatAssignment {
   uuid: string;
-  entitlement?: AgencyEntitlement;
-  learner?: { email: string; first_name?: string; last_name?: string };
+  entitlement: { uuid: string; name: string };
+  learner: { email: string; first_name?: string; last_name?: string };
   assigned_at?: string;
   status: string;
 }
@@ -68,6 +66,50 @@ export interface BillingInfo {
   payment_method?: string;
 }
 
+export interface AgencyReportOverview {
+  members: { active: number };
+  seats: { capacity: number; assigned: number };
+  enrollments: { total: number; completed: number; inProgress: number; completionPercent: number | null };
+  assessments: {
+    attempts: number;
+    graded: number;
+    passed: number;
+    passRatePercent: number | null;
+    averageScorePercent: number | null;
+  };
+  certificates: { issued: number; revoked: number };
+}
+
+export interface AgencyLearnerReport {
+  learnerName: string;
+  email: string;
+  membershipStatus: string;
+  courseTitle: string;
+  enrollmentStatus: string;
+  progressPercent: number;
+  assignedAt: string;
+  completedAt: string | null;
+  bestScorePercent: number | null;
+  assessmentsPassed: number;
+  assessmentsTotal: number;
+}
+
+export interface AgencyAuditEntry {
+  id: string;
+  action: string;
+  actorType: string;
+  subjectType: string;
+  occurredAt: string;
+}
+
+export interface StorePrice {
+  id: string;
+  billingPeriod: "annual" | "monthly";
+  currency: string;
+  unitAmountMinor: number;
+  isActive: boolean;
+}
+
 /** Store product as sold to agencies (catalogue + checkout). */
 export interface StoreProduct {
   uuid: string;
@@ -76,6 +118,7 @@ export interface StoreProduct {
   description?: string;
   price_cents?: number;
   status?: string;
+  prices?: StorePrice[];
 }
 
 const memberName = (member: { first_name?: string; last_name?: string; email: string }) =>
@@ -100,59 +143,257 @@ export const agencyKeys = {
   overview: (agencyId: string | null) => ["agency", agencyId, "overview"] as const
 };
 
+// ---- Wire types + mappers ------------------------------------------------------------
+
+interface BackendMember {
+  membershipId: string;
+  membershipStatus: string;
+  joinedAt: string | null;
+  user: { email: string; firstName: string; lastName: string };
+  roles: string[];
+}
+
+function highestRole(roles: string[]): string {
+  if (roles.includes("agency_admin")) return "agency_admin";
+  return roles[0] ?? "learner";
+}
+
+function toPage<T>(items: T[], total: number, page: number, pageSize: number): Paginated<T> {
+  return { items, total, page, page_size: pageSize, pages: Math.max(1, Math.ceil(total / pageSize)) };
+}
+
+function mapOrder(raw: any): AgencyOrder {
+  return {
+    uuid: raw.publicId,
+    status: raw.status,
+    total_cents: raw.totalMinor,
+    created_at: raw.createdAt,
+    items: raw.item
+      ? [
+          {
+            product: { name: raw.item.productName },
+            quantity: raw.item.quantity,
+            unit_price_cents: raw.item.unitAmountMinor
+          }
+        ]
+      : []
+  };
+}
+
+function mapProduct(raw: any): StoreProduct {
+  const prices: StorePrice[] = (raw.prices ?? []).map((price: any) => ({
+    id: price.id,
+    billingPeriod: price.billingPeriod,
+    currency: price.currency,
+    unitAmountMinor: price.unitAmountMinor,
+    isActive: price.isActive
+  }));
+  const chosen =
+    prices.find((p) => p.billingPeriod === "annual" && p.isActive) ??
+    prices.find((p) => p.isActive) ??
+    prices[0];
+  return {
+    uuid: raw.publicId,
+    name: raw.name,
+    description: raw.description,
+    price_cents: chosen?.unitAmountMinor,
+    prices
+  };
+}
+
 export const agencyApi = {
   overview(agencyId: string): Promise<{ members?: number; pending_invitations?: number; seats_available?: number; recent_orders?: number }> {
     return api.get(`/api/agencies/${agencyId}/overview`);
   },
-  members(agencyId: string, query: ListQuery): Promise<Paginated<AgencyMember>> {
-    return api.get(`/api/agencies/${agencyId}/members`, { query });
+
+  async members(
+    agencyId: string,
+    query: ListQuery & { q?: string }
+  ): Promise<Paginated<AgencyMember>> {
+    const page = Math.max(1, Number(query.page ?? 1));
+    const pageSize = Math.max(1, Number(query.pageSize ?? 25));
+    const raw = await api.get<{ members: BackendMember[]; page: { total: number } }>(
+      `/api/agencies/${agencyId}/members`,
+      {
+        query: {
+          limit: pageSize,
+          offset: (page - 1) * pageSize,
+          search: query.q ?? query.search
+        }
+      }
+    );
+    const items = raw.members.map((member) => ({
+      uuid: member.membershipId,
+      email: member.user.email,
+      first_name: member.user.firstName,
+      last_name: member.user.lastName,
+      role: highestRole(member.roles),
+      status: member.membershipStatus,
+      joined_at: member.joinedAt ?? undefined
+    }));
+    return toPage(items, raw.page.total, page, pageSize);
   },
-  updateMember(agencyId: string, memberUuid: string, payload: { role?: string; status?: string }): Promise<void> {
-    return api.patch(`/api/agencies/${agencyId}/members/${memberUuid}`, payload);
+
+  async updateMember(
+    agencyId: string,
+    memberUuid: string,
+    payload: { role?: string; status?: string }
+  ): Promise<void> {
+    if (payload.status) {
+      const action =
+        payload.status === "active" ? "reactivate" : payload.status === "suspended" ? "suspend" : "remove";
+      await api.post(`/api/agencies/${agencyId}/members/${memberUuid}/status`, { action });
+    }
+    if (payload.role) {
+      await api.post(`/api/agencies/${agencyId}/members/${memberUuid}/role`, { role: payload.role });
+    }
   },
-  invitations(agencyId: string, status?: string): Promise<{ items?: AgencyInvitation[] }> {
-    return api.get(`/api/agencies/${agencyId}/invitations`, { query: { status } });
+
+  async invitations(agencyId: string, status?: string): Promise<{ items: AgencyInvitation[] }> {
+    const raw = await api.get<{
+      invitations: {
+        id: string;
+        emailNormalized: string;
+        roleCode: string;
+        status: string;
+        expiresAt: string;
+        createdAt: string;
+      }[];
+    }>(`/api/agencies/${agencyId}/invitations`, { query: { status: status ?? "pending" } });
+    return {
+      items: raw.invitations.map((invitation) => ({
+        uuid: invitation.id,
+        email: invitation.emailNormalized,
+        role: invitation.roleCode,
+        status: invitation.status,
+        invited_at: invitation.createdAt,
+        expires_at: invitation.expiresAt
+      }))
+    };
   },
-  invite(agencyId: string, payload: { email: string; first_name?: string; last_name?: string; role: string }): Promise<void> {
-    return api.post(`/api/agencies/${agencyId}/invitations`, payload);
+
+  invite(
+    agencyId: string,
+    payload: { email: string; first_name?: string; last_name?: string; role: string }
+  ): Promise<void> {
+    return api.post(`/api/agencies/${agencyId}/invitations`, {
+      email: payload.email,
+      roleCode: payload.role
+    });
   },
+
   revokeInvitation(agencyId: string, invitationUuid: string): Promise<void> {
     return api.post(`/api/agencies/${agencyId}/invitations/${invitationUuid}/revoke`);
   },
-  entitlements(agencyId: string): Promise<{ items?: AgencyEntitlement[] }> {
-    return api.get(`/api/agencies/${agencyId}/entitlements`);
-  },
-  seats(agencyId: string): Promise<{ items?: SeatAssignment[] }> {
-    return api.get(`/api/agencies/${agencyId}/seats`);
-  },
-  releaseSeat(seatUuid: string): Promise<void> {
-    return api.post(`/api/seats/${seatUuid}/release`);
-  },
-  reassignSeat(seatUuid: string, memberUuid: string): Promise<void> {
-    return api.post(`/api/seats/${seatUuid}/assign`, { member_uuid: memberUuid });
-  },
-  orders(agencyId: string, query: ListQuery): Promise<Paginated<AgencyOrder>> {
-    return api.get(`/api/agencies/${agencyId}/orders`, { query });
-  },
-  order(orderUuid: string): Promise<AgencyOrder> {
-    return api.get(`/api/orders/${orderUuid}`);
-  },
-  billing(agencyId: string): Promise<BillingInfo> {
-    return api.get(`/api/agencies/${agencyId}/billing`);
+
+  async entitlements(agencyId: string): Promise<{ items: AgencyEntitlement[] }> {
+    const raw = await api.get<{
+      entitlements: {
+        id: string;
+        productName: string;
+        status: string;
+        seatCapacity: number;
+        seatsUsed: number;
+        validUntil: string;
+      }[];
+    }>(`/api/agencies/${agencyId}/entitlements`);
+    return {
+      items: raw.entitlements.map((entitlement) => ({
+        uuid: entitlement.id,
+        product: { name: entitlement.productName },
+        seats_total: entitlement.seatCapacity,
+        seats_assigned: entitlement.seatsUsed,
+        status: entitlement.status,
+        expires_at: entitlement.validUntil
+      }))
+    };
   },
 
-  /**
-   * Checkout (IB-3, INTEGRATION-UNVERIFIED): store product detail and order
-   * creation. The catalogue LIST route (GET /api/store/products) is verified;
-   * the single-product and POST /api/orders variants follow the documented
-   * contract and must be confirmed before checkout is enabled by flag.
-   * The public product id (uuid/slug) is passed through — never an internal id.
-   */
-  storeProduct(productPublicId: string, signal?: AbortSignal): Promise<StoreProduct> {
-    return api.get(`/api/store/products/${productPublicId}`, { signal });
+  seats(agencyId: string): Promise<{ items: SeatAssignment[] }> {
+    return api.get(`/api/agencies/${agencyId}/seats`);
   },
-  createOrder(payload: { product_uuid: string; quantity: number }): Promise<AgencyOrder> {
-    return api.post("/api/orders", payload);
+
+  releaseSeat(agencyId: string, entitlementId: string, seatUuid: string): Promise<void> {
+    return api.post(
+      `/api/agencies/${agencyId}/entitlements/${entitlementId}/seats/${seatUuid}/release`,
+      { reason: "Released by administrator" }
+    );
+  },
+
+  reassignSeat(
+    agencyId: string,
+    entitlementId: string,
+    seatUuid: string,
+    memberUuid: string
+  ): Promise<void> {
+    return api.post(
+      `/api/agencies/${agencyId}/entitlements/${entitlementId}/seats/${seatUuid}/reassign`,
+      { toMembershipId: memberUuid, reason: "Reassigned by administrator" }
+    );
+  },
+
+  async orders(agencyId: string, query: ListQuery & { q?: string }): Promise<Paginated<AgencyOrder>> {
+    const page = Math.max(1, Number(query.page ?? 1));
+    const pageSize = Math.max(1, Number(query.pageSize ?? 25));
+    const raw = await api.get<{ orders: any[]; page: { total: number } }>(`/api/agencies/${agencyId}/orders`, {
+      query: { limit: pageSize, offset: (page - 1) * pageSize }
+    });
+    return toPage(raw.orders.map(mapOrder), raw.page.total, page, pageSize);
+  },
+
+  async order(agencyId: string, orderUuid: string): Promise<AgencyOrder> {
+    const raw = await api.get<{ order: any }>(`/api/agencies/${agencyId}/orders/${orderUuid}`);
+    return mapOrder(raw.order);
+  },
+
+  async billing(agencyId: string): Promise<BillingInfo> {
+    const raw = await api.post<{ url: string }>(`/api/agencies/${agencyId}/billing-portal`);
+    return { billing_portal_url: raw.url };
+  },
+
+  reportsOverview(agencyId: string): Promise<AgencyReportOverview> {
+    return api.get(`/api/agencies/${agencyId}/reports/overview`);
+  },
+
+  async reportsLearners(agencyId: string): Promise<{ items: AgencyLearnerReport[] }> {
+    return api.get(`/api/agencies/${agencyId}/reports/learners`);
+  },
+
+  async auditLog(agencyId: string, limit = 6): Promise<{ items: AgencyAuditEntry[] }> {
+    const raw = await api.get<{ items: AgencyAuditEntry[] }>(`/api/agencies/${agencyId}/audit-log`, {
+      query: { limit }
+    });
+    return { items: raw.items };
+  },
+
+  async storeProducts(): Promise<{ items: StoreProduct[]; total: number; pages: number }> {
+    const raw = await api.get<{ products: any[] }>("/api/store/products");
+    const items = raw.products.map(mapProduct);
+    return { items, total: items.length, pages: 1 };
+  },
+
+  async storeProduct(productPublicId: string, signal?: AbortSignal): Promise<StoreProduct> {
+    const raw = await api.get<{ product: any }>(`/api/store/products/${productPublicId}`, { signal });
+    return mapProduct(raw.product);
+  },
+
+  async createOrder(payload: {
+    agencyId: string;
+    priceId: string;
+    quantity: number;
+    paymentMethod: "card" | "invoice";
+    purchaseOrderNumber?: string;
+  }): Promise<{ order: AgencyOrder; checkoutUrl?: string | null }> {
+    const raw = await api.post<{ order: any; checkoutUrl?: string | null }>(
+      `/api/agencies/${payload.agencyId}/orders`,
+      {
+        priceId: payload.priceId,
+        quantity: payload.quantity,
+        paymentMethod: payload.paymentMethod,
+        ...(payload.purchaseOrderNumber ? { purchaseOrderNumber: payload.purchaseOrderNumber } : {})
+      }
+    );
+    return { order: mapOrder(raw.order), checkoutUrl: raw.checkoutUrl ?? null };
   }
 };
 
@@ -176,7 +417,7 @@ export function useAgencyOverview() {
   });
 }
 
-export function useAgencyMembers(query: ListQuery) {
+export function useAgencyMembers(query: ListQuery & { q?: string }) {
   const { agencyId, enabled } = useAgencyScope();
   return useQuery({
     queryKey: agencyKeys.members(agencyId, query),
@@ -190,7 +431,10 @@ export function useUpdateMember() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (payload: { memberUuid: string; role?: string; status?: string }) =>
-      agencyApi.updateMember(agencyId as string, payload.memberUuid, { role: payload.role, status: payload.status }),
+      agencyApi.updateMember(agencyId as string, payload.memberUuid, {
+        role: payload.role,
+        status: payload.status
+      }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["agency", agencyId, "members"] });
     }
