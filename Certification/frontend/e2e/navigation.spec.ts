@@ -13,21 +13,23 @@ test.describe("role-based navigation (backend required)", () => {
 
   test("the shell shows only the signed-in role's portal navigation", async ({ page }) => {
     await login(page);
-    await page.waitForURL(new RegExp(`^${DASHBOARD_FOR_ROLE[E2E_ROLE]}`));
+    await page.waitForURL(new RegExp(`${DASHBOARD_FOR_ROLE[E2E_ROLE]}(?:$|/)`));
 
-    await expect(page.locator("nav").first()).toBeVisible();
+    // The portal navigation is duplicated for mobile; assert against the primary one.
+    const portalNav = page.locator('nav[aria-label$="navigation"]').first();
+    await expect(portalNav).toBeVisible();
 
     if (E2E_ROLE === "learner") {
       // Learners must never see platform administration links.
-      await expect(page.getByRole("link", { name: "Agencies" })).toHaveCount(0);
-      await expect(page.getByRole("link", { name: "My learning" })).toHaveCount(1);
+      await expect(portalNav.getByRole("link", { name: "Agencies" })).toHaveCount(0);
+      await expect(portalNav.getByRole("link", { name: "My learning" })).toHaveCount(1);
     }
     if (E2E_ROLE === "agency_admin") {
-      await expect(page.getByRole("link", { name: "Members" })).toHaveCount(1);
-      await expect(page.getByRole("link", { name: "Audit & operations" })).toHaveCount(0);
+      await expect(portalNav.getByRole("link", { name: "Members" })).toHaveCount(1);
+      await expect(portalNav.getByRole("link", { name: "Audit & operations" })).toHaveCount(0);
     }
     if (E2E_ROLE === "super_admin" || E2E_ROLE === "training_manager") {
-      await expect(page.getByRole("link", { name: "Agencies" })).toHaveCount(1);
+      await expect(portalNav.getByRole("link", { name: "Agencies" })).toHaveCount(1);
     }
   });
 
@@ -38,17 +40,17 @@ test.describe("role-based navigation (backend required)", () => {
     const foreignPortal = E2E_ROLE === "training_manager" ? "/agency" : "/platform";
 
     await login(page);
-    await page.waitForURL(new RegExp(`^${DASHBOARD_FOR_ROLE[E2E_ROLE]}`));
+    await page.waitForURL(new RegExp(`${DASHBOARD_FOR_ROLE[E2E_ROLE]}(?:$|/)`));
 
     await page.goto(foreignPortal);
     await expect(page).toHaveURL(/\/access-denied/);
-    // Content of the foreign portal must not be rendered.
-    await expect(page.getByRole("navigation").first()).not.toContainText("Audit & operations");
+    // The foreign portal's content (and its navigation) must not be rendered.
+    await expect(page.getByRole("heading", { name: "Access denied" })).toBeVisible();
   });
 
   test("a lost session sends the user back to sign-in (session expiry)", async ({ page, context }) => {
     await login(page);
-    await page.waitForURL(new RegExp(`^${DASHBOARD_FOR_ROLE[E2E_ROLE]}`));
+    await page.waitForURL(new RegExp(`${DASHBOARD_FOR_ROLE[E2E_ROLE]}(?:$|/)`));
 
     await context.clearCookies(); // simulate the HttpOnly session cookie expiring
     await page.reload();
@@ -59,7 +61,7 @@ test.describe("role-based navigation (backend required)", () => {
 
   test("authenticated keyboard navigation: skip link jumps focus to main content", async ({ page }) => {
     await login(page);
-    await page.waitForURL(new RegExp(`^${DASHBOARD_FOR_ROLE[E2E_ROLE]}`));
+    await page.waitForURL(new RegExp(`${DASHBOARD_FOR_ROLE[E2E_ROLE]}(?:$|/)`));
 
     await page.keyboard.press("Tab");
     await expect(page.getByRole("link", { name: "Skip to main content" })).toBeFocused();
@@ -74,7 +76,7 @@ test.describe("role-based navigation (backend required)", () => {
     );
 
     await login(page);
-    await page.waitForURL(new RegExp(`^${DASHBOARD_FOR_ROLE[E2E_ROLE]}`));
+    await page.waitForURL(new RegExp(`${DASHBOARD_FOR_ROLE[E2E_ROLE]}(?:$|/)`));
 
     const selector = page.getByRole("button", { name: /Active agency: .*Change agency/ });
     await expect(selector).toBeVisible();

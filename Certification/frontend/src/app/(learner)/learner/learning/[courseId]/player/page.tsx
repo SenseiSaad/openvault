@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -100,6 +100,35 @@ export default function CoursePlayerPage({ params }: { params: Promise<{ courseI
       })
       .catch(() => undefined);
   }, [courseId, current?.uuid, current?.completed]);
+
+  // Video heartbeat: while a video lesson is open, send a heartbeat every 30 s so the
+  // backend accumulates watched_seconds server-side (spec §4.1 "verifiable watched").
+  const heartbeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const watchedRef = useRef(0);
+  const isVideo = content.data?.lesson.lessonType === "video";
+
+  useEffect(() => {
+    if (!featureFlags.learnerLearning || !isVideo || !current?.uuid || current.completed) {
+      if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
+      return;
+    }
+    heartbeatRef.current = setInterval(() => {
+      watchedRef.current += 30;
+      void api
+        .post("/api/me/progress", {
+          enrollment_uuid: courseId,
+          lesson_uuid: current.uuid,
+          action: "heartbeat",
+          watched_delta_seconds: 30,
+          playback_seconds: watchedRef.current
+        })
+        .catch(() => undefined);
+    }, 30_000);
+    return () => {
+      if (heartbeatRef.current) { clearInterval(heartbeatRef.current); heartbeatRef.current = null; }
+      watchedRef.current = 0;
+    };
+  }, [courseId, current?.uuid, current?.completed, isVideo]);
 
   const completeLesson = useMutation({
     mutationFn: (lessonUuid: string) =>
@@ -220,14 +249,20 @@ export default function CoursePlayerPage({ params }: { params: Promise<{ courseI
           <ol className="space-y-1.5">
             {lessons.map((lesson, index) => {
               const isSelected = current?.uuid === lesson.uuid;
+              // Sequential gating: a lesson is locked if any earlier required lesson is incomplete.
+              const isLocked = lessons
+                .slice(0, index)
+                .some((prev) => !prev.completed);
               return (
                 <li key={lesson.uuid}>
                   <button
                     type="button"
+                    disabled={isLocked}
                     onClick={() => setActiveLesson(lesson.uuid)}
                     aria-current={isSelected ? "true" : undefined}
                     className={cn(
                       "group flex w-full items-center justify-between gap-3 rounded-lg p-2.5 text-left text-xs transition-all duration-150",
+                      isLocked && "opacity-45 cursor-not-allowed",
                       isSelected
                         ? "bg-primary text-primary-foreground font-semibold shadow-sm"
                         : "hover:bg-secondary text-muted-foreground hover:text-foreground"
@@ -239,10 +274,12 @@ export default function CoursePlayerPage({ params }: { params: Promise<{ courseI
                           "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold border",
                           isSelected
                             ? "bg-primary-foreground text-primary border-primary-foreground"
-                            : "bg-secondary text-muted-foreground border-border"
+                            : isLocked
+                              ? "bg-muted text-muted-foreground border-border"
+                              : "bg-secondary text-muted-foreground border-border"
                         )}
                       >
-                        {index + 1}
+                        {isLocked ? "🔒" : index + 1}
                       </span>
                       <span className="truncate">{lesson.title}</span>
                     </div>
@@ -384,7 +421,10 @@ export default function CoursePlayerPage({ params }: { params: Promise<{ courseI
                 <Button
                   variant="outline"
                   size="sm"
-                  disabled={lessons[lessons.length - 1]?.uuid === current.uuid}
+                  disabled={
+                    lessons[lessons.length - 1]?.uuid === current.uuid ||
+                    !current.completed // sequential gating: can't skip ahead
+                  }
                   onClick={() => {
                     const index = lessons.findIndex((lesson) => lesson.uuid === current.uuid);
                     const next = lessons[index + 1];

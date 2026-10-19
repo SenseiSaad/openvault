@@ -16,9 +16,11 @@ test.describe("public UI (no backend required)", () => {
   test("login form is fully keyboard operable with visible validation", async ({ page }) => {
     await page.goto("/login");
 
-    // Labels drive focus; Tab moves between fields in visual order.
+    // Labels drive focus; the "Forgot password?" link sits between the fields, so the
+    // second Tab reaches the password input.
     await page.getByLabel("Email address").focus();
     await page.keyboard.type("not-an-email");
+    await page.keyboard.press("Tab");
     await page.keyboard.press("Tab");
     await expect(page.getByLabel("Password")).toBeFocused();
     await page.keyboard.type("whatever12345");
@@ -29,7 +31,9 @@ test.describe("public UI (no backend required)", () => {
   });
 
   test("skip link is the first tab stop on public pages", async ({ page }) => {
-    await page.goto("/login");
+    // The login form auto-focuses its email field, so use a public page without
+    // autofocus to verify the skip-link tab order.
+    await page.goto("/catalogue");
     await page.keyboard.press("Tab");
     await expect(page.getByRole("link", { name: "Skip to main content" })).toBeFocused();
   });

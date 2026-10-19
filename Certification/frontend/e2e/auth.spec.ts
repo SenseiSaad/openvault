@@ -10,7 +10,7 @@ test.describe("auth flows (backend required)", () => {
 
   test("valid credentials land on the role dashboard", async ({ page }) => {
     await login(page);
-    await page.waitForURL(new RegExp(`^${DASHBOARD_FOR_ROLE[E2E_ROLE]}`));
+    await page.waitForURL(new RegExp(`${DASHBOARD_FOR_ROLE[E2E_ROLE]}(?:$|/)`));
   });
 
   test("invalid credentials show the generic error and never redirect", async ({ page }) => {
@@ -21,7 +21,7 @@ test.describe("auth flows (backend required)", () => {
 
   test("the session survives a full page refresh", async ({ page }) => {
     await login(page);
-    await page.waitForURL(new RegExp(`^${DASHBOARD_FOR_ROLE[E2E_ROLE]}`));
+    await page.waitForURL(new RegExp(`${DASHBOARD_FOR_ROLE[E2E_ROLE]}(?:$|/)`));
 
     await page.reload();
     // Still authenticated: no bounce back to /login.
@@ -30,10 +30,10 @@ test.describe("auth flows (backend required)", () => {
 
   test("signing out ends the session everywhere", async ({ page }) => {
     await login(page);
-    await page.waitForURL(new RegExp(`^${DASHBOARD_FOR_ROLE[E2E_ROLE]}`));
+    await page.waitForURL(new RegExp(`${DASHBOARD_FOR_ROLE[E2E_ROLE]}(?:$|/)`));
 
-    // Account dropdown trigger (Radix sets aria-haspopup="menu" on it).
-    await page.locator("header button[aria-haspopup='menu']").click();
+    // Account dropdown trigger (the last header button; Radix owns its ARIA state).
+    await page.locator("header").getByRole("button").last().click();
     await page.getByRole("menuitem", { name: "Sign out" }).click();
 
     await page.waitForURL(/\/login/);

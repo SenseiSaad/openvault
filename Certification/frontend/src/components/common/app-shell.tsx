@@ -371,23 +371,6 @@ export function AppShell({ nav, portalLabel, role, children, topbarExtra }: AppS
           <Breadcrumbs />
           {children}
         </main>
-
-        <footer className="border-t border-border/60 px-4 py-4 text-center text-xs text-muted-foreground sm:px-6">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-2 max-w-7xl mx-auto">
-            <span>Certification Academy — U.S. Government Training Platform</span>
-            <div className="flex items-center gap-3">
-              <Link href="/privacy" className="hover:underline">
-                Privacy
-              </Link>
-              <Link href="/terms" className="hover:underline">
-                Terms
-              </Link>
-              <Link href="/accessibility" className="hover:underline">
-                Accessibility
-              </Link>
-            </div>
-          </div>
-        </footer>
       </div>
     </div>
   );

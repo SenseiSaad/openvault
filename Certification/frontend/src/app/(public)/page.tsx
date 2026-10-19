@@ -55,33 +55,6 @@ export default function LandingPage() {
         Skip to main content
       </a>
 
-      {/* Frosted Glass Top Navigation */}
-      <header className="sticky top-0 z-50 border-b border-border/80 bg-background/80 backdrop-blur-md">
-        <div className="container flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6">
-          <Link
-            href="/"
-            className="flex items-center gap-2.5 font-heading text-lg font-bold tracking-tight text-foreground transition-opacity hover:opacity-90"
-            aria-label="Certification Academy home"
-          >
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-sm">
-              <GraduationCap aria-hidden="true" className="h-5 w-5" />
-            </div>
-            <span>Certification Academy</span>
-          </Link>
-
-          <nav aria-label="Primary" className="flex items-center gap-3">
-            <Button variant="ghost" size="sm" asChild className="text-xs font-semibold">
-              <Link href="/catalogue">Training Catalogue</Link>
-            </Button>
-            <Button size="sm" asChild className="gap-1.5 shadow-sm">
-              <Link href="/login">
-                Sign In <ArrowRight className="h-3.5 w-3.5" />
-              </Link>
-            </Button>
-          </nav>
-        </div>
-      </header>
-
       <main id="main-content" className="flex-1">
         {/* Hero Section */}
         <section className="relative overflow-hidden border-b border-border/60 bg-gradient-to-b from-primary/[0.03] via-background to-background py-20 sm:py-28">
@@ -223,36 +196,6 @@ export default function LandingPage() {
           </div>
         </section>
       </main>
-
-      {/* Footer */}
-      <footer className="border-t border-border/70 bg-card">
-        <div className="container max-w-7xl px-4 py-8 sm:px-6 flex flex-col items-center justify-between gap-4 text-xs text-muted-foreground sm:flex-row">
-          <div className="flex items-center gap-2 font-medium">
-            <GraduationCap className="h-4 w-4 text-primary" />
-            <span>© {new Date().getFullYear()} Certification Academy. A Government Training Platform.</span>
-          </div>
-
-          <nav aria-label="Footer">
-            <ul className="flex items-center gap-5">
-              <li>
-                <Link className="underline-offset-4 hover:underline hover:text-foreground transition-colors" href="/privacy">
-                  Privacy Policy
-                </Link>
-              </li>
-              <li>
-                <Link className="underline-offset-4 hover:underline hover:text-foreground transition-colors" href="/terms">
-                  Terms of Service
-                </Link>
-              </li>
-              <li>
-                <Link className="underline-offset-4 hover:underline hover:text-foreground transition-colors" href="/accessibility">
-                  Accessibility (Section 508)
-                </Link>
-              </li>
-            </ul>
-          </nav>
-        </div>
-      </footer>
     </div>
   );
 }
