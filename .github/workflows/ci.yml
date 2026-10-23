@@ -70,10 +70,11 @@ jobs:
       - name: Production build (standalone Docker server)
         run: pnpm build
         env:
+          DOCKER_STANDALONE: "true"
           NEXT_PUBLIC_API_URL: http://localhost:8000
       - name: Static export (AWS Amplify)
         run: |
           rm -rf .next out
-          AMPLIFY_STATIC_EXPORT=true NEXT_PUBLIC_API_URL=https://api.saadops.site pnpm build
+          DOCKER_STANDALONE=false NEXT_PUBLIC_API_URL=https://api.saadops.site pnpm build
           test -f out/index.html
           test -f out/infrastructure/index.html

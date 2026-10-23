@@ -222,7 +222,7 @@ OpenVault/
 │   └── notes/               project and security-audit notes
 ├── deploy/                  Caddy configuration and backup script
 ├── amplify.yml              AWS Amplify build spec (frontend deploy)
-├── render.yaml              Render Blueprint (API, PostgreSQL, disk)
+├── render.yaml              Render Blueprint (API, upload disk, DATABASE_URL secret)
 └── docker-compose*.yml      local/full-stack container options
 ```
 
@@ -331,17 +331,22 @@ The step-by-step runbook, including Cloudflare DNS and smoke tests, is in
 
 Key points:
 
-- Amplify sets `AMPLIFY_STATIC_EXPORT=true` and
-  `NEXT_PUBLIC_API_URL=https://api.saadops.site`. Amplify's managed SSR runtime
-  currently supports Next.js through v15, while this app uses Next.js 16, so the
-  UI is exported as a static site.
-- Render runs migrations and `seed_plans` at container start, then gunicorn. PostgreSQL
-  and the 10 GB upload disk are declared in `render.yaml`; the disk is
-  single-instance.
-- `GEMINI_API_KEY`, SMTP credentials, and the platform-admin password are Render
-  secrets. Never put them in `amplify.yml`, `NEXT_PUBLIC_*`, or Git.
-- The first Render deploy starts with an empty database. Create the single platform
-  admin from Render's shell (see [Platform Administration Commands](#platform-administration-commands)).
+- `frontend/next.config.mjs` defaults to a static export, so Amplify detects
+  this as Next.js SSG. Amplify's managed SSR runtime currently supports Next.js
+  through v15, while this app uses Next.js 16. `NEXT_PUBLIC_API_URL` is set to
+  `https://api.saadops.site` in `amplify.yml`.
+  If Amplify reports `Can't find required-server-files.json`, the existing
+  app/branch is still registered as SSR; see the runbook for the one-time
+  `WEB` / `Next.js - SSG` conversion.
+- Render runs migrations and `seed_plans` at container start, then gunicorn.
+  The PostgreSQL database already exists in Render and is attached through a
+  secret `DATABASE_URL`; the 10 GB upload disk is declared in `render.yaml` and
+  is single-instance.
+- `DATABASE_URL`, `GEMINI_API_KEY`, SMTP credentials, and the platform-admin
+  password are Render secrets. Never put them in `amplify.yml`,
+  `NEXT_PUBLIC_*`, or Git.
+- The attached Render database starts empty. Create the single platform admin
+  from Render's shell (see [Platform Administration Commands](#platform-administration-commands)).
 
 ---
 

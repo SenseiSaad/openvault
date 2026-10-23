@@ -27,9 +27,9 @@ const CONTROLS = [
 
 const BOUNDARY = [
   'Static frontend delivery uses AWS Amplify/CloudFront; Cloudflare provides DNS for the custom domains.',
-  'Django API, PostgreSQL, and the document disk are hosted in Render’s Singapore region.',
+  'Django API, PostgreSQL, and the document disk are hosted in Render’s Oregon (US West) region.',
   'Bedrock chat uses the India inference profile; only permission-approved passages are sent over TLS.',
-  'This is not an all-data-in-India deployment: stored app data is in Singapore while model inference is in AWS India.',
+  'This is not an all-data-in-India deployment: stored app data is in Oregon (US West) while model inference is in AWS India.',
 ]
 
 export function SecurityControlsSection() {

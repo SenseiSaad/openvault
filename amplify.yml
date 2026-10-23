@@ -6,7 +6,6 @@ applications:
     env:
       variables:
         AMPLIFY_MONOREPO_APP_ROOT: frontend
-        AMPLIFY_STATIC_EXPORT: 'true'
         NEXT_PUBLIC_API_URL: https://api.saadops.site
     frontend:
       phases:
@@ -20,11 +19,10 @@ applications:
         build:
           commands:
             # Fail loudly if the runtime is unexpected, then build the static
-            # site. Exports are repeated here so the Amplify console cannot
-            # accidentally omit the API URL or produce an SSR .next build.
+            # site. next.config.mjs defaults to output: 'export' so Amplify
+            # classifies this branch as Next.js SSG, not SSR.
             - node --version
             - pnpm --version
-            - export AMPLIFY_STATIC_EXPORT=true
             - export NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL:-https://api.saadops.site}"
             - pnpm run build
             - test -f out/index.html

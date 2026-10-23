@@ -56,7 +56,7 @@ export const AWS_LAYERS: AwsLayer[] = [
     index: '02',
     icon: Database,
     title: 'The API and files have a persistent home.',
-    body: 'The Django API and PostgreSQL database run on Render in Singapore. Uploads and generated forms use a Render persistent disk so files survive container restarts; this is a single-instance launch setup.',
+    body: 'The Django API and PostgreSQL database run on Render in Oregon (US West). Uploads and generated forms use a Render persistent disk so files survive container restarts; this is a single-instance launch setup.',
     nodes: [
       { label: 'Render API', detail: 'Django + Gunicorn', icon: Server },
       { label: 'Render PostgreSQL', detail: 'managed relational data', icon: Database },

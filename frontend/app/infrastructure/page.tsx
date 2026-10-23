@@ -19,7 +19,7 @@ export const metadata: Metadata = {
 
 const FACTS = [
   ['Web', 'AWS Amplify · static export'],
-  ['API + data', 'Render · Singapore'],
+  ['API + data', 'Render · Oregon'],
   ['AI', 'Amazon Bedrock · India profile'],
   ['DNS', 'Cloudflare · custom domains'],
 ]
