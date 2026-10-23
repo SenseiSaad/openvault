@@ -17,6 +17,11 @@ if not SECRET_KEY:
     raise ValueError("SECRET_KEY environment variable is required")
 DEBUG = os.getenv("DEBUG", "false").lower() in ("1", "true", "yes")
 ALLOWED_HOSTS = [h.strip() for h in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,testserver").split(",") if h.strip()]
+# Render provides the generated service hostname at runtime. Include it even
+# when the deployment also uses a custom API domain.
+RENDER_EXTERNAL_HOSTNAME = os.getenv("RENDER_EXTERNAL_HOSTNAME", "").strip()
+if RENDER_EXTERNAL_HOSTNAME and RENDER_EXTERNAL_HOSTNAME not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -26,6 +31,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
     "core",
 ]
@@ -33,6 +39,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -80,7 +87,9 @@ else:
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
+            # Honour SQLITE_PATH so container deployments can put the database
+            # on a persistent volume instead of inside the image layer.
+            "NAME": os.getenv("SQLITE_PATH") or str(BASE_DIR / "db.sqlite3"),
         }
     }
 
@@ -95,11 +104,23 @@ REST_FRAMEWORK = {
 }
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=int(os.getenv("ACCESS_TOKEN_MINUTES", "30"))),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=int(os.getenv("ACCESS_TOKEN_MINUTES", "15"))),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=int(os.getenv("REFRESH_TOKEN_DAYS", "7"))),
     "ROTATE_REFRESH_TOKENS": True,
-    "BLACKLIST_AFTER_ROTATION": False,
+    # The old token is blacklisted on every rotation, so a stolen refresh token
+    # stops working as soon as the real user refreshes. Login/logout also
+    # blacklist explicitly (see views.refresh/logout).
+    "BLACKLIST_AFTER_ROTATION": True,
 }
+
+# Reject weak passwords at the API boundary too (not just in the UI).
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+     "OPTIONS": {"min_length": 8}},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
 
 # Cookies are HttpOnly + SameSite=Lax; set Secure when serving over HTTPS.
 SESSION_COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() in ("1", "true", "yes")
@@ -135,16 +156,30 @@ CORS_ALLOWED_ORIGINS = [
 CORS_ALLOW_CREDENTIALS = True  # needed for the HttpOnly cookie session
 
 STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    # Compressed (not manifest) so a missing optional asset cannot break the app.
+    "staticfiles": {"BACKEND": "whitenoise.storage.CompressedStaticFilesStorage"},
+}
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = os.getenv("TIME_ZONE", "Asia/Karachi")
 USE_TZ = True
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv("MAX_UPLOAD_SIZE", 50 * 1024 * 1024))
 FILE_UPLOAD_MAX_MEMORY_SIZE = DATA_UPLOAD_MAX_MEMORY_SIZE
+# Disable in tests (pytest sets RATELIMIT_ENABLED=false) so shared loopback
+# traffic is not throttled.
+RATELIMIT_ENABLED = os.getenv("RATELIMIT_ENABLED", "true").lower() in ("1", "true", "yes")
 
 # ── App/LLM config ──
 DATA_DIR = os.getenv("DATA_DIR", str(BASE_DIR / "data"))
 os.makedirs(DATA_DIR, exist_ok=True)
+# ── LLM provider config ──
+# API keys saved through the settings UI are encrypted at rest. Set a stable
+# LLM_KEY_ENCRYPTION_KEY in production (back it up); when blank it is derived
+# from SECRET_KEY, so rotating SECRET_KEY also invalidates stored keys.
+LLM_KEY_ENCRYPTION_KEY = os.getenv("LLM_KEY_ENCRYPTION_KEY", "")
 LLM_URL = os.getenv("LLM_URL", "http://localhost:11434").rstrip("/")
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:1.5b")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "nomic-embed-text")
@@ -179,7 +214,46 @@ ATTENDANCE_MONTHLY_ABSENCE_LIMIT = int(os.getenv("ATTENDANCE_MONTHLY_ABSENCE_LIM
 ATTENDANCE_MAX_STRIKES = int(os.getenv("ATTENDANCE_MAX_STRIKES", "3"))
 
 # ── Security headers (HTTPS deployments) ──
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "same-origin"
+X_FRAME_OPTIONS = "DENY"
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = False  # the frontend reads this only if CSRF headers are added
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+
 if SESSION_COOKIE_SECURE:
-    SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "false").lower() in ("1", "true", "yes")
-    SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "0"))
+    SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "true").lower() in ("1", "true", "yes")
+    SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "31536000"))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+# Fail fast instead of silently serving production traffic over plain HTTP or
+# with a wildcard host. Set ENVIRONMENT=production in real deployments; local
+# Docker/HTTP runs either leave it unset or set ALLOW_INSECURE_HTTP=true.
+IS_PRODUCTION = os.getenv("ENVIRONMENT", "").strip().lower() in ("production", "prod")
+if not DEBUG and IS_PRODUCTION:
+    if not SESSION_COOKIE_SECURE and os.getenv("ALLOW_INSECURE_HTTP", "false").lower() not in ("1", "true", "yes"):
+        raise ValueError(
+            "Refusing to start in production with insecure cookies. "
+            "Set COOKIE_SECURE=true (HTTPS) or ALLOW_INSECURE_HTTP=true for local HTTP."
+        )
+    if not ALLOWED_HOSTS or "*" in ALLOWED_HOSTS:
+        raise ValueError("ALLOWED_HOSTS must list explicit hostnames in production.")
+
+# ── Logging (stdout/stderr so Docker/CloudWatch collect it) ──
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {"format": "%(asctime)s %(levelname)s %(name)s %(message)s"},
+    },
+    "handlers": {
+        "console": {"class": "logging.StreamHandler", "formatter": "verbose"},
+    },
+    "root": {"handlers": ["console"], "level": os.getenv("LOG_LEVEL", "INFO")},
+    "loggers": {
+        "django.request": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+    },
+}

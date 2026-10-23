@@ -3,9 +3,11 @@
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense, useState, type FormEvent } from 'react'
-import { Loader2, KeyRound } from 'lucide-react'
-import { Logo } from '@/components/logo'
+import { Eye, EyeOff, KeyRound, Loader2 } from 'lucide-react'
+import { AuthShell } from '@/components/auth-shell'
 import { authApi } from '@/lib/api'
+
+const LABEL = 'text-[10px] font-semibold uppercase tracking-[0.13em] text-muted-foreground'
 
 function ResetForm() {
   const params = useSearchParams()
@@ -13,14 +15,22 @@ function ResetForm() {
   const token = params.get('token') || ''
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
   async function submit(e: FormEvent) {
     e.preventDefault()
     setError('')
-    if (password !== confirm) { setError('Passwords do not match.'); return }
-    if (password.length < 6) { setError('Password must be at least 6 characters.'); return }
+    if (password !== confirm) {
+      setError('Passwords do not match.')
+      return
+    }
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters.')
+      return
+    }
     setBusy(true)
     try {
       await authApi.resetPassword(token, password)
@@ -35,32 +45,100 @@ function ResetForm() {
   if (!token) {
     return (
       <div className="text-center">
-        <h1 className="text-2xl font-semibold tracking-[-0.03em]">Missing reset token</h1>
-        <p className="mt-2 text-sm text-[#6b6862]">Open the reset link from your email, or request a new one.</p>
-        <Link href="/auth/forgot" className="mt-6 inline-block text-sm font-medium text-[#1d1d1b] underline underline-offset-4">Request a new link</Link>
+        <span className="mx-auto grid size-11 place-items-center rounded-full bg-danger-soft text-danger">
+          <KeyRound className="size-5" aria-hidden />
+        </span>
+        <h1 className="mt-5 text-[1.35rem] font-medium tracking-[-0.03em]">Missing reset token</h1>
+        <p className="mx-auto mt-2 max-w-xs text-[12.5px] text-muted-foreground">
+          Open the reset link from your email, or request a new one.
+        </p>
+        <Link
+          href="/auth/forgot"
+          className="mt-6 inline-flex items-center gap-2 text-[12px] font-medium text-foreground underline underline-offset-4"
+        >
+          Request a new link
+        </Link>
       </div>
     )
   }
 
   return (
     <>
-      <span className="mx-auto grid size-12 place-items-center rounded-2xl bg-[#f0ede5]"><KeyRound className="size-6 text-[#1d1d1b]" /></span>
-      <h1 className="mt-4 text-center text-2xl font-semibold tracking-[-0.03em]">Choose a new password</h1>
+      <span className="grid size-11 place-items-center rounded-full bg-accent-soft text-accent">
+        <KeyRound className="size-5" aria-hidden />
+      </span>
+      <h1 className="mt-5 text-[1.35rem] font-medium tracking-[-0.03em]">Choose a new password</h1>
+      <p className="mt-2 text-[12.5px] leading-relaxed text-muted-foreground">
+        Use at least eight characters. You&apos;ll sign in again with your work email.
+      </p>
+
       <form onSubmit={submit} className="mt-6 space-y-4">
         <div>
-          <label htmlFor="rp-new" className="mb-1.5 block text-sm font-medium">New password</label>
-          <input id="rp-new" type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)}
-            className="h-12 w-full rounded-xl border border-[#d8d5cc] bg-[#fffdfa] px-4 text-sm outline-none focus:border-[#1d1d1b]" />
+          <label htmlFor="rp-new" className={LABEL}>
+            New password
+          </label>
+          <div className="relative mt-1.5">
+            <input
+              id="rp-new"
+              type={showPassword ? 'text' : 'password'}
+              required
+              minLength={8}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="new-password"
+              className="field pr-11"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((value) => !value)}
+              aria-label={showPassword ? 'Hide new password' : 'Show new password'}
+              className="absolute right-1.5 top-1/2 grid size-8 -translate-y-1/2 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
+            >
+              {showPassword ? <EyeOff className="size-3.5" aria-hidden /> : <Eye className="size-3.5" aria-hidden />}
+            </button>
+          </div>
         </div>
         <div>
-          <label htmlFor="rp-confirm" className="mb-1.5 block text-sm font-medium">Confirm password</label>
-          <input id="rp-confirm" type="password" required minLength={6} value={confirm} onChange={(e) => setConfirm(e.target.value)}
-            className="h-12 w-full rounded-xl border border-[#d8d5cc] bg-[#fffdfa] px-4 text-sm outline-none focus:border-[#1d1d1b]" />
+          <label htmlFor="rp-confirm" className={LABEL}>
+            Confirm password
+          </label>
+          <div className="relative mt-1.5">
+            <input
+              id="rp-confirm"
+              type={showConfirm ? 'text' : 'password'}
+              required
+              minLength={8}
+              value={confirm}
+              onChange={(event) => setConfirm(event.target.value)}
+              autoComplete="new-password"
+              className="field pr-11"
+            />
+            <button
+              type="button"
+              onClick={() => setShowConfirm((value) => !value)}
+              aria-label={showConfirm ? 'Hide password confirmation' : 'Show password confirmation'}
+              className="absolute right-1.5 top-1/2 grid size-8 -translate-y-1/2 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface-2 hover:text-foreground"
+            >
+              {showConfirm ? <EyeOff className="size-3.5" aria-hidden /> : <Eye className="size-3.5" aria-hidden />}
+            </button>
+          </div>
         </div>
-        {error && <p role="alert" className="rounded-xl bg-[#fbe4e0] px-4 py-3 text-sm text-[#9a3b2c]">{error}</p>}
-        <button type="submit" disabled={busy}
-          className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-full bg-[#1d1d1b] text-sm font-medium text-white hover:bg-[#3c3b37] disabled:opacity-60">
-          {busy && <Loader2 className="size-4 animate-spin" />} Update password
+
+        {error && (
+          <p
+            role="alert"
+            className="rounded-lg border border-danger/25 bg-danger-soft px-3.5 py-2.5 text-[12px] text-danger"
+          >
+            {error}
+          </p>
+        )}
+
+        <button
+          type="submit"
+          disabled={busy}
+          className="btn btn-primary w-full disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {busy && <Loader2 className="size-4 animate-spin" aria-hidden />} Update password
         </button>
       </form>
     </>
@@ -69,15 +147,10 @@ function ResetForm() {
 
 export default function ResetPasswordPage() {
   return (
-    <main className="grid min-h-screen place-items-center bg-[#f7f6f2] px-6 text-[#1d1d1b]">
-      <div className="w-full max-w-md">
-        <div className="mb-8 flex justify-center"><Logo /></div>
-        <div className="rounded-3xl border border-[#e6e3dc] bg-[#fffdfa] p-8">
-          <Suspense fallback={<p className="text-center text-sm text-[#6b6862]">Loading…</p>}>
-            <ResetForm />
-          </Suspense>
-        </div>
-      </div>
-    </main>
+    <AuthShell>
+      <Suspense fallback={<p className="py-6 text-center text-sm text-muted-foreground">Loading…</p>}>
+        <ResetForm />
+      </Suspense>
+    </AuthShell>
   )
 }

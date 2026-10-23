@@ -1,0 +1,28 @@
+# OpenVault production reverse proxy.
+# Caddy automatically obtains and renews a Let's Encrypt certificate for DOMAIN.
+{$DOMAIN} {
+	encode zstd gzip
+
+	# API, Django admin and collected static files are served by Django.
+	handle /api/* {
+		reverse_proxy api:8000
+	}
+	handle /admin/* {
+		reverse_proxy api:8000
+	}
+	handle /static/* {
+		reverse_proxy api:8000
+	}
+
+	# Everything else is the Next.js app.
+	handle {
+		reverse_proxy web:3000
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+}

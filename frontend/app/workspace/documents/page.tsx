@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import {
   AlertCircle,
   Building2,
-  CheckCircle2,
   ChevronDown,
   Download,
   Eye,

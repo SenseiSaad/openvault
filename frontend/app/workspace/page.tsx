@@ -196,7 +196,7 @@ export default function WorkspaceOverviewPage() {
           ) : null}
 
           {/* Quick Stats Grid */}
-          <section className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <section className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-3 xl:grid-cols-5">
             {[
               { icon: FileText, tint: '#dfe7f7', label: 'Total documents', value: stats.total.toLocaleString() },
               { icon: Lock, tint: '#fff0d3', label: 'Restricted files', value: stats.restricted.toLocaleString(), hint: `${(stats.total - stats.restricted).toLocaleString()} company-wide` },

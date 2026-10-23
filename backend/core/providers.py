@@ -350,40 +350,96 @@ class GeminiProvider(BaseProvider):
 _BEDROCK_AVAIL_CACHE = {"ts": 0.0, "key": None, "ok": False}
 
 
+class _StaticBedrockToken:
+    """Give one boto3 session a single Bedrock API key (bearer token).
+
+    Botocore normally reads AWS_BEARER_TOKEN_BEDROCK from the process
+    environment. That is unsafe for multi-tenant BYO keys: two companies'
+    keys would overwrite each other. Inserting a token provider into the
+    session keeps the credential scoped to that client.
+    """
+
+    METHOD = "openvault-bedrock-key"
+
+    def __init__(self, token):
+        self._token = token
+
+    def load_token(self, **kwargs):
+        if kwargs.get("signing_name") not in (None, "bedrock"):
+            return None
+        from botocore.tokens import FrozenAuthToken
+        return FrozenAuthToken(self._token)
+
+
 class BedrockProvider(BaseProvider):
     """AWS Bedrock, pinned to the INDIA geographic cross-region inference
     profile (in.anthropic.claude-* prefix) so prompts and answers are only
     processed in India AWS infrastructure (ap-south-1 / ap-south-2) — never
-    the global profile. Bedrock never trains on your data and never shares it
-    with the model provider.
+    the global profile. AWS Bedrock's service terms state that prompts and
+    completions are not used to train the base models.
 
-    Auth: the boto3 default credential chain (an IAM role on EC2) for platform
-    use. A tenant may bring its own AWS credentials, stored in
-    LLMConfig.api_key as "ACCESS_KEY_ID:SECRET_ACCESS_KEY" and signed with
-    SigV4 — Bedrock has no bearer-token/API-key auth, IAM credentials are the
-    only key material it accepts. `region` is the LLMConfig.base_url field or
-    BEDROCK_REGION (default ap-south-1).
+    Auth, in order of preference:
+      1. An IAM role attached to the running service (blank key). This is the
+         production path; no long-lived credential is stored anywhere.
+      2. A Bedrock API key (bearer token), stored in LLMConfig.api_key or
+         BEDROCK_API_KEY. boto3 sends the request with bearer authentication
+         instead of SigV4.
+      3. A tenant AWS access-key pair, stored in LLMConfig.api_key as
+         "ACCESS_KEY_ID:SECRET_ACCESS_KEY" and signed with SigV4.
+    `region` is the LLMConfig.base_url field or BEDROCK_REGION (default
+    ap-south-1).
     Embeddings: amazon.titan-embed-text-v2 (1024 dims) via InvokeModel.
     """
     label = "bedrock"
 
     def __init__(self, api_key, region, chat_model, embed_model=""):
-        self.api_key = api_key or ""
+        self.api_key = (api_key or "").strip()
         self.region = (region or "").strip() or "ap-south-1"
         self.chat_model = chat_model or DEFAULT_MODELS["bedrock"]
         self.embed_model = embed_model or "amazon.titan-embed-text-v2:0"
 
+    def _aws_access_key_pair(self):
+        access_key, separator, secret_key = self.api_key.partition(":")
+        is_key_id = (
+            len(access_key) == 20
+            and access_key.isascii()
+            and access_key.isalnum()
+            and access_key.isupper()
+        )
+        return (access_key, secret_key) if separator and secret_key and is_key_id else None
+
     def _client(self):
         import boto3
-        if self.api_key and ":" in self.api_key:
-            access_key, _, secret_key = self.api_key.partition(":")
+        from botocore.config import Config
+
+        key_pair = self._aws_access_key_pair()
+        if key_pair:
+            access_key, secret_key = key_pair
             return boto3.client(
                 "bedrock-runtime", region_name=self.region,
                 aws_access_key_id=access_key.strip(),
                 aws_secret_access_key=secret_key.strip(),
+                config=Config(retries={"max_attempts": 3, "mode": "standard"}),
             )
-        # Blank key -> boto3 default credential chain (IAM role on EC2).
-        return boto3.client("bedrock-runtime", region_name=self.region)
+        if self.api_key:
+            # Bedrock API keys are bearer tokens, not SigV4 credentials. Give
+            # this boto3 session its own token provider so one tenant's key
+            # never leaks into another tenant's client.
+            session = boto3.Session(region_name=self.region)
+            token_provider = session._session.get_component("token_provider")
+            token_provider.insert_before("env", _StaticBedrockToken(self.api_key))
+            return session.client(
+                "bedrock-runtime",
+                config=Config(
+                    retries={"max_attempts": 3, "mode": "standard"},
+                    auth_scheme_preference="httpBearerAuth",
+                ),
+            )
+        # Blank key -> boto3 default credential chain (IAM role on EC2/ECS).
+        return boto3.client(
+            "bedrock-runtime", region_name=self.region,
+            config=Config(retries={"max_attempts": 3, "mode": "standard"}),
+        )
 
     def available(self):
         """Cheap credentials check, cached for 60s. An inference probe here
@@ -395,7 +451,11 @@ class BedrockProvider(BaseProvider):
             return c["ok"]
         try:
             if self.api_key:
-                ok = ":" in self.api_key and len(self.api_key) >= 20
+                # Either an access-key pair or a bearer API key. Both are long
+                # enough to be real; a short accidental paste is not.
+                ok = len(self.api_key) >= 20
+            elif os.getenv("AWS_BEARER_TOKEN_BEDROCK"):
+                ok = True
             else:
                 import botocore.session
                 s = botocore.session.get_session()
@@ -458,7 +518,7 @@ DEFAULT_MODELS = {
     "anthropic": "claude-3-5-haiku-latest",
     "gemini": "gemini-3.5-flash-lite",
     # India geographic inference profile — NOT the global one.
-    "bedrock": "in.anthropic.claude-3-5-haiku-20241022-v1:0",
+    "bedrock": "in.anthropic.claude-haiku-4-5-20251001-v1:0",
 }
 
 
@@ -618,8 +678,6 @@ def platform_key(provider):
     from .models import LLMConfig
     cfg = LLMConfig.load()
     return cfg.api_key if cfg.provider == provider else ""
-
-
 
 
 

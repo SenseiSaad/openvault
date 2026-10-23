@@ -10,6 +10,22 @@ from django.contrib.auth.models import (
 )
 from django.db import models
 
+from .crypto import decrypt_secret, encrypt_secret
+
+
+class EncryptedCharField(models.CharField):
+    """CharField whose value is encrypted at rest, transparently.
+
+    Database column type is unchanged; legacy plaintext rows still read and are
+    encrypted the next time they are written.
+    """
+
+    def from_db_value(self, value, expression, connection):
+        return decrypt_secret(value)
+
+    def get_prep_value(self, value):
+        return encrypt_secret(super().get_prep_value(value))
+
 
 _COMPANY_CODE_ALPHABET = string.ascii_uppercase + string.digits
 
@@ -441,8 +457,7 @@ class LLMConfig(models.Model):
     Two levels: the platform-wide row (company NULL, pk arbitrary) and optional
     per-company overrides (a company's own provider/model/key). Resolution order
     in providers._resolve(): company row -> platform row -> .env. The api_key is
-    stored in plaintext — fine for local testing; in production put it in
-    .env / a secrets manager and leave this blank.
+    encrypted at rest (core.crypto) and never returned by the API.
     """
     PROVIDERS = [("ollama", "ollama"), ("openai", "openai"),
                  ("anthropic", "anthropic"), ("gemini", "gemini"),
@@ -454,7 +469,7 @@ class LLMConfig(models.Model):
     )
     provider = models.CharField(max_length=20, choices=PROVIDERS, default="ollama")
     chat_model = models.CharField(max_length=120, blank=True, default="")
-    api_key = models.CharField(max_length=400, blank=True, default="")
+    api_key = EncryptedCharField(max_length=1000, blank=True, default="")
     base_url = models.CharField(max_length=300, blank=True, default="")
     temperature = models.FloatField(default=0.2)
     max_tokens = models.IntegerField(default=512)

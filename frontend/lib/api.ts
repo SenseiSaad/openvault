@@ -7,7 +7,14 @@ function detectBase(): string {
   const env = process.env.NEXT_PUBLIC_API_URL
   if (env && env.trim()) return env.trim().replace(/\/$/, '')
   if (typeof window !== 'undefined') {
-    return `${window.location.protocol}//${window.location.hostname}:8000`
+    // Local dev runs Django on :8000. Split deployments (Amplify + Render)
+    // must set NEXT_PUBLIC_API_URL at build time; without it, production is
+    // assumed to use a same-origin reverse proxy.
+    const { protocol, hostname, origin } = window.location
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+      return `${protocol}//${hostname}:8000`
+    }
+    return origin
   }
   // SSR fallback; real calls happen client-side after hydration.
   return 'http://localhost:8000'
@@ -258,7 +265,6 @@ export interface User {
 }
 
 export interface AuthResponse {
-  token: string
   user: User
 }
 

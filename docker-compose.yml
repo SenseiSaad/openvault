@@ -1,36 +1,69 @@
-# OpenVault — full local/production stack.
-#   docker compose up -d                       # SQLite inside the api container
-#   docker compose --profile pg up -d          # with PostgreSQL
+# OpenVault — local development stack.
 #
+#   docker compose up -d                       # SQLite + LocMem (zero-config)
+#
+#   # PostgreSQL: uncomment the POSTGRES_* block in .env first, then:
+#   docker compose --profile pg up -d
+#
+#   # Redis (shared rate limits): uncomment CACHE_URL in .env first, then:
+#   docker compose --profile redis up -d
+#
+# For a real deployment use docker-compose.prod.yml (PostgreSQL + Redis + TLS proxy).
 # Secrets come from .env in THIS folder (never commit it).
 services:
   api:
     build:
       context: .
       dockerfile: backend/Dockerfile
+    restart: unless-stopped
     environment:
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
       DEBUG: "false"
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      ALLOW_INSECURE_HTTP: ${ALLOW_INSECURE_HTTP:-true}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
+      # Keep the SQLite file on the persisted data volume.
+      SQLITE_PATH: /app/data/db.sqlite3
       REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-false}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-3}
       # LLM: point at host Ollama or set GEMINI_API_KEY in .env
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      LLM_KEY_ENCRYPTION_KEY: ${LLM_KEY_ENCRYPTION_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       LLM_URL: ${LLM_URL:-http://host.docker.internal:11434}
-      # Postgres (only when the pg profile is used)
+      # Email (console backend unless SMTP is configured)
+      EMAIL_BACKEND: ${EMAIL_BACKEND:-django.core.mail.backends.console.EmailBackend}
+      EMAIL_HOST: ${EMAIL_HOST:-}
+      EMAIL_PORT: ${EMAIL_PORT:-587}
+      EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
+      EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
+      EMAIL_USE_TLS: ${EMAIL_USE_TLS:-true}
+      DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-OpenVault <no-reply@openvault.local>}
+      # Database: SQLite by default. With `--profile pg`, set
+      # POSTGRES_DB/POSTGRES_USER/POSTGRES_PASSWORD and POSTGRES_HOST=db.
       POSTGRES_DB: ${POSTGRES_DB:-}
       POSTGRES_USER: ${POSTGRES_USER:-}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
-      POSTGRES_HOST: db
+      POSTGRES_HOST: ${POSTGRES_HOST:-}
+      # Cache: LocMem by default. With `--profile redis`, set
+      # CACHE_URL=redis://redis:6379/0.
+      CACHE_URL: ${CACHE_URL:-}
     volumes:
       - ov_data:/app/data
       - ov_media:/app/media
-      - ov_db:/app/db
     ports:
       - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+        required: false
+      redis:
+        condition: service_healthy
+        required: false
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -40,18 +73,21 @@ services:
       dockerfile: frontend/Dockerfile
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    restart: unless-stopped
     ports:
       - "3000:3000"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
 
   db:
     image: postgres:16-alpine
     profiles: ["pg"]
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-openvault}
       POSTGRES_USER: ${POSTGRES_USER:-openvault}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-openvault}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
     volumes:
       - ov_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -60,8 +96,21 @@ services:
       timeout: 3s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    profiles: ["redis"]
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ov_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   ov_data:
   ov_media:
-  ov_db:
   ov_pgdata:
+  ov_redis:

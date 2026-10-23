@@ -15,6 +15,8 @@ import threading
 import uuid
 
 from django.contrib.auth import authenticate
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import Q, Avg, Count, Sum
 from django.http import StreamingHttpResponse, Http404, FileResponse, JsonResponse
 from django.utils import timezone
@@ -30,7 +32,10 @@ from . import rag
 from . import providers
 from . import moderation
 from . import attendance as attendance_svc
-from .auth import set_auth_cookies, clear_auth_cookies, ACCESS_COOKIE, REFRESH_COOKIE
+from .auth import (
+    set_auth_cookies, clear_auth_cookies, revoke_user_refresh_tokens,
+    ACCESS_COOKIE, REFRESH_COOKIE,
+)
 from .ratelimit import rate_limit
 from .models import (
     Announcement, AskLog, AuditLog, ChatConversation, ChatMessage, Company, Department,
@@ -50,9 +55,28 @@ from .serializers import (
 
 
 def client_ip(request):
-    """Best-effort caller IP for the audit log (honours X-Forwarded-For)."""
+    """Caller IP for the audit log.
+
+    Behind a reverse proxy the last X-Forwarded-For entry is the one appended by
+    the trusted proxy; taking the *last* value prevents a client-supplied
+    "1.2.3.4, ..." prefix from spoofing the audit trail. Direct connections use
+    REMOTE_ADDR.
+    """
     fwd = request.META.get("HTTP_X_FORWARDED_FOR")
-    return (fwd.split(",")[0].strip() if fwd else request.META.get("REMOTE_ADDR", "")) or ""
+    if fwd:
+        parts = [p.strip() for p in fwd.split(",") if p.strip()]
+        if parts:
+            return parts[-1]
+    return request.META.get("REMOTE_ADDR", "") or ""
+
+
+def _password_error(password, user=None):
+    """Return a human-readable policy violation, or None when the password is OK."""
+    try:
+        validate_password(password, user=user)
+    except DjangoValidationError as exc:
+        return " ".join(exc.messages)
+    return None
 
 
 @api_view(["GET"])
@@ -85,12 +109,6 @@ def audit(request, action, detail=""):
     AuditLog.objects.create(
         company=company, user=user, action=action, detail=detail[:300], ip=client_ip(request)
     )
-
-
-def token_for(user):
-    """Mint a short-lived JWT access token for this user."""
-    from rest_framework_simplejwt.tokens import RefreshToken
-    return str(RefreshToken.for_user(user).access_token)
 
 
 def _is_platform_level(user):
@@ -210,8 +228,7 @@ def register_company(request):
     )
     audit(_as(request, user), "verification_email_sent")
 
-    resp = Response({"token": token_for(user), "user": UserSerializer(user).data},
-                    status=201)
+    resp = Response({"user": UserSerializer(user).data}, status=201)
     return set_auth_cookies(resp, user)
 
 
@@ -230,14 +247,22 @@ def login(request):
                                    "Check your inbox for the verification link.",
                          "code": "email_unverified"}, status=403)
     audit(_as(request, user), "login")
-    resp = Response({"token": token_for(user), "user": UserSerializer(user).data})
+    resp = Response({"user": UserSerializer(user).data})
     return set_auth_cookies(resp, user)
 
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def logout(request):
-    """Clear the auth cookies (client-side session end)."""
+    """Clear the auth cookies and revoke the refresh token server-side."""
+    raw = request.COOKIES.get(REFRESH_COOKIE)
+    if raw:
+        from rest_framework_simplejwt.tokens import RefreshToken
+        from rest_framework_simplejwt.exceptions import TokenError
+        try:
+            RefreshToken(raw).blacklist()
+        except (TokenError, AttributeError):
+            pass
     resp = Response({"ok": True})
     return clear_auth_cookies(resp)
 
@@ -246,7 +271,13 @@ def logout(request):
 @permission_classes([AllowAny])
 @rate_limit("refresh", rate=30, per_seconds=60, key="ip")
 def refresh(request):
-    """Exchange the refresh cookie for a fresh access cookie."""
+    """Rotate the refresh cookie and issue a fresh access cookie.
+
+    The presented refresh token is blacklisted after a successful rotation, so
+    replaying an old token fails. This is what makes "rotating refresh tokens"
+    an actual security control rather than a new token with the old one still
+    valid.
+    """
     from rest_framework_simplejwt.tokens import RefreshToken
     from rest_framework_simplejwt.exceptions import TokenError
     raw = request.COOKIES.get(REFRESH_COOKIE)
@@ -254,12 +285,19 @@ def refresh(request):
         return Response({"detail": "No refresh token."}, status=401)
     try:
         token = RefreshToken(raw)
+        token.check_blacklist()
         user = User.objects.get(id=token["user_id"], is_active=True)
     except (TokenError, User.DoesNotExist, KeyError):
         resp = Response({"detail": "Session expired. Sign in again."}, status=401)
         return clear_auth_cookies(resp)
     resp = Response({"ok": True, "user": UserSerializer(user).data})
-    return set_auth_cookies(resp, user)
+    set_auth_cookies(resp, user)
+    # New cookies exist; retire the old refresh token.
+    try:
+        token.blacklist()
+    except AttributeError:
+        pass
+    return resp
 
 
 def _as(request, user):
@@ -294,10 +332,13 @@ def update_me(request):
         current = data.get("current_password") or ""
         if not user.check_password(current):
             return Response({"detail": "Current password is incorrect."}, status=400)
-        if len(new_password) < 6:
-            return Response({"detail": "New password must be at least 6 characters."}, status=400)
+        err = _password_error(new_password, user)
+        if err:
+            return Response({"detail": err}, status=400)
         user.set_password(new_password)
     user.save()
+    if new_password:
+        revoke_user_refresh_tokens(user)
     audit(request, "profile_update", "self")
     return Response(UserSerializer(user, context={"request": request}).data)
 
@@ -357,14 +398,16 @@ def reset_password(request):
     """Consume a reset token and set a new password."""
     raw = str((request.data or {}).get("token") or "")
     password = str((request.data or {}).get("password") or "")
-    if len(password) < 6:
-        return Response({"detail": "Password must be at least 6 characters."}, status=400)
     tok = OneTimeToken.consume(raw, "password_reset")
     if not tok:
         return Response({"detail": "This reset link is invalid or has expired."}, status=400)
+    err = _password_error(password, tok.user)
+    if err:
+        return Response({"detail": err}, status=400)
     tok.user.set_password(password)
     tok.user.email_verified = True  # a working reset link proves mailbox ownership
     tok.user.save(update_fields=["password", "email_verified"])
+    revoke_user_refresh_tokens(tok.user)
     return Response({"detail": "Password updated. You can sign in now."})
 
 
@@ -947,12 +990,15 @@ def user_detail(request, pk):
     if "title" in data:
         user.title = str(data.get("title") or "")[:120]
     if data.get("password"):
-        if len(str(data["password"])) < 6:
-            return Response({"detail": "Password must be at least 6 characters."}, status=400)
+        err = _password_error(str(data["password"]), user)
+        if err:
+            return Response({"detail": err}, status=400)
         user.set_password(str(data["password"]))
     if "is_active" in data:
         user.is_active = bool(data.get("is_active"))
     user.save()
+    if data.get("password") or data.get("is_active") is False:
+        revoke_user_refresh_tokens(user)
     audit(request, "update_user", f"{user.email}")
     return Response(UserSerializer(user, context={"request": request}).data)
 

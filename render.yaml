@@ -1,0 +1,86 @@
+# Current launch: AWS Amplify serves the frontend; Render runs Django,
+# PostgreSQL, and persistent uploads. AWS-native ECS/ECR is a future migration.
+databases:
+  - name: openvault-postgres
+    databaseName: openvault
+    user: openvault
+    region: singapore
+    plan: basic-1gb
+    postgresMajorVersion: '16'
+    ipAllowList: []
+
+services:
+  - type: web
+    name: openvault-api
+    runtime: docker
+    region: singapore
+    plan: standard
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    disk:
+      name: openvault-files
+      mountPath: /var/data
+      sizeGB: 10
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: openvault-postgres
+          property: connectionString
+      - key: SECRET_KEY
+        generateValue: true
+      - key: LLM_KEY_ENCRYPTION_KEY
+        generateValue: true
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: 'false'
+      - key: ALLOW_INSECURE_HTTP
+        value: 'false'
+      - key: COOKIE_SECURE
+        value: 'true'
+      - key: SECURE_SSL_REDIRECT
+        value: 'true'
+      - key: ALLOWED_HOSTS
+        value: api.saadops.site
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://openvault.saadops.site
+      - key: CSRF_TRUSTED_ORIGINS
+        value: https://openvault.saadops.site,https://api.saadops.site
+      - key: PUBLIC_BASE_URL
+        value: https://openvault.saadops.site
+      - key: DATA_DIR
+        value: /var/data/documents
+      - key: MEDIA_ROOT
+        value: /var/data/media
+      - key: GUNICORN_WORKERS
+        value: '1'
+      - key: GUNICORN_THREADS
+        value: '2'
+      - key: REQUIRE_EMAIL_VERIFICATION
+        value: 'true'
+      - key: EMAIL_BACKEND
+        value: django.core.mail.backends.smtp.EmailBackend
+      - key: EMAIL_HOST
+        value: email-smtp.ap-south-1.amazonaws.com
+      - key: EMAIL_PORT
+        value: '587'
+      - key: EMAIL_USE_TLS
+        value: 'true'
+      - key: DEFAULT_FROM_EMAIL
+        value: OpenVault <no-reply@saadops.site>
+      - key: EMAIL_HOST_USER
+        sync: false
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: GEMINI_EMBED_MODEL
+        value: gemini-embedding-001
+      - key: EMBED_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false

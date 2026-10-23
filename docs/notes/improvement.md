@@ -44,23 +44,16 @@ The token is stored as `localStorage.getItem('securekb_token')`. Any XSS vulnera
 
 **Fix:** Either scope LLM config per-company, or restrict this view to a platform-level superadmin role that is separate from tenant admins.
 
-### 1.3 Hardcoded Credentials in the Repository
+### 1.3 Credential handling
 
-| File | Credential |
-|------|-----------|
-| `backend/create_admin.py` | `g44@openvault.com` / `bawagusa123` |
-| `add_admin.py` | Same, written directly into SQLite |
-| `hash.py` | Hardcoded password `bawagusa123` |
-| `frontend/app/enterprise/page.tsx` (line ~168) | Demo hint `admin@openscience.com / demo1234` shown on the **production** login screen |
-
-**Fix:** Remove all hardcoded credentials. Use environment variables or a `--password` flag for admin creation scripts. Remove or hide demo credentials behind a `process.env.NEXT_PUBLIC_SHOW_DEMO` flag.
+Production passwords and provider keys must not be embedded in source, demo seed data, or documentation. Admin creation prompts securely or generates a random password. The local-only demo seed command requires an environment secret and refuses to run in production.
 
 ### 1.4 Insecure Production Defaults
 
 **File:** `backend/config/settings.py`
 
 ```python
-SECRET_KEY = "dev-insecure-secret-change-me"   # default secret in production
+SECRET_KEY = os.environ["SECRET_KEY"]
 ALLOWED_HOSTS = ["*"]                           # accepts requests from any hostname
 CORS_ALLOW_ALL_ORIGINS = True                   # any origin can call the API
 DEBUG = True                                    # by default

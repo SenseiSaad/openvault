@@ -10,17 +10,19 @@ OpenVault is an enterprise document repository and retrieval-augmented generatio
 
 1. [Executive Summary](#executive-summary)
 2. [Key Implemented Features](#key-implemented-features)
-3. [Architecture & How It Works](#architecture--how-it-works)
-4. [Security & Authentication Flow](#security--authentication-flow)
-5. [Plans & PKR Billing](#plans--pkr-billing)
-6. [Data Privacy: Google Gemini vs. Local Ollama](#data-privacy-google-gemini-vs-local-ollama)
-7. [API Endpoints Reference](#api-endpoints-reference)
-8. [Data Models & Schema](#data-models--schema)
-9. [Roles & Permission Hierarchy](#roles--permission-hierarchy)
-10. [Local Development & Quick Start](#local-development--quick-start)
-11. [Docker Compose Quick Start](#docker-compose-quick-start)
-12. [Platform Administration Commands](#platform-administration-commands)
-13. [Project Team & Attribution](#project-team--attribution)
+3. [Security & Authentication Flow](#security--authentication-flow)
+4. [Plans & PKR Billing](#plans--pkr-billing)
+5. [Data Privacy: Google Gemini vs. Local Ollama](#data-privacy-google-gemini-vs-local-ollama)
+6. [API Endpoints Reference](#api-endpoints-reference)
+7. [Repository Layout](#repository-layout)
+8. [Local Development & Quick Start](#local-development--quick-start)
+9. [Docker Compose Quick Start](#docker-compose-quick-start)
+10. [Cloud Deployment (Amplify + Render)](#cloud-deployment-amplify--render)
+11. [Running the Tests](#running-the-tests)
+12. [Production Deployment (single host)](#production-deployment-single-host)
+13. [Platform Administration Commands](#platform-administration-commands)
+14. [Academic Documentation](#academic-documentation)
+15. [Project Team & Attribution](#project-team--attribution)
 
 ---
 
@@ -42,7 +44,7 @@ Unlike conventional document repositories or public search tools, OpenVault is b
 ### 🏢 Multi-Tenancy & Subscriptions
 - Isolated company workspaces identified by slug and unique 5-character `access_code`.
 - Company self-service settings: name, website, contact email, phone, and seat cap.
-- Tiered subscription plans (Free, Starter, SME, Enterprise) priced in **Pakistani Rupees (PKR)** with server-side quota enforcement on seats, documents, storage, and monthly AI asks.
+- Tiered subscription plans (Free, Starter, Business, Enterprise) priced in **Pakistani Rupees (PKR)** with server-side quota enforcement on seats, documents, storage, and monthly AI asks.
 - Cross-tenant platform administration for root operators with an active tenant switcher.
 
 ### 🔐 Zero-Trust Document Management
@@ -67,7 +69,7 @@ Unlike conventional document repositories or public search tools, OpenVault is b
 ### 🤖 Multi-Provider Hybrid RAG Assistant
 - Dual-mode chat interface:
   - **Local Mode:** Offline, privacy-first inference via **Ollama** (`qwen2.5:1.5b` or `llama3.2:3b`, `nomic-embed-text`).
-  - **Online Mode:** Cloud inference via **Google Gemini** (`gemini-3.8-flash`, `text-embedding-004`), with support for **OpenAI** (`gpt-4o-mini`) and **Anthropic Claude** (`claude-3-5-haiku-latest`).
+  - **Online Mode:** Cloud inference via **Google Gemini** (the Render blueprint uses `gemini-2.5-flash` with `gemini-embedding-001`), with optional OpenAI, Anthropic Claude, and AWS Bedrock providers.
 - **Hybrid Retrieval:** Blended 70% dense cosine similarity + 30% BM25 keyword retrieval.
 - **Persistent Threads:** Threaded chat history sidebar, title renaming, and deletion.
 - **User Feedback:** Thumbs up / down rating on assistant answers.
@@ -109,10 +111,13 @@ OpenVault subscription tiers are denominated in **Pakistani Rupees (PKR)** and e
 
 | Tier | Price | Member Seats | Documents | Storage | Monthly Asks | Advanced Features |
 |---|---|---|---|---|---|---|
-| **Free** | PKR 0 / mo | 5 | 50 | 512 MB | 100 | Basic RAG, Audit log |
-| **Starter** | PKR 2,500 / mo | 15 | 500 | 5 GB | 2,000 | + File versioning |
-| **SME** | PKR 6,000 / mo | 50 | 5,000 | 25 GB | 10,000 | + Departments, BYO Custom LLM key |
-| **Enterprise** | Custom quote | Unlimited | Unlimited | Unlimited | Unlimited | All features enabled, Dedicated support |
+| **Free** | PKR 0 / mo | 3 | 20 | 512 MB | 50 | Basic RAG, Audit log |
+| **Starter** | PKR 4,500 / mo | 15 | 200 | 5 GB | 1,500 | + File versioning |
+| **Business** | PKR 12,500 / mo | 50 | 1,000 | 25 GB | 6,000 | + Departments, BYO Custom LLM key |
+| **Enterprise** | PKR 35,000 / mo | Unlimited | Unlimited | Unlimited | Unlimited | All features enabled, Dedicated support |
+
+> The `Plan` table (`manage.py seed_plans`) is the single source of truth for these
+> numbers; the pricing page reads them from `GET /api/plans` at runtime.
 
 ### Infrastructure Cost Basis
 - A typical deployment running on an AWS EC2 `t3.small` instance (~$15/month ≈ PKR 4,200/month) easily supports the cloud-API configuration (Gemini / OpenAI).
@@ -196,6 +201,33 @@ All application endpoints are served under `/api/`:
 
 ---
 
+## Repository Layout
+
+```text
+OpenVault/
+├── backend/                 Django 5.1 API, RAG pipeline, tests, management commands
+│   ├── config/              settings, URLs, WSGI entry point
+│   ├── core/                tenancy, documents, chat, billing, audit
+│   ├── scripts/             AWS Bedrock / inference utility scripts
+│   ├── tests/               pytest suite
+│   ├── Dockerfile           Render and container build
+│   └── render-entrypoint.sh
+├── frontend/                Next.js 16 App Router UI (static-export capable)
+│   ├── app/                 routes and pages
+│   ├── components/          UI and infrastructure sections
+│   └── lib/                 API client, i18n, pricing helpers
+├── docs/
+│   ├── aws/                 AWS/ECS/ECR architecture and Activate notes
+│   ├── deployment/          Amplify + Render + Cloudflare runbook
+│   └── notes/               project and security-audit notes
+├── deploy/                  Caddy configuration and backup script
+├── amplify.yml              AWS Amplify build spec (frontend deploy)
+├── render.yaml              Render Blueprint (API, PostgreSQL, disk)
+└── docker-compose*.yml      local/full-stack container options
+```
+
+---
+
 ## Local Development & Quick Start
 
 ### Prerequisites
@@ -231,10 +263,14 @@ cd ..
 ### 3. Launching Dev Servers
 ```bash
 # Starts Django on :8000 and Next.js on :3000
-./start.sh
+./run.sh
 
 # To stop both servers
-./stop.sh
+./run.sh stop
+
+# Other commands
+./run.sh status
+./run.sh restart
 ```
 
 ---
@@ -244,17 +280,103 @@ cd ..
 To run the entire stack in containers:
 
 ```bash
-# Build and start frontend and backend with SQLite
-docker compose up --build
-
-# Or with PostgreSQL profile
-docker compose --profile pg up --build
+cp .env.example .env          # set SECRET_KEY at minimum
+docker compose up --build     # SQLite (zero-config local)
+docker compose --profile pg --profile redis up --build   # PostgreSQL + Redis
 ```
 
 Access points:
 - **Web Application:** [http://localhost:3000](http://localhost:3000)
 - **API Health Check:** [http://localhost:8000/api/health](http://localhost:8000/api/health)
 - **Django Admin:** [http://localhost:8000/admin/](http://localhost:8000/admin/)
+
+Both images run as non-root, expose container healthchecks, and the API image
+collects static files at build time (served by WhiteNoise).
+
+---
+
+## Running the Tests
+
+```bash
+# Backend (pytest + Django test DB)
+cd backend
+pip install -r requirements-dev.txt
+python -m pytest
+
+# Frontend (Vitest)
+cd frontend
+pnpm test
+pnpm typecheck
+```
+
+CI runs the backend checks/tests, frontend typecheck/tests, the standalone
+server build, and the AWS Amplify static export on every push/PR
+(`.github/workflows/ci.yml`).
+
+---
+
+## Cloud Deployment (Amplify + Render)
+
+The current public deployment uses two managed hosts from this one repository:
+
+| Component | Host | Build input |
+| --- | --- | --- |
+| Web UI | AWS Amplify Hosting | `frontend/` via `amplify.yml` (Next.js static export) |
+| API, PostgreSQL, uploads | Render | repo root as Docker context, `backend/Dockerfile`, `render.yaml` |
+
+The step-by-step runbook, including Cloudflare DNS and smoke tests, is in
+[`docs/deployment/amplify-render-cloudflare.md`](docs/deployment/amplify-render-cloudflare.md).
+
+Key points:
+
+- Amplify sets `AMPLIFY_STATIC_EXPORT=true` and
+  `NEXT_PUBLIC_API_URL=https://api.saadops.site`. Amplify's managed SSR runtime
+  currently supports Next.js through v15, while this app uses Next.js 16, so the
+  UI is exported as a static site.
+- Render runs migrations and `seed_plans` at container start, then gunicorn. PostgreSQL
+  and the 10 GB upload disk are declared in `render.yaml`; the disk is
+  single-instance.
+- `GEMINI_API_KEY`, SMTP credentials, and the platform-admin password are Render
+  secrets. Never put them in `amplify.yml`, `NEXT_PUBLIC_*`, or Git.
+- The first Render deploy starts with an empty database. Create the single platform
+  admin from Render's shell (see [Platform Administration Commands](#platform-administration-commands)).
+
+---
+
+## Production Deployment (single host)
+
+A single-host production stack is included: **PostgreSQL + Redis + Django/gunicorn
++ Next.js + Caddy (automatic HTTPS)**.
+
+```bash
+cp .env.production.example .env.production   # fill in every CHANGE-ME value
+docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+```
+
+Before going live, confirm:
+
+1. **DNS** for `DOMAIN` points at the server and ports 80/443 are open (Caddy issues the certificate).
+2. `SECRET_KEY` and `LLM_KEY_ENCRYPTION_KEY` are long random values, and the encryption key is backed up.
+3. **SMTP** is configured and `REQUIRE_EMAIL_VERIFICATION=true`.
+4. `ENVIRONMENT=production`, `DEBUG=false`, `COOKIE_SECURE=true` (the backend refuses to start otherwise).
+5. A platform admin exists: `docker compose -f docker-compose.prod.yml --env-file .env.production exec -it api python manage.py create_platform_admin you@example.com` (it prompts for a password).
+6. Backups are scheduled (see the cron entry below).
+
+```bash
+# /etc/cron.d/openvault-backup — nightly DB + media backup, kept 30 days.
+15 2 * * * root cd /opt/openvault && OUT=/mnt/backups ./deploy/backup.sh >> /var/log/openvault-backup.log 2>&1
+```
+
+### Security controls enabled for production
+
+- HttpOnly + SameSite cookies, rotating refresh tokens with a **blacklist** (old tokens die on refresh, logout, and password change).
+- Password policy enforced server-side (min 8, no common/numeric/similar passwords).
+- Per-IP/account rate limits backed by **Redis**, so they hold across gunicorn workers.
+- Provider API keys encrypted at rest (`core.crypto`); the API only reports whether a key is set.
+- Whitelisted hosts/CORS/CSRF, HSTS + HTTPS redirect, `X-Frame-Options: DENY`, nosniff, WhiteNoise static serving.
+- Startup refuses insecure configuration (`ENVIRONMENT=production` + `COOKIE_SECURE=false`).
+- Containers run as non-root; PostgreSQL/Redis/API/Next are not published directly (only Caddy's 80/443).
+- JSON log rotation (10 MB × 3) is configured for every service.
 
 ---
 
@@ -264,17 +386,38 @@ Access points:
 Root platform administrators have global cross-tenant visibility, can switch active tenant contexts in the workspace, and manage subscription plans.
 
 ```bash
-# Create a new platform admin:
-python backend/manage.py create_platform_admin root@openvault.internal --password "YourStrongPassword!123"
+# Create a new platform admin (prompts for a hidden password):
+python backend/manage.py create_platform_admin root@openvault.internal
 
-# Promote an existing user:
+# Promote an existing user instead of creating a second admin:
 python backend/manage.py create_platform_admin user@company.com --promote
 ```
+
+Passwords are never stored in this repository. On Render, run the command from
+the service shell and enter the password at the prompt. Use a unique, strong
+password for the production account.
 
 ### Seed Subscription Plans
 ```bash
 python backend/manage.py seed_plans
 ```
+
+---
+
+## Academic Documentation
+
+OpenVault is the Final Year Project submission for the University of South Asia.
+The academic material is kept alongside the source so the repository can be
+used for evaluation and further study:
+
+- [`proposal.md`](proposal.md) — full project proposal
+- `OpenVault_FYP_Proposal.docx` — formatted proposal
+- `DocuTrust_AI_FYP_Proposal.docx` — earlier proposal draft
+- `OpenVault.pptx` — project presentation
+- `OpenVault_NVIDIA_Inception_Pitch_Deck.pdf` — pitch deck
+- [`docs/aws/`](docs/aws/) — AWS/ECS/ECR architecture and Activate application notes
+- [`docs/notes/improvement.md`](docs/notes/improvement.md) — security and quality audit notes
+- [`docs/archive/readme-draft.md`](docs/archive/readme-draft.md) — archived README draft (historical only)
 
 ---
 

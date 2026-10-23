@@ -1,5 +1,10 @@
 # OpenVault
 
+> **Archived draft — superseded by the root `README.md`.** Kept for historical
+> detail only; some sections describe earlier behavior (for example, before
+> department-level scoping, document versioning, and async indexing were added).
+> Do not use this file as current setup instructions.
+
 > **Private, Zero-Trust Knowledge Infrastructure & Permission-Aware AI for Registered Organizations.**
 
 OpenVault is an enterprise document repository and retrieval-augmented generation (RAG) assistant designed for organizations that require strict tenant isolation, zero-trust intra-company access controls, auditable cross-company collaboration, and CPA/assurance compliance readiness.
@@ -348,12 +353,8 @@ Default access points:
 - **Django API:** [http://localhost:8000](http://localhost:8000)
 - **Django Admin:** [http://localhost:8000/admin/](http://localhost:8000/admin/)
 
-### Seeded Demo Accounts (Password: `demo1234`)
-- `admin@company-a.com` — Company A Admin
-- `hr@company-a.com` — Company A Employee (Recipient of Company C's shared document)
-- `viewer@company-a.com` — Company A Viewer
-- `admin@company-c.com` — Company C Admin (Owner of `Vendor Security Requirements.md`)
-- `root@securekb.local` (Password: `admin1234`) — Django Superuser
+### Demo data and admin access
+The production deployment does not seed demo users. Create the intended admin through the secure management command or the registration flow. The local-only `seed_demo` command now requires `DEMO_SEED_PASSWORD` from an ignored environment file and refuses to run in production.
 
 ---
 

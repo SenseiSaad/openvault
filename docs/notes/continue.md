@@ -5,6 +5,36 @@
 
 ---
 
+## Production hardening (latest pass)
+
+Delivered on top of the feature build, so the platform can be run for real users:
+
+- **Repo hygiene:** `backend/.venv` (10,977 files), `db.sqlite3`, `__pycache__`, `*.tsbuildinfo`
+  and Playwright `test-results/` are no longer tracked; `.gitignore` + `.dockerignore` added.
+- **Sessions:** refresh-token rotation now actually blacklists the old token
+  (`token_blacklist` app, `BLACKLIST_AFTER_ROTATION=True`), logout revokes, and password
+  change/reset/deactivation revoke every outstanding refresh token. Access/refresh
+  tokens exist only in HttpOnly cookies — they are never returned in JSON.
+- **Passwords:** Django validators enforced server-side (min 8, common/numeric/similar),
+  used by register, admin-created members, reset and self-service change; UI matches.
+- **Secrets:** provider API keys are encrypted at rest (`core.crypto`, `enc` prefix,
+  transparent to legacy plaintext, `LLM_KEY_ENCRYPTION_KEY`), still write-only via the API.
+- **Config safety:** `ENVIRONMENT=production` refuses to boot with insecure cookies or a
+  wildcard host; HSTS/HTTPS redirect/nosniff/frame-deny wired; console logging.
+- **Static:** WhiteNoise serves collected admin/static assets; image collects them at build.
+- **Containers:** non-root backend + standalone frontend images, healthchecks, `.dockerignore`,
+  `docker-compose.prod.yml` (Postgres + Redis + Caddy TLS) and `docker-compose.yml` refreshed.
+- **Ops:** `deploy/Caddyfile`, `deploy/backup.sh`, `.env.production.example`, README runbook.
+- **Tests:** backend pytest suite (`backend/tests`, 38 tests: auth/rotation, tenant isolation,
+  document ACLs, plan quotas, key encryption, ops commands) and frontend Vitest suite (9 tests);
+  `.github/workflows/ci.yml` runs checks + tests + builds for both apps.
+
+**Still open before charging customers:** live payment gateway (JazzCash/Easypaisa/PayFast or
+Stripe), SSO/MFA, and running the stack once on the real host (issue the certificate, configure
+SMTP, schedule `deploy/backup.sh`). Plan assignment is already possible from the platform admin UI.
+
+---
+
 ## What is DONE (backend — complete and smoke-tested)
 
 ### Security / Phase 1
@@ -12,7 +42,7 @@
 - **Email verification** (`OneTimeToken` model, hashed tokens): `POST /api/auth/request-verification`, `POST /api/auth/verify`. Optional login gate via `REQUIRE_EMAIL_VERIFICATION` env (off locally).
 - **Password reset**: `POST /api/auth/forgot-password` (never reveals account existence) + `POST /api/auth/reset-password` (30-min token; also marks email verified). Frontend routes: `/auth/forgot`, `/auth/reset`, `/auth/verify` (pages created).
 - **Rate limiting** (`backend/core/ratelimit.py`, cache-based sliding window): login 8/min per IP+email, register/forgot 5/10min per IP, company code lookup + member directory 20/min, verify/reset endpoints limited.
-- **Hardcoded stuff removed**: `gfoot4@gmail.com` backdoor gone from views/permissions/rag; deleted `add_admin.py`, `hash.py`, `backend/create_admin.py` (contained `bawagusa123`).
+- Legacy credential references were removed; production secrets belong only in host-managed secret stores.
 - **Root admin, not hardcoded**: `User.is_platform_admin` DB flag + `python manage.py create_platform_admin <email> [--password ...] [--promote]` with complete cross-tenant authority (all companies switcher + detach, platform LLM default, plan assignment). Permission classes in `core/permissions.py`.
 - `SECRET_KEY` required at boot; `DEBUG` defaults false; `ALLOWED_HOSTS` no longer includes `*`; CORS is an explicit origin list with `CORS_ALLOW_CREDENTIALS`.
 
@@ -80,7 +110,7 @@ register → cookies set → `/auth/me` via cookie → upload (async index) → 
 - [x] `app/workspace/audit/page.tsx` — new paginated envelope + Export CSV button.
 - [x] `app/workspace/shared/page.tsx` — verified against new types.
 - [x] `app/enterprise/page.tsx` — removed demo-credential hint, added "Forgot password?" and "Verify email" links.
-- [x] `grep -ri "gfoot4\|demo1234\|bawagusa" frontend/` — removed leftovers (0 occurrences).
+- Legacy credential references were removed; production secrets belong only in host-managed secret stores.
 - [x] Use `t()` from i18n for the main chrome strings.
 
 ### 2. Scripts check — COMPLETED
