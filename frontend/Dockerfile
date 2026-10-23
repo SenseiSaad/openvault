@@ -1,13 +1,13 @@
 # OpenVault frontend — Next.js standalone build. Build from the repo ROOT:
 #   docker build -f frontend/Dockerfile -t openvault-web .
-FROM node:20-alpine AS deps
+FROM node:22-alpine AS deps
 WORKDIR /app
 RUN npm install -g pnpm@12.3.4
 COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm install --frozen-lockfile --store-dir=/pnpm/store
 
-FROM node:20-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 RUN npm install -g pnpm@12.3.4
 COPY --from=deps /app/node_modules ./node_modules
@@ -17,7 +17,7 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
     NEXT_TELEMETRY_DISABLED=1
 RUN --mount=type=cache,id=next-swc,target=/root/.cache/next-swc pnpm run build
 
-FROM node:20-alpine AS runner
+FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \

@@ -41,6 +41,8 @@ blob-report/
 # ── OS / editor ────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+# Local desktop launchers contain machine-specific absolute paths.
+*.desktop
 
 # Local dev server logs (start-dev.sh)
 .dev-logs/

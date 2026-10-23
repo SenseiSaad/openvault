@@ -195,7 +195,9 @@ inviting users:
 5. Test verification and password-reset messages before opening registration.
 
 If SMTP isn't ready, do not treat the service as public-launch ready: the
-console email backend does not deliver user email.
+console email backend does not deliver user email. If you must open registration
+temporarily before SES is configured, set `REQUIRE_EMAIL_VERIFICATION=false` in
+Render, test the account flow, then restore it to `true` as soon as email works.
 
 ## Smoke-test checklist
 

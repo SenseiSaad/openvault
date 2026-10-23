@@ -224,6 +224,8 @@ CSRF_COOKIE_SAMESITE = "Lax"
 
 if SESSION_COOKIE_SECURE:
     SECURE_SSL_REDIRECT = os.getenv("SECURE_SSL_REDIRECT", "true").lower() in ("1", "true", "yes")
+    # Render's internal health check can arrive over plain HTTP; never redirect it.
+    SECURE_REDIRECT_EXEMPT = [r"^api/health/?$"]
     SECURE_HSTS_SECONDS = int(os.getenv("SECURE_HSTS_SECONDS", "31536000"))
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True

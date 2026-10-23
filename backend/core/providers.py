@@ -220,10 +220,10 @@ class GeminiProvider(BaseProvider):
     def __init__(self, api_key, chat_model, embed_model=""):
         self.api_key = api_key or ""
         self.base = "https://generativelanguage.googleapis.com/v1beta"
-        model = (chat_model or "gemini-3.5-flash-lite").strip()
+        model = (chat_model or "gemini-2.5-flash").strip()
         if model.startswith("models/"):
             model = model[len("models/"):]
-        self.chat_model = model or "gemini-3.5-flash-lite"
+        self.chat_model = model or "gemini-2.5-flash"
         em = (embed_model or "gemini-embedding-001").strip()
         if em.startswith("models/"):
             em = em[len("models/"):]
@@ -294,8 +294,8 @@ class GeminiProvider(BaseProvider):
             payload["systemInstruction"] = {"parts": [{"text": system}]}
 
         models_to_try = [self.chat_model]
-        if self.chat_model != "gemini-3.1-flash-lite":
-            models_to_try.append("gemini-3.1-flash-lite")
+        if self.chat_model != "gemini-2.5-flash-lite":
+            models_to_try.append("gemini-2.5-flash-lite")
 
         last_error = None
         for model_name in models_to_try:
@@ -516,7 +516,7 @@ DEFAULT_MODELS = {
     "ollama": "qwen2.5:1.5b",
     "openai": "gpt-4o-mini",
     "anthropic": "claude-3-5-haiku-latest",
-    "gemini": "gemini-3.5-flash-lite",
+    "gemini": "gemini-2.5-flash",
     # India geographic inference profile — NOT the global one.
     "bedrock": "in.anthropic.claude-haiku-4-5-20251001-v1:0",
 }
@@ -592,7 +592,7 @@ def get_chat_provider(mode: str = None, provider_override: str = None, company=N
         if not key and cfg.api_key:
             # Fallback to key in LLMConfig
             key = cfg.api_key
-        model = (cfg.chat_model if cfg.provider == "gemini" else "") or _env_model("gemini") or "gemini-3.5-flash-lite"
+        model = (cfg.chat_model if cfg.provider == "gemini" else "") or _env_model("gemini") or "gemini-2.5-flash"
         prov = GeminiProvider(key, model)
     elif target_provider == "openai":
         key = (cfg.api_key if cfg.provider == "openai" else "") or _env_key("openai") or cfg.api_key
