@@ -1,19 +1,15 @@
 # Current launch: AWS Amplify serves the frontend; Render runs Django,
 # PostgreSQL, and persistent uploads. AWS-native ECS/ECR is a future migration.
-databases:
-  - name: openvault-postgres
-    databaseName: openvault
-    user: openvault
-    region: singapore
-    plan: 0.5c-1g
-    postgresMajorVersion: '16'
-    ipAllowList: []
-
+#
+# The PostgreSQL instance already exists in Render. Attach it to the web
+# service by setting DATABASE_URL to the database's internal connection string
+# in the Render Dashboard (or enter it when Render prompts during Blueprint
+# creation). Never commit the connection string or password.
 services:
   - type: web
     name: openvault-api
     runtime: docker
-    region: singapore
+    region: oregon
     plan: 1c-2g
     dockerfilePath: ./backend/Dockerfile
     dockerContext: .
@@ -25,9 +21,7 @@ services:
       sizeGB: 10
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: openvault-postgres
-          property: connectionString
+        sync: false
       - key: SECRET_KEY
         generateValue: true
       - key: LLM_KEY_ENCRYPTION_KEY

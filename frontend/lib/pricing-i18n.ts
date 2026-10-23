@@ -66,7 +66,7 @@ export const PRICING_CONTENT: Record<PricingLang, PricingContent> = {
     cover: [
       {
         title: 'Compute & managed database',
-        body: 'The static web app is served by AWS Amplify; the Django API and managed PostgreSQL run on Render in Singapore.',
+        body: 'The static web app is served by AWS Amplify; the Django API and PostgreSQL run on Render in Oregon.',
       },
       {
         title: 'Document storage',
@@ -97,7 +97,7 @@ export const PRICING_CONTENT: Record<PricingLang, PricingContent> = {
       },
       {
         q: 'Where does our data live?',
-        a: 'The API database and uploaded files are hosted on Render in Singapore; the static frontend is served through AWS Amplify/CloudFront. Bedrock inference uses the AWS India profile and only receives permission-approved passages. This is not an all-data-in-India deployment; contact us if you require a different residency boundary.',
+        a: 'The API database and uploaded files are hosted on Render in Oregon (US West); the static frontend is served through AWS Amplify/CloudFront. Bedrock inference uses the AWS India profile and only receives permission-approved passages. This is not an all-data-in-India deployment; contact us if you require a different residency boundary.',
       },
       {
         q: 'Can we bring our own AI key?',
@@ -155,7 +155,7 @@ export const PRICING_CONTENT: Record<PricingLang, PricingContent> = {
     cover: [
       {
         title: 'Compute aur managed database',
-        body: 'Static web app AWS Amplify par serve hoti hai; Django API aur managed PostgreSQL Render ke Singapore region mein chalte hain.',
+        body: 'Static web app AWS Amplify par serve hoti hai; Django API aur PostgreSQL Render ke Oregon region mein chalte hain.',
       },
       {
         title: 'Document storage',
@@ -186,7 +186,7 @@ export const PRICING_CONTENT: Record<PricingLang, PricingContent> = {
       },
       {
         q: 'Hamara data kahan rehta hai?',
-        a: 'API database aur uploaded files Render ke Singapore region mein host hote hain; static frontend AWS Amplify/CloudFront se serve hota hai. Bedrock inference AWS India profile use karta hai aur sirf permission-approved passages bheje jate hain. Ye all-data-in-India deployment nahi hai; agar aapko mukhtalif data-residency boundary chahiye to hum se rabta karein.',
+        a: 'API database aur uploaded files Render ke Oregon region mein host hote hain; static frontend AWS Amplify/CloudFront se serve hota hai. Bedrock inference AWS India profile use karta hai aur sirf permission-approved passages bheje jate hain. Ye all-data-in-India deployment nahi hai; agar aapko mukhtalif data-residency boundary chahiye to hum se rabta karein.',
       },
       {
         q: 'Kya hum apni AI key use kar sakte hain?',

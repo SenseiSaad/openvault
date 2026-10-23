@@ -2,7 +2,7 @@
 
 > **Current deployment choice:** AWS Amplify serves the statically exported
 > frontend; Render hosts the Django API, PostgreSQL, and persistent document
-> disk in Singapore; Google Gemini provides model inference for the initial
+> disk in Oregon (US West); Google Gemini provides model inference for the initial
 > launch; Cloudflare manages DNS. Amazon Bedrock is retained as the future
 > AWS-native inference option. Render bills are separate from AWS and are
 > **not covered by AWS Activate credits**. The ECS/RDS/EFS inventory and cost
@@ -38,7 +38,7 @@ through Amplify. CORS/CSRF allow only `https://openvault.saadops.site`. Render
 PostgreSQL should use its internal connection string, and the document disk is
 single-instance storage. The model provider receives only permission-approved
 passages; the initial launch uses Gemini, while the optional Bedrock migration
-applies the same rule. Because the API/data live in Render Singapore, do not
+applies the same rule. Because the API/data live in Render Oregon, do not
 claim that all stored application data is in AWS India.
 
 ## Current launch services

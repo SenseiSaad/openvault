@@ -7,7 +7,7 @@
 | Next.js frontend | AWS Amplify Hosting, static export | `https://openvault.saadops.site` |
 | Django API | Render Web Service | `https://api.saadops.site` |
 | PostgreSQL | Render Postgres, private connection | Render internal database URL |
-| Uploaded files/generated forms | Render persistent disk, Singapore | Not directly public |
+| Uploaded files/generated forms | Render persistent disk, Oregon (US West) | Not directly public |
 | AI chat + embeddings | Google Gemini API | Called by Django only; `GEMINI_API_KEY` stays in Render |
 | DNS | Cloudflare | DNS-only CNAME records initially |
 
@@ -21,9 +21,10 @@ the AWS roadmap elsewhere in the project is retained as future architecture.
 This repo uses Next.js 16.3.3. AWS's current Amplify managed Next.js SSR support
 lists versions through Next.js 15. The current app has no Next API routes,
 Server Actions, request-time cookies, or other server-only page dependencies;
-its routes already prerender at build time. Therefore `next.config.mjs` switches
-to `output: 'export'` only when Amplify sets `AMPLIFY_STATIC_EXPORT=true`. Docker
-deployments retain `output: 'standalone'`.
+its routes already prerender at build time. `next.config.mjs` therefore declares
+`output: 'export'` explicitly by default, which lets Amplify detect the app as
+Next.js SSG. The optional Docker/Compose frontend sets `DOCKER_STANDALONE=true`
+to emit a standalone Next server instead.
 
 Static export means **no Next.js server-side rendering at Amplify**. Any feature
 that later requires request-time server rendering must either be redesigned for
@@ -58,6 +59,41 @@ server to a compatible host.
    `amplifyapp.com` URL. Test deep links such as `/pricing/` and
    `/infrastructure/` by directly refreshing them.
 
+### If Amplify fails after a successful build
+
+A build that ends with:
+
+```text
+CustomerError: Can't find required-server-files.json in build output directory
+```
+
+means the Amplify app/branch is still registered as **Next.js SSR**
+(`WEB_COMPUTE`). The build itself produced the static `out/` directory, but
+Amplify tried to deploy it as an SSR app. Existing apps must be converted to
+SSG once; newly created apps should detect SSG automatically because
+`frontend/next.config.mjs` now declares `output: 'export'`.
+
+From AWS CloudShell (or any shell with AWS credentials for the account), run:
+
+```bash
+aws amplify update-app \
+  --app-id YOUR_AMPLIFY_APP_ID \
+  --platform WEB \
+  --region YOUR_AWS_REGION
+
+aws amplify update-branch \
+  --app-id YOUR_AMPLIFY_APP_ID \
+  --branch-name main \
+  --framework 'Next.js - SSG' \
+  --region YOUR_AWS_REGION
+```
+
+Then open **Hosting → Rewrites and redirects** in the Amplify console and
+delete any SSR rewrite rule left from the failed SSR setup. Trigger a new
+deployment. If the app has no data worth preserving, deleting and recreating it
+after the static-export commit is an alternative that lets Amplify detect SSG
+from the start.
+
 The same repository is connected to both hosts: Amplify uses `frontend/` as
 its monorepo app root; Render uses the repository root as its Docker context
 and `backend/Dockerfile` as its Dockerfile. Do not create separate Git repos or
@@ -65,49 +101,82 @@ move the backend into the Amplify build.
 
 ## Render setup
 
-1. In Render, create a **Blueprint** from this repository and select the root
-   `render.yaml`. It defines the Django Docker service, PostgreSQL, Singapore
-   region, and a 10 GB persistent disk for the app's filesystem-backed uploads.
-   It builds `backend/Dockerfile` with the repository root as its Docker
-   context; do not set Render's root directory to `backend/`.
-2. The service starts at a Render-generated URL, usually shaped like
+1. Open the existing PostgreSQL instance in the Render Dashboard. For this
+   launch the database is `openvault` and the database user is
+   `openvault_user`. Copy the **Internal Database URL** from the database's
+   **Connections** section. Do not create a second database from the Blueprint.
+2. In Render, create a **Blueprint** from this repository and select the root
+   `render.yaml`. It defines the Django Docker service, Oregon (US West) region, and a
+   10 GB persistent disk for the app's filesystem-backed uploads. It builds
+   `backend/Dockerfile` with the repository root as its Docker context; do not
+   set Render's root directory to `backend/`.
+3. When Render prompts for `DATABASE_URL`, paste the internal database URL.
+   If the web service already exists, open it, go to **Environment**, and set
+   `DATABASE_URL` there as a secret. The service and database must be in the
+   same Render region for the internal URL to resolve; if they are in different
+   regions, use the external URL with SSL and add the connection to the
+   database's IP allowlist.
+4. The service starts at a Render-generated URL, usually shaped like
    `https://openvault-api.onrender.com`; use the exact hostname shown in the
    Render Dashboard. The preferred final URL is `https://api.saadops.site`.
-3. The Render service uses `DATABASE_URL` from Render Postgres and stores uploads
-   at `/var/data/documents` and generated files at `/var/data/media`.
-   Migrations and plan seeding run when the container starts.
-4. Set `GEMINI_API_KEY` as a **secret** environment variable in Render. The
+5. The service stores uploads at `/var/data/documents` and generated files at
+   `/var/data/media`. Migrations and plan seeding run when the container starts.
+6. Set `GEMINI_API_KEY` as a **secret** environment variable in Render. The
    Blueprint marks it `sync: false`; no provider key is committed.
-5. Configure SES SMTP credentials if SES is ready for production sending.
+7. Configure SES SMTP credentials if SES is ready for production sending.
    Email verification is enabled, so configure and test email before public
    registration. For the present launch, `LLM_PROVIDER=gemini`,
    `GEMINI_MODEL=gemini-2.5-flash`, and Gemini embeddings are selected by the
-    Blueprint. Bedrock remains available as a later AWS option, not required for
-    the Render launch.
+   Blueprint. Bedrock remains available as a later AWS option, not required for
+   the Render launch.
 
 ### Render environment values
 
 The Blueprint supplies non-secret production settings. Render generates
-`SECRET_KEY` and `LLM_KEY_ENCRYPTION_KEY`, and injects `DATABASE_URL` from the
-managed Postgres resource. Enter these secrets in Render's environment screen:
+`SECRET_KEY` and `LLM_KEY_ENCRYPTION_KEY`. `DATABASE_URL` is not generated; it
+must contain the existing Render Postgres connection string. Enter these
+secrets in Render's environment screen:
 
 | Key | Value / handling |
 | --- | --- |
+| `DATABASE_URL` | Internal connection string for the existing Render Postgres database. Store it as a secret; never commit it. |
 | `GEMINI_API_KEY` | Secret from Google AI Studio / Google AI API credentials. Required for chat and Gemini embeddings. |
 | `EMAIL_HOST_USER` | SES SMTP username for `ap-south-1`, if sending verification/reset emails through SES. |
 | `EMAIL_HOST_PASSWORD` | Matching SES SMTP password; store as a Render secret. |
 
-Do not manually enter `POSTGRES_PASSWORD` or `DATABASE_URL`; Render wires the
-private database connection into the API service. Keep `GEMINI_API_KEY` off
-Amplify—anything named `NEXT_PUBLIC_*` is browser-visible. The
-`LLM_PROVIDER`, `GEMINI_MODEL`, `GEMINI_EMBED_MODEL`, and `EMBED_PROVIDER`
-values in `render.yaml` select Gemini for the initial server-side provider. A
-`LLMConfig` row saved later from workspace settings can override environment
-defaults.
+The database password appears in the connection string, so do not paste that
+URL into `render.yaml`, GitHub, issue trackers, screenshots, or chat. Rotate the
+database password if it has already been shared outside the Render dashboard.
+Keep `GEMINI_API_KEY` off Amplify—anything named `NEXT_PUBLIC_*` is
+browser-visible. The `LLM_PROVIDER`, `GEMINI_MODEL`, `GEMINI_EMBED_MODEL`, and
+`EMBED_PROVIDER` values in `render.yaml` select Gemini for the initial
+server-side provider. A `LLMConfig` row saved later from workspace settings can
+override environment defaults.
 
 If testing before custom domains are ready, temporarily add the exact Amplify
 branch hostname to `CORS_ALLOWED_ORIGINS` and `CSRF_TRUSTED_ORIGINS` in Render.
 Remove that temporary origin once `openvault.saadops.site` is verified.
+
+### Creating the web service manually
+
+If you use Render's **New Web Service** screen instead of the Blueprint, use
+these values:
+
+| Field | Value |
+| --- | --- |
+| Language / runtime | **Docker** |
+| Branch | `main` |
+| Region | Same region as the database (Oregon / US West for this launch) |
+| Root Directory | Leave blank (repository root) |
+| Dockerfile Path | `./backend/Dockerfile` |
+| Compute | `1c-2g` recommended; `0.5c-512mb` is the minimum |
+| Health Check Path | `/api/health` |
+| Docker Command | Leave blank (the image entrypoint starts gunicorn) |
+| Persistent Disk | Name `openvault-files`, mount `/var/data`, 10 GB |
+
+Do not set Root Directory to `backend/`. The Dockerfile copies from
+`backend/` relative to the repository root, so the build context must remain
+the repository root.
 
 ### Render disk limitation
 

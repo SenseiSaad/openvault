@@ -45,7 +45,7 @@ export function AwsControlRoom() {
             Bedrock · AWS India
           </span>
           <span>Amplify · static web</span>
-          <span>Render · Singapore</span>
+          <span>Render · Oregon</span>
         </div>
       </div>
 

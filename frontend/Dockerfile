@@ -14,6 +14,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY frontend/ .
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
+    DOCKER_STANDALONE=true \
     NEXT_TELEMETRY_DISABLED=1
 RUN --mount=type=cache,id=next-swc,target=/root/.cache/next-swc pnpm run build
 
