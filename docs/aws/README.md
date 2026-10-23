@@ -2,19 +2,21 @@
 
 > **Current deployment choice:** AWS Amplify serves the statically exported
 > frontend; Render hosts the Django API, PostgreSQL, and persistent document
-> disk in Singapore; Amazon Bedrock provides model inference in AWS India;
-> Cloudflare manages DNS. Render bills are separate from AWS and are **not
-> covered by AWS Activate credits**. The ECS/RDS/EFS inventory and cost model
-> below are an optional future all-AWS alternative, not the selected launch
-> deployment.
+> disk in Singapore; Google Gemini provides model inference for the initial
+> launch; Cloudflare manages DNS. Amazon Bedrock is retained as the future
+> AWS-native inference option. Render bills are separate from AWS and are
+> **not covered by AWS Activate credits**. The ECS/RDS/EFS inventory and cost
+> model below are an optional future all-AWS alternative, not the selected
+> launch deployment.
 
 ## Executive summary
 
-The current launch uses AWS for frontend distribution and managed AI, while
-Render provides the stateful API/data layer. This hybrid is smaller to operate
-for the first users, but it does not place all application data in AWS or in
-India. If the product later needs an all-AWS data plane, use the optional
-ECS/RDS/EFS alternative described below and migrate files deliberately.
+The current launch uses AWS for frontend distribution and Google Gemini for
+managed AI, while Render provides the stateful API/data layer. This hybrid is
+smaller to operate for the first users, but it does not place all application
+data in AWS or in India. If the product later needs an all-AWS data plane, use
+the optional ECS/RDS/EFS alternative described below and migrate files
+deliberately.
 
 ## Request and data flow
 
@@ -25,7 +27,8 @@ flowchart LR
   AMP -->|credentials included| API[Render Django API]
   API --> DB[(Render PostgreSQL)]
   API --> DISK[(Render persistent disk)]
-  API -->|approved passages over TLS| BR[Amazon Bedrock India profile]
+  API -->|approved passages over TLS| GM[Google Gemini API]
+  API -. optional future .-> BR[Amazon Bedrock India profile]
   AMP --> AMPLIFYLOGS[Amplify build/deploy history]
   API --> RENDERLOGS[Render health + logs]
 ```
@@ -33,9 +36,10 @@ flowchart LR
 The browser calls `https://api.saadops.site` directly; the API is not proxied
 through Amplify. CORS/CSRF allow only `https://openvault.saadops.site`. Render
 PostgreSQL should use its internal connection string, and the document disk is
-single-instance storage. Bedrock receives only permission-approved passages.
-Because the API/data live in Render Singapore, do not claim that all stored
-application data is in AWS India.
+single-instance storage. The model provider receives only permission-approved
+passages; the initial launch uses Gemini, while the optional Bedrock migration
+applies the same rule. Because the API/data live in Render Singapore, do not
+claim that all stored application data is in AWS India.
 
 ## Current launch services
 
@@ -46,7 +50,7 @@ application data is in AWS India.
 | API | Render Web Service | Run Django/Gunicorn; use the provided health endpoint. |
 | Database | Render PostgreSQL | Store users, organizations, permissions, and audit events. |
 | Uploads | Render persistent disk | Preserve filesystem-backed documents and generated forms for the single-instance launch. |
-| AI | Amazon Bedrock | Claude Haiku 4.5 + Titan embeddings using the India profile. The backend keeps its key in a Render secret. |
+| AI | Google Gemini | `gemini-2.5-flash` chat + `gemini-embedding-001` embeddings for the initial launch. The API key stays in a Render secret. Bedrock remains the future AWS-native option. |
 | Email | Amazon SES (planned) | Transactional verification/reset email after domain verification and SES production access. |
 
 ### Important limit of the Render disk

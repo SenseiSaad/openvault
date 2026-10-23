@@ -17,7 +17,7 @@ mkdir -p "$BACKUP_DIR" "$STAGE/files"
 
 if [[ -n "${DATABASE_URL:-}" ]]; then
   command -v pg_dump >/dev/null || { echo 'pg_dump is required when DATABASE_URL is set' >&2; exit 1; }
-  PGDATABASE="$DATABASE_URL" pg_dump --format=custom --no-owner --no-acl --file="$STAGE/database.dump"
+  pg_dump --dbname="$DATABASE_URL" --format=custom --no-owner --no-acl --file="$STAGE/database.dump"
 elif [[ -f "$SQLITE_PATH" ]]; then
   cp "$SQLITE_PATH" "$STAGE/database.sqlite3"
 else

@@ -247,6 +247,8 @@ pip install -r backend/requirements.txt
 
 # Configure environment
 cp backend/.env.example backend/.env
+# Generate a secret and paste it into SECRET_KEY= in backend/.env
+python3 -c "import secrets; print(secrets.token_urlsafe(50))"
 
 # Run migrations and seed subscription plans
 python backend/manage.py migrate
@@ -364,14 +366,14 @@ Before going live, confirm:
 
 ```bash
 # /etc/cron.d/openvault-backup — nightly DB + media backup, kept 30 days.
-15 2 * * * root cd /opt/openvault && OUT=/mnt/backups ./deploy/backup.sh >> /var/log/openvault-backup.log 2>&1
+15 2 * * * root cd /opt/openvault && BACKUP_DIR=/mnt/backups ./deploy/backup.sh >> /var/log/openvault-backup.log 2>&1
 ```
 
 ### Security controls enabled for production
 
 - HttpOnly + SameSite cookies, rotating refresh tokens with a **blacklist** (old tokens die on refresh, logout, and password change).
 - Password policy enforced server-side (min 8, no common/numeric/similar passwords).
-- Per-IP/account rate limits backed by **Redis**, so they hold across gunicorn workers.
+- Per-IP/account rate limits. The single-host Compose stack shares counters through **Redis**; the one-worker Render launch uses in-process memory (add a Redis service before scaling Render workers).
 - Provider API keys encrypted at rest (`core.crypto`); the API only reports whether a key is set.
 - Whitelisted hosts/CORS/CSRF, HSTS + HTTPS redirect, `X-Frame-Options: DENY`, nosniff, WhiteNoise static serving.
 - Startup refuses insecure configuration (`ENVIRONMENT=production` + `COOKIE_SECURE=false`).

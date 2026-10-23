@@ -1,9 +1,0 @@
-[Desktop Entry]
-Version=1.0
-Name=Start OpenVault
-Comment=Start the OpenVault Frontend and Backend
-Exec=/home/saad/Desktop/OpenVault/run.sh
-Icon=utilities-terminal
-Terminal=true
-Type=Application
-Categories=Development;

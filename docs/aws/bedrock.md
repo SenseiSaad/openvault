@@ -1,5 +1,9 @@
 # Bedrock setup for OpenVault
 
+> **Deployment note:** the initial Render launch uses Google Gemini
+> (`gemini-2.5-flash`). This document covers the optional AWS-native Bedrock
+> path that is retained for the future ECS/ECR migration.
+
 ## Credential status
 
 There is **no valid Bedrock API key configured for this project**. A key cannot

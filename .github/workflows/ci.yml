@@ -73,6 +73,7 @@ jobs:
           NEXT_PUBLIC_API_URL: http://localhost:8000
       - name: Static export (AWS Amplify)
         run: |
+          rm -rf .next out
           AMPLIFY_STATIC_EXPORT=true NEXT_PUBLIC_API_URL=https://api.saadops.site pnpm build
           test -f out/index.html
           test -f out/infrastructure/index.html

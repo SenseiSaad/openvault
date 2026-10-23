@@ -79,7 +79,7 @@ const PROVIDERS: {
     label: 'Google Gemini',
     blurb: 'Gemini chat and embeddings via Google AI Studio.',
     keyLabel: 'Gemini API key',
-    modelHint: 'e.g. gemini-3.8-flash',
+    modelHint: 'e.g. gemini-2.5-flash',
   },
   {
     value: 'bedrock',

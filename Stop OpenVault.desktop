@@ -1,9 +1,0 @@
-[Desktop Entry]
-Version=1.0
-Name=Stop OpenVault
-Comment=Stop the OpenVault Frontend and Backend
-Exec=/home/saad/Desktop/OpenVault/run.sh stop
-Icon=process-stop
-Terminal=true
-Type=Application
-Categories=Development;
