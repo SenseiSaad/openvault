@@ -1,3 +1,5 @@
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
 from .models import (
@@ -77,12 +79,15 @@ class UserSerializer(serializers.ModelSerializer):
                   "is_platform_admin", "is_superuser"]
 
     def to_representation(self, instance):
-        # The caller's own profile includes email_verified; listings keep it too
-        # (it is not sensitive) but drop the hidden platform flag from non-self views.
+        # Own profile (and auth responses without a request context) keeps the
+        # account flags. Other people's listings must not reveal whether a
+        # colleague is a platform admin/superuser.
         data = super().to_representation(instance)
         request = self.context.get("request")
-        if request is None or request.user.id != instance.id:
+        if request is not None and request.user.id != instance.id:
             data.pop("email_verified", None)
+            data.pop("is_platform_admin", None)
+            data.pop("is_superuser", None)
         return data
 
 
@@ -129,7 +134,14 @@ class RegisterCompanySerializer(serializers.Serializer):
     phone = serializers.CharField(required=False, allow_blank=True, default="")
     max_employees = serializers.IntegerField(required=False, allow_null=True, min_value=1)
     email = serializers.EmailField()
-    password = serializers.CharField(min_length=6)
+    password = serializers.CharField(min_length=8)
+
+    def validate_password(self, value):
+        try:
+            validate_password(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages)
+        return value
 
 
 class LoginSerializer(serializers.Serializer):
@@ -142,8 +154,15 @@ class UserCreateSerializer(serializers.Serializer):
     title = serializers.CharField(required=False, allow_blank=True, default="")
     department_id = serializers.IntegerField(required=False, allow_null=True, default=None)
     email = serializers.EmailField()
-    password = serializers.CharField(min_length=6)
+    password = serializers.CharField(min_length=8)
     role = serializers.ChoiceField(choices=["admin", "employee", "viewer"], default="employee")
+
+    def validate_password(self, value):
+        try:
+            validate_password(value)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError(exc.messages)
+        return value
 
 
 class AskSerializer(serializers.Serializer):

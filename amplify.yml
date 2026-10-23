@@ -1,47 +1,41 @@
-# Amplify Hosting build spec for the OpenVault monorepo.
-#
-# This repo is a monorepo (frontend/ = Next.js, backend/ = Django), so it MUST
-# use the monorepo schema: `applications:` + `appRoot:`. With appRoot set,
-# Amplify runs every command with the working directory already inside
-# frontend/, so there is no `cd frontend` anywhere in this file and all paths
-# below are relative to frontend/.
-#
-# The `appRoot` value must match the AMPLIFY_MONOREPO_APP_ROOT environment
-# variable in the Amplify console (see AWS docs: "Configuring monorepo build
-# settings"). Amplify sets that automatically when you tick
-# "My app is a monorepo" and enter `frontend` as the app root.
+# Amplify static hosting for the Next.js frontend in this monorepo.
+# The Django API and persistent data are deployed separately on Render.
 version: 1
 applications:
   - appRoot: frontend
+    env:
+      variables:
+        AMPLIFY_MONOREPO_APP_ROOT: frontend
+        AMPLIFY_STATIC_EXPORT: 'true'
+        NEXT_PUBLIC_API_URL: https://api.saadops.site
     frontend:
       phases:
         preBuild:
           commands:
-            # Next.js 16 requires Node 20+.
-            - nvm use 20 || nvm install 20 && nvm use 20
-            - node -v && npm -v
-            # pnpm is NOT bundled in the Amplify build image, so install it.
-            # (corepack is broken on Amazon Linux 2023: pnpm.cjs MODULE_NOT_FOUND.)
+            # Next.js 16 needs a current Node runtime; pin Node 22 for builds.
+            - nvm install 22
+            - nvm use 22
             - npm install -g pnpm@12.3.4
-            - pnpm --version
-            # node-linker=hoisted is set in frontend/.npmrc, which Amplify's
-            # Next.js SSR bundler requires for pnpm apps.
             - pnpm install --frozen-lockfile
         build:
           commands:
-            - pwd && ls -la | head -n 30
+            # Fail loudly if the runtime is unexpected, then build the static
+            # site. Exports are repeated here so the Amplify console cannot
+            # accidentally omit the API URL or produce an SSR .next build.
+            - node --version
+            - pnpm --version
+            - export AMPLIFY_STATIC_EXPORT=true
+            - export NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL:-https://api.saadops.site}"
             - pnpm run build
+            - test -f out/index.html
       artifacts:
-        # Relative to appRoot (frontend/). Amplify's Next.js SSR runtime reads
-        # required-server-files.json from here.
-        baseDirectory: .next
+        # Next 16 static export emits a complete site to frontend/out.
+        baseDirectory: out
         files:
           - '**/*'
       cache:
         paths:
           - node_modules/**/*
           - .next/cache/**/*
-          - ~/.pnpm-store/**/*
-
-
+          - ~/.local/share/pnpm/store/**/*
 

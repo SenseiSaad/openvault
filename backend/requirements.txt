@@ -1,6 +1,7 @@
 Django==5.1.4
 djangorestframework==3.15.2
 djangorestframework-simplejwt==5.3.1
+cryptography==41.0.7
 django-cors-headers==4.6.0
 numpy==2.2.1
 pypdf==5.1.0
@@ -8,6 +9,10 @@ python-pptx==1.0.2
 python-docx==1.1.2
 python-dotenv==1.0.1
 gunicorn==23.0.0
+whitenoise==6.8.2
+psycopg2-binary==2.9.10
+dj-database-url==2.3.0
+redis==5.2.1
 boto3==1.43.114
 botocore==1.43.114
 
@@ -18,10 +23,9 @@ google-api-python-client==2.149.0
 google-auth==2.35.0
 qrcode==7.4.2
 
-# ── Production / staging database + cache (optional; SQLite + LocMem by default) ──
-# psycopg2-binary==2.9.10     # PostgreSQL (set POSTGRES_* or DATABASE_URL in .env)
-# dj-database-url==2.3.0      # DATABASE_URL parsing
-# redis==5.2.1                # Redis cache for multi-process rate limiting
+# ── Production / staging database + cache ──
+# Installed above: psycopg2-binary (PostgreSQL), dj-database-url (DATABASE_URL),
+# redis (shared rate-limit cache).
 
 # ── Optional OCR for scanned PDFs/images (also needs system tesseract + poppler) ──
 # pytesseract==0.3.13

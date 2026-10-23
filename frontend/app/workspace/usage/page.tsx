@@ -174,9 +174,9 @@ function PlanFeature({ enabled, label }: { enabled: boolean; label: string }) {
       {enabled ? (
         <span className="grid size-5 place-items-center rounded-full bg-[#e8f2e8] text-[#3f6b45]"><Check className="size-3" /></span>
       ) : (
-        <span className="grid size-5 place-items-center rounded-full bg-[#f2f0ec] text-[#8c8a83]"><span className="size-1 rounded-full" /></span>
+        <span className="grid size-5 place-items-center rounded-full bg-surface-2 text-muted-foreground"><span className="size-1 rounded-full" /></span>
       )}
-      <span className={enabled ? '' : 'text-[#8c8a83]'}>{label}</span>
+      <span className={enabled ? '' : 'text-muted-foreground'}>{label}</span>
     </li>
   )
 }

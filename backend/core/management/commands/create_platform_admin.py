@@ -12,7 +12,9 @@ import getpass
 import secrets
 import string
 
+from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
+from django.contrib.auth.password_validation import validate_password
 
 from core.models import User
 
@@ -37,7 +39,10 @@ class Command(BaseCommand):
                 raise CommandError(f"No existing user with email {email}.")
             user.is_platform_admin = True
             user.is_staff = True
-            user.save(update_fields=["is_platform_admin", "is_staff"])
+            user.is_superuser = True
+            user.email_verified = True
+            user.save(update_fields=["is_platform_admin", "is_staff", "is_superuser",
+                                     "email_verified"])
             self.stdout.write(self.style.SUCCESS(
                 f"Promoted {email} to platform admin (keeps company: {user.company_id})."))
             return
@@ -53,6 +58,10 @@ class Command(BaseCommand):
             alphabet = string.ascii_letters + string.digits
             password = "".join(secrets.choice(alphabet) for _ in range(16))
             self.stdout.write(self.style.WARNING(f"Generated password: {password}"))
+        try:
+            validate_password(password)
+        except ValidationError as exc:
+            raise CommandError("Password rejected: " + " ".join(exc.messages))
 
         user = User.objects.create_user(
             email=email, password=password,

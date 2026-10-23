@@ -13,7 +13,7 @@ import uuid
 from datetime import timedelta
 
 from django.conf import settings
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
 from core import rag
@@ -524,13 +524,23 @@ class Command(BaseCommand):
         return created
 
     def handle(self, *args, **options):
-        # Django superuser for /admin (password configurable via env, not hardcoded)
-        demo_password = os.getenv("DEMO_ADMIN_PASSWORD", "admin1234")
+        # This command is for local demos only; production user accounts must
+        # be created through the normal registration/admin workflows.
+        if settings.IS_PRODUCTION:
+            raise CommandError("seed_demo is disabled in production.")
+        demo_password = os.getenv("DEMO_SEED_PASSWORD", "")
+        if not demo_password:
+            raise CommandError(
+                "Set DEMO_SEED_PASSWORD in an ignored local environment file "
+                "before seeding demo accounts. No demo password is built into the project."
+            )
+
+        # Optional local-only superuser for the seeded demo workspace.
         if not User.objects.filter(email="root@securekb.local").exists():
             User.objects.create_superuser(
                 email="root@securekb.local", password=demo_password, full_name="OpenVault Root",
             )
-            self.stdout.write(self.style.SUCCESS(">> superuser root@securekb.local (password from DEMO_ADMIN_PASSWORD)"))
+            self.stdout.write(self.style.SUCCESS(">> created local-only root@securekb.local demo account"))
 
         new_docs = 0
         for slug, (name, docs) in DEMO.items():
@@ -540,7 +550,7 @@ class Command(BaseCommand):
                 defaults=dict(full_name=f"{name} Admin", role="admin", company=company),
             )
             if created:
-                admin_user.set_password("demo1234")
+                admin_user.set_password(demo_password)
                 admin_user.save()
             for spec in docs:
                 new_docs += 1 if self._doc(company, admin_user, spec) else 0
@@ -552,12 +562,12 @@ class Command(BaseCommand):
             defaults=dict(full_name="Open Science Staff", role="employee", company=flagship),
         )
         if created:
-            staff.set_password("demo1234")
+            staff.set_password(demo_password)
             staff.save()
 
         # ---- Private enterprise tenants (data ISOLATION + COLLABORATION demo) ----
         # Each tenant gets an admin, an HR persona (role "employee") and a
-        # read-only viewer, all password demo1234.
+        # read-only viewer; demo credentials come only from the local env var.
         ent_users = {}  # slug -> {"admin": u, "hr": u, "viewer": u}
         for slug, (name, docs) in ENTERPRISE.items():
             company, _ = Company.objects.get_or_create(slug=slug, defaults={"name": name})
@@ -568,7 +578,7 @@ class Command(BaseCommand):
                     defaults=dict(full_name=f"{name} {key.upper()}", role=role, company=company),
                 )
                 if created:
-                    user.set_password("demo1234")
+                    user.set_password(demo_password)
                     user.save()
                 people[key] = user
             ent_users[slug] = people
@@ -602,9 +612,10 @@ class Command(BaseCommand):
             f"{Document.objects.values('category').distinct().count()} categories."
         ))
         self.stdout.write(
-            "   Public/enterprise publisher login: admin@openscience.com / demo1234\n"
-            "   Private tenants (isolation demo): admin@company-a.com, hr@company-a.com,\n"
-            "     viewer@company-a.com  (same for company-b / company-c) — all demo1234\n"
+            "   Demo accounts were created with the password supplied through\n"
+            "   DEMO_SEED_PASSWORD. No demo password is printed or stored in source.\n"
+            "   Demo tenant admins include admin@company-a.com, admin@company-b.com,\n"
+            "   and admin@company-c.com; hr@ and viewer@ accounts exist per tenant.\n"
             "   Collaboration demo: Company C's 'Vendor Security Requirements.md' is\n"
             "     shared with hr@company-a.com only."
         )

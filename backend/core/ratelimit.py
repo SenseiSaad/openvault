@@ -10,13 +10,24 @@ via CACHES in production for multi-process correctness). Usage:
 """
 import time
 
+from django.conf import settings
 from django.core.cache import cache
 from rest_framework.response import Response
 
 
 def _client_ip(request):
+    """Client IP for rate-limit keys.
+
+    Use the last X-Forwarded-For entry (the value added by the trusted reverse
+    proxy) so a spoofed prefix cannot bypass the limiter. Falls back to
+    REMOTE_ADDR when the API is exposed directly.
+    """
     fwd = request.META.get("HTTP_X_FORWARDED_FOR")
-    return (fwd.split(",")[0].strip() if fwd else request.META.get("REMOTE_ADDR", "")) or "unknown"
+    if fwd:
+        parts = [p.strip() for p in fwd.split(",") if p.strip()]
+        if parts:
+            return parts[-1]
+    return request.META.get("REMOTE_ADDR", "") or "unknown"
 
 
 def _identity(request, key):
@@ -35,6 +46,8 @@ def rate_limit(name, rate=5, per_seconds=60, key="ip"):
     When the limit is exceeded it responds 429 with a friendly Retry-After."""
     def decorator(view_func):
         def wrapped(request, *args, **kwargs):
+            if not getattr(settings, "RATELIMIT_ENABLED", True):
+                return view_func(request, *args, **kwargs)
             ident = _identity(request, key)
             cache_key = f"rl:{name}:{ident}"
             now = time.time()

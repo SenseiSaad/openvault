@@ -2,23 +2,15 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import {
-  ArrowRight,
-  BrainCircuit,
-  Check,
-  Cpu,
-  HardDrive,
-  Loader2,
-  ShieldCheck,
-} from 'lucide-react'
+import { ArrowRight, BrainCircuit, Check, Cpu, HardDrive, ShieldCheck } from 'lucide-react'
 import { SiteHeader } from '@/components/site-header'
 import { SiteFooter } from '@/components/site-footer'
+import { PlanCard } from '@/components/plan-card'
+import { Reveal } from '@/components/reveal'
 import { adminApi, type Plan } from '@/lib/api'
-import { FALLBACK_PLANS, PLAN_COPY, formatPKR, storageLabel } from '@/lib/pricing'
+import { FALLBACK_PLANS, PLAN_COPY, storageLabel } from '@/lib/pricing'
 import { PRICING_CONTENT, type PricingLang } from '@/lib/pricing-i18n'
 
-const FOCUS =
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#1d1d1b] focus-visible:ring-offset-2 focus-visible:ring-offset-[#f7f6f2]'
 const LANG_KEY = 'openvault-pricing-lang'
 
 export default function PricingPage() {
@@ -50,211 +42,202 @@ export default function PricingPage() {
   }, [])
 
   const t = PRICING_CONTENT[lang]
-
   const coverIcons = useMemo(() => [Cpu, HardDrive, BrainCircuit, ShieldCheck], [])
 
   return (
-    <main className="min-h-screen bg-[#f7f6f2] text-[#1d1d1b]">
+    <main id="main-content" className="min-h-screen overflow-x-clip">
       <SiteHeader />
 
-      {/* Hero */}
-      <section className="relative mx-auto max-w-7xl px-6 pb-14 pt-12 lg:px-10 lg:pt-16">
-        <div className="pointer-events-none absolute left-0 top-0 -z-10 h-96 w-96 -translate-x-1/2 rounded-full bg-[#dfe7f7] opacity-60 blur-3xl mix-blend-multiply" />
-        <div className="pointer-events-none absolute right-10 top-16 -z-10 h-72 w-72 translate-x-1/3 rounded-full bg-[#e7e2ff] opacity-60 blur-3xl mix-blend-multiply" />
+      <section className="relative overflow-hidden pb-14 pt-12 sm:pt-16 lg:pb-16 lg:pt-20" aria-labelledby="pricing-title">
+        <div aria-hidden className="hero-grid pointer-events-none absolute inset-0 -z-10" />
+        <div className="container-page">
+          <div className="max-w-3xl">
+            <div className="flex animate-fade-up items-center gap-3" style={{ animationDelay: '80ms' }}>
+              <p className="eyebrow">{t.eyebrow}</p>
+              <button
+                type="button"
+                onClick={toggleLang}
+                className="rounded-full border border-border bg-surface px-3 py-1 text-[10px] font-medium tracking-[0.02em] text-muted-foreground transition-colors hover:border-border-strong hover:text-foreground"
+              >
+                {t.langToggle}
+              </button>
+            </div>
 
-        <div className="max-w-3xl">
-          <p className="mb-5 flex items-center justify-between text-xs font-semibold uppercase tracking-[0.16em] text-[#6b6862]">
-            <span>{t.eyebrow}</span>
-            <button
-              type="button"
-              onClick={toggleLang}
-              className={`rounded-full border border-[#dcdad3] bg-[#fffdfa] px-3 py-1 normal-case tracking-normal text-[#6b6862] transition hover:border-[#1d1d1b] hover:text-[#1d1d1b] ${FOCUS}`}
+            <h1
+              id="pricing-title"
+              className="display-xl mt-5 animate-fade-up"
+              style={{ animationDelay: '160ms' }}
             >
-              {t.langToggle}
-            </button>
-          </p>
-          <h1 className="text-[clamp(2.8rem,6vw,5.5rem)] font-semibold leading-[0.95] tracking-[-0.07em]">
-            {t.titleA}
-            <br />
-            <span className="font-serif font-normal italic">{t.titleB}</span>
-          </h1>
-          <p className="mt-6 max-w-2xl text-lg leading-relaxed text-[#5d5b55]">{t.lede}</p>
-          {live && plans && (
-            <p className="mt-4 flex items-center gap-2 text-xs text-[#6b6862]">
-              <Check className="size-3.5 text-[#4a7a5a]" aria-hidden />
-              {t.liveNote}
+              {t.titleA}
+              <br />
+              <span className="serif text-accent">{t.titleB}</span>
+            </h1>
+            <p
+              className="mt-6 max-w-2xl animate-fade-up text-[1.02rem] leading-relaxed text-muted-foreground sm:text-lg"
+              style={{ animationDelay: '260ms' }}
+            >
+              {t.lede}
             </p>
-          )}
+            <div
+              className="mt-5 flex animate-fade-up flex-wrap items-center gap-x-5 gap-y-2 text-[11.5px] text-muted-foreground"
+              style={{ animationDelay: '340ms' }}
+            >
+              {live && plans && (
+                <span className="inline-flex items-center gap-1.5">
+                  <Check className="size-3.5 shrink-0 text-accent" aria-hidden /> {t.liveNote}
+                </span>
+              )}
+              <span className="inline-flex items-center gap-1.5">
+                <ShieldCheck className="size-3.5 shrink-0 text-accent" aria-hidden /> {t.billedNote}
+              </span>
+            </div>
+          </div>
         </div>
       </section>
 
-      {/* Tier cards */}
-      <section className="mx-auto max-w-7xl px-6 pb-16 lg:px-10" aria-label="Plans">
-        {plans == null ? (
-          <p className="flex items-center gap-2 text-sm text-[#6b6862]">
-            <Loader2 className="size-4 animate-spin" aria-hidden /> Loading plans…
-          </p>
-        ) : (
-          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-4">
-            {plans.map((p) => {
-              const copy = PLAN_COPY[p.name] ?? {
-                tagline: '',
-                blurb: '',
-                cta: 'start' as const,
-              }
-              const isEnterprise = p.name === 'Enterprise'
+      <section className="container-page pb-16 lg:pb-20" aria-label="Plans">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-busy={plans == null}>
+          {plans == null
+            ? Array.from({ length: 4 }).map((_, index) => (
+                <div
+                  key={index}
+                  className="h-[27rem] animate-pulse rounded-[1.1rem] border border-border bg-surface/60"
+                />
+              ))
+            : plans.map((p) => {
+                const baseCopy = PLAN_COPY[p.name] ?? { tagline: '', blurb: '', cta: 'start' as const }
+                const copy = { ...baseCopy, ...(t.planCopy[p.name] ?? {}) }
+                const features = [
+                  t.members(p.max_members),
+                  t.docs(p.max_documents),
+                  storageLabel(p.storage_mb),
+                  t.asks(p.monthly_ask_limit),
+                ]
+                if (p.allow_versions) features.push(t.versioning)
+                if (p.allow_departments) features.push(t.departments)
+                if (p.allow_custom_llm) features.push(t.byoKey)
+                return (
+                  <PlanCard
+                    key={p.id}
+                    plan={p}
+                    tagline={copy.tagline}
+                    blurb={copy.blurb}
+                    features={features}
+                    featured={copy.highlight}
+                    badge={copy.highlight ? t.bestValue : undefined}
+                    fromLabel={p.name === 'Enterprise' ? t.fromLabel : undefined}
+                    perMonthLabel={t.perMonth}
+                    ctaLabel={copy.cta === 'contact' ? t.contactUs : t.getStarted}
+                    ctaKind={copy.cta}
+                  />
+                )
+              })}
+        </div>
+        <p className="mt-5 text-[11px] text-muted-foreground">
+          {!live && `${t.fallbackNote} `}
+          {t.customNote}{' '}
+          <a href="mailto:hello@openvault.site" className="text-foreground underline underline-offset-4">
+            {t.talkToUs}
+          </a>
+          .
+        </p>
+      </section>
+
+      <section className="border-y border-border bg-surface/35 py-16 sm:py-20" aria-label="Coverage">
+        <div className="container-page">
+          <Reveal>
+            <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+              <h2 className="display-md max-w-xl">
+                {t.coverTitle.split(' ').slice(0, -1).join(' ')}{' '}
+                <span className="serif text-accent">{t.coverTitle.split(' ').slice(-1)}</span>
+              </h2>
+              <p className="max-w-sm text-xs leading-relaxed text-muted-foreground">
+                {t.coverNote}
+              </p>
+            </div>
+          </Reveal>
+
+          <div className="mt-10 grid gap-x-10 gap-y-8 sm:grid-cols-2 lg:grid-cols-4">
+            {t.cover.map((item, i) => {
+              const Icon = coverIcons[i] ?? ShieldCheck
               return (
-                <article
-                  key={p.id}
-                  className={`relative flex flex-col rounded-[26px] border p-7 transition-transform duration-300 hover:scale-[1.015] ${
-                    copy.highlight
-                      ? 'border-[#1d1d1b] bg-white shadow-sm ring-2 ring-[#1d1d1b]/10'
-                      : 'border-[#dcdad3] bg-[#fffdfa]'
-                  }`}
-                >
-                  {copy.highlight && (
-                    <span className="absolute -top-3 left-6 rounded-full bg-[#1d1d1b] px-3 py-1 text-[11px] font-semibold text-white">
-                      {t.bestValue}
+                <Reveal key={item.title} delay={i * 70}>
+                  <article className="border-t border-border pt-5">
+                    <span className="grid size-9 place-items-center rounded-full border border-border text-accent">
+                      <Icon className="size-4" aria-hidden />
                     </span>
-                  )}
-                  <h2 className="text-xl font-semibold tracking-[-0.03em]">{p.name}</h2>
-                  <p className="mt-1 text-xs text-[#6b6862]">{copy.tagline}</p>
-
-                  <p className="mt-5 text-3xl font-bold tracking-tight">
-                    {isEnterprise && (
-                      <span className="mr-1.5 text-xs font-medium text-[#6b6862]">{t.fromLabel}</span>
-                    )}
-                    PKR {formatPKR(p.price_pkr)}
-                    <span className="text-sm font-normal text-[#6b6862]">{t.perMonth}</span>
-                  </p>
-                  <p className="mt-2 min-h-10 text-xs leading-relaxed text-[#5d5b55]">{copy.blurb}</p>
-
-                  <ul className="mt-5 flex-1 space-y-2.5 text-sm text-[#4f4d47]">
-                    <li className="flex items-start gap-2.5">
-                      <Check className="mt-0.5 size-4 shrink-0 text-[#4a7a5a]" aria-hidden />
-                      {t.members(p.max_members)}
-                    </li>
-                    <li className="flex items-start gap-2.5">
-                      <Check className="mt-0.5 size-4 shrink-0 text-[#4a7a5a]" aria-hidden />
-                      {t.docs(p.max_documents)}
-                    </li>
-                    <li className="flex items-start gap-2.5">
-                      <Check className="mt-0.5 size-4 shrink-0 text-[#4a7a5a]" aria-hidden />
-                      {storageLabel(p.storage_mb)}
-                    </li>
-                    <li className="flex items-start gap-2.5">
-                      <Check className="mt-0.5 size-4 shrink-0 text-[#4a7a5a]" aria-hidden />
-                      {t.asks(p.monthly_ask_limit)}
-                    </li>
-                    {p.allow_versions && (
-                      <li className="flex items-start gap-2.5">
-                        <Check className="mt-0.5 size-4 shrink-0 text-[#4a7a5a]" aria-hidden />
-                        {t.versioning}
-                      </li>
-                    )}
-                    {p.allow_departments && (
-                      <li className="flex items-start gap-2.5">
-                        <Check className="mt-0.5 size-4 shrink-0 text-[#4a7a5a]" aria-hidden />
-                        {t.departments}
-                      </li>
-                    )}
-                    {p.allow_custom_llm && (
-                      <li className="flex items-start gap-2.5">
-                        <Check className="mt-0.5 size-4 shrink-0 text-[#4a7a5a]" aria-hidden />
-                        {t.byoKey}
-                      </li>
-                    )}
-                  </ul>
-
-                  {copy.cta === 'contact' ? (
-                    <a
-                      href="mailto:hello@openvault.site"
-                      className={`mt-7 inline-flex items-center justify-center gap-2 rounded-full border border-[#1d1d1b] px-5 py-3 text-sm font-semibold transition hover:bg-[#1d1d1b] hover:text-white ${FOCUS}`}
-                    >
-                      {t.contactUs} <ArrowRight className="size-4" aria-hidden />
-                    </a>
-                  ) : (
-                    <Link
-                      href="/enterprise?tab=create"
-                      className={`mt-7 inline-flex items-center justify-center gap-2 rounded-full ${
-                        copy.highlight
-                          ? 'bg-[#1d1d1b] text-white hover:bg-[#3c3b37]'
-                          : 'border border-[#dcdad3] bg-[#fffdfa] hover:border-[#1d1d1b]'
-                      } px-5 py-3 text-sm font-semibold transition ${FOCUS}`}
-                    >
-                      {t.getStarted} <ArrowRight className="size-4" aria-hidden />
-                    </Link>
-                  )}
-                </article>
+                    <h3 className="mt-5 text-[13.5px] font-medium">{item.title}</h3>
+                    <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground">{item.body}</p>
+                  </article>
+                </Reveal>
               )
             })}
           </div>
-        )}
-      </section>
-
-      {/* What the subscription covers */}
-      <section className="mx-auto max-w-7xl px-6 py-16 lg:px-10" aria-label="Coverage">
-        <h2 className="max-w-xl text-3xl font-semibold tracking-[-0.05em] sm:text-4xl">
-          {t.coverTitle.split(' ').slice(0, -1).join(' ')}{' '}
-          <span className="font-serif font-normal italic">{t.coverTitle.split(' ').slice(-1)}</span>
-        </h2>
-        <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-          {t.cover.map((item, i) => {
-            const Icon = coverIcons[i] ?? ShieldCheck
-            return (
-              <div key={item.title} className="rounded-[26px] border border-[#dcdad3] bg-[#fffdfa] p-6">
-                <span className="grid size-11 place-items-center rounded-2xl bg-[#f4f2ec]">
-                  <Icon className="size-5 text-[#1d1d1b]" aria-hidden />
-                </span>
-                <h3 className="mt-4 text-sm font-semibold">{item.title}</h3>
-                <p className="mt-2 text-xs leading-relaxed text-[#6b6862]">{item.body}</p>
-              </div>
-            )
-          })}
         </div>
       </section>
 
-      {/* The honest math */}
-      <section className="mx-auto max-w-7xl px-6 pb-16 lg:px-10">
-        <div className="rounded-[26px] border border-[#dcdad3] bg-[#fffdfa] p-8 sm:p-10">
-          <h2 className="text-2xl font-semibold tracking-[-0.04em] sm:text-3xl">
-            {t.mathTitle.split(' ')[0]}{' '}
-            <span className="font-serif font-normal italic">{t.mathTitle.split(' ').slice(1).join(' ')}</span>
-          </h2>
-          <p className="mt-4 max-w-3xl text-sm leading-relaxed text-[#5d5b55]">{t.mathBody}</p>
-        </div>
-      </section>
-
-      {/* FAQ */}
-      <section className="mx-auto max-w-4xl px-6 pb-20 lg:px-10" aria-label="FAQ">
-        <h2 className="text-3xl font-semibold tracking-[-0.05em] sm:text-4xl">
-          {t.faqTitle.split(' ')[0]}{' '}
-          <span className="font-serif font-normal italic">{t.faqTitle.split(' ').slice(1).join(' ')}</span>
-        </h2>
-        <div className="mt-8 divide-y divide-[#e6e3dc] border-y border-[#e6e3dc]">
-          {t.faq.map((item) => (
-            <div key={item.q} className="py-5">
-              <h3 className="text-sm font-semibold">{item.q}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-[#6b6862]">{item.a}</p>
+      <section className="container-page py-16 sm:py-20" aria-labelledby="math-title">
+        <Reveal>
+          <div className="grid gap-8 lg:grid-cols-[0.8fr_1.2fr] lg:gap-16">
+            <div>
+              <p className="eyebrow">{t.mathEyebrow}</p>
+              <h2 id="math-title" className="display-md mt-4">
+                {t.mathTitle.split(' ')[0]}{' '}
+                <span className="serif text-accent">{t.mathTitle.split(' ').slice(1).join(' ')}</span>
+              </h2>
             </div>
-          ))}
+            <p className="max-w-2xl text-sm leading-relaxed text-muted-foreground lg:pt-8">
+              {t.mathBody}
+            </p>
+          </div>
+        </Reveal>
+      </section>
+
+      <section className="container-page pb-16 sm:pb-20" aria-label="Frequently asked questions">
+        <div className="border-t border-border pt-10">
+          <h2 className="display-md max-w-lg">
+            {t.faqTitle.split(' ')[0]}{' '}
+            <span className="serif text-accent">{t.faqTitle.split(' ').slice(1).join(' ')}</span>
+          </h2>
+          <div className="mt-8 grid gap-x-12 gap-y-7 sm:grid-cols-2">
+            {t.faq.map((item) => (
+              <article key={item.q} className="border-t border-border pt-4">
+                <h3 className="text-[13.5px] font-medium leading-snug">{item.q}</h3>
+                <p className="mt-2 text-[12px] leading-relaxed text-muted-foreground">{item.a}</p>
+              </article>
+            ))}
+          </div>
         </div>
       </section>
 
-      {/* Closing CTA */}
-      <section className="mx-auto max-w-7xl px-6 pb-24 lg:px-10">
-        <div className="rounded-[26px] bg-[#1d1d1b] p-10 text-white sm:p-14">
-          <h2 className="max-w-2xl text-3xl font-semibold tracking-[-0.05em] sm:text-4xl">
-            {t.ctaTitle.split(' ')[0]}{' '}
-            <span className="font-serif font-normal italic">{t.ctaTitle.split(' ').slice(1).join(' ')}</span>
-          </h2>
-          <p className="mt-3 max-w-xl text-sm leading-relaxed text-[#c9c7c1]">{t.ctaBody}</p>
-          <Link
-            href="/enterprise?tab=create"
-            className={`mt-8 inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-semibold text-[#1d1d1b] transition hover:bg-[#eae7df] ${FOCUS}`}
-          >
-            {t.ctaButton} <ArrowRight className="size-4" aria-hidden />
-          </Link>
+      <section className="relative overflow-hidden bg-[#151412] text-[#f3efe5]" aria-labelledby="pricing-cta">
+        <div aria-hidden className="dot-grid pointer-events-none absolute inset-0 opacity-[0.1]" />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -right-28 top-1/2 size-[32rem] -translate-y-1/2 rounded-full border border-white/10"
+        >
+          <div className="absolute inset-10 rounded-full border border-white/10" />
+          <div className="absolute inset-24 rounded-full border border-[#d9a75f]/25" />
+          <div className="absolute inset-[8.25rem] grid place-items-center rounded-full bg-[#d9a75f]/10">
+            <div className="size-3 rounded-full bg-[#d9a75f]" />
+          </div>
+        </div>
+        <div className="container-page relative py-16 sm:py-20">
+          <Reveal>
+            <div className="max-w-2xl">
+              <h2 id="pricing-cta" className="display-lg">
+                {t.ctaTitle.split(' ')[0]}{' '}
+                <span className="serif text-[#d9a75f]">{t.ctaTitle.split(' ').slice(1).join(' ')}</span>
+              </h2>
+              <p className="mt-4 max-w-xl text-sm leading-relaxed text-[#f3efe5]/55">{t.ctaBody}</p>
+              <Link
+                href="/enterprise?tab=create"
+                className="btn mt-7 bg-[#f3efe5] text-[#171511] hover:bg-[#d9a75f] hover:text-[#1a1205]"
+              >
+                {t.ctaButton} <ArrowRight className="size-4" aria-hidden />
+              </Link>
+            </div>
+          </Reveal>
         </div>
       </section>
 

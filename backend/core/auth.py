@@ -10,6 +10,19 @@ from django.conf import settings
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.tokens import RefreshToken
 
+
+def revoke_user_refresh_tokens(user):
+    """Blacklist every outstanding refresh token for a user.
+
+    Used after password changes/resets and when an account is deactivated, so a
+    stolen token cannot outlive the credential change.
+    """
+    from rest_framework_simplejwt.token_blacklist.models import (
+        BlacklistedToken, OutstandingToken,
+    )
+    for outstanding in OutstandingToken.objects.filter(user=user):
+        BlacklistedToken.objects.get_or_create(token=outstanding)
+
 ACCESS_COOKIE = "openvault_access"
 REFRESH_COOKIE = "openvault_refresh"
 

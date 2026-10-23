@@ -1,19 +1,50 @@
-# v0 sandbox internal files
-__v0_runtime_loader.js
-__v0_devtools.tsx
-__v0_jsx-dev-runtime.ts
-.snowflake/
-.v0-trash/
-.vercel/
-
-# Environment variables
-.env*.local
+# ── Secrets / environment ──────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+!.env.*.example
+!**/.env.example
 backend/.env
+*credentials*.json
 
-# Common ignores
-node_modules
+# ── Python ─────────────────────────────────────────────────────────────
+backend/.venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local database + uploaded/generated files (never commit user data)
+backend/db.sqlite3
+backend/data/
+backend/media/
+backend/staticfiles/
+staticfiles/
+
+# ── Frontend ───────────────────────────────────────────────────────────
+node_modules/
 .next/
+out/
+*.tsbuildinfo
+pnpm-debug.log*
+npm-debug.log*
+
+# ── Tests / reports ────────────────────────────────────────────────────
+test-results/
+playwright-report/
+blob-report/
+.nyc_output/
+
+# ── OS / editor ────────────────────────────────────────────────────────
 .DS_Store
+Thumbs.db
 
 # Local dev server logs (start-dev.sh)
 .dev-logs/
+*.log
+
+# Backup archives (may contain customer data)
+backups/

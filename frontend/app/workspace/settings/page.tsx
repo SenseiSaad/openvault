@@ -2,22 +2,17 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import {
-  AlertCircle,
   Building2,
   Check,
-  CheckCircle2,
   ChevronDown,
   Cpu,
   CreditCard,
-  HardDrive,
   KeyRound,
-  Layers,
   Loader2,
   MessageSquare,
   PlugZap,
   RotateCcw,
   Save,
-  Sparkles,
   Users,
 } from 'lucide-react'
 import {
@@ -90,10 +85,10 @@ const PROVIDERS: {
     value: 'bedrock',
     label: 'AWS Bedrock (India)',
     blurb:
-      'Claude on AWS Bedrock via the India inference profile — documents are processed within India AWS infrastructure only, never used for training, never shared with the model provider.',
-    badge: 'Data stays in India',
-    keyLabel: 'AWS credentials — ACCESS_KEY_ID:SECRET_ACCESS_KEY (blank = IAM role)',
-    modelHint: 'e.g. in.anthropic.claude-3-5-haiku-20241022-v1:0',
+      'Claude and Titan through Bedrock’s India inference profile. In Render deployments, store the Bedrock key as a backend secret; never put it in the browser.',
+    badge: 'India inference',
+    keyLabel: 'AWS key pair (ACCESS:SECRET) or Bedrock API key (blank = IAM role)',
+    modelHint: 'e.g. in.anthropic.claude-haiku-4-5-20251001-v1:0',
     usesBaseUrl: true,
   },
 ]
@@ -710,7 +705,13 @@ export default function SettingsPage() {
                         type="password"
                         value={apiKey}
                         onChange={(e) => setApiKey(e.target.value)}
-                        placeholder={cfg?.has_api_key ? '•••••••• (stored, type to replace)' : 'Paste API key'}
+                        placeholder={
+                          cfg?.has_api_key
+                            ? '•••••••• (stored, type to replace)'
+                            : provider === 'bedrock'
+                            ? 'Bedrock API key or ACCESS_KEY_ID:SECRET_ACCESS_KEY'
+                            : 'Paste API key'
+                        }
                         className={`${inputClass} pl-10`}
                       />
                     </div>

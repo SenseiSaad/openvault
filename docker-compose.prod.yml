@@ -1,0 +1,130 @@
+# OpenVault — production stack (single host).
+#
+#   1. cp .env.production.example .env.production   (fill in real values)
+#   2. docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+#
+# Caddy obtains and renews TLS certificates automatically. Point the DOMAIN's
+# DNS A/AAAA record at this server and allow inbound 80/443 before starting.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: always
+    logging: *default-logging
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-openvault}
+      POSTGRES_USER: ${POSTGRES_USER:-openvault}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - ov_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-openvault}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    logging: *default-logging
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ov_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: always
+    logging: *default-logging
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY}
+      DEBUG: "false"
+      ENVIRONMENT: production
+      ALLOW_INSECURE_HTTP: "false"
+      COOKIE_SECURE: "true"
+      ALLOWED_HOSTS: ${DOMAIN:?set DOMAIN},localhost,127.0.0.1
+      CORS_ALLOWED_ORIGINS: https://${DOMAIN}
+      CSRF_TRUSTED_ORIGINS: https://${DOMAIN}
+      PUBLIC_BASE_URL: https://${DOMAIN}
+      REQUIRE_EMAIL_VERIFICATION: ${REQUIRE_EMAIL_VERIFICATION:-true}
+      GUNICORN_WORKERS: ${GUNICORN_WORKERS:-3}
+      POSTGRES_DB: ${POSTGRES_DB:-openvault}
+      POSTGRES_USER: ${POSTGRES_USER:-openvault}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_HOST: db
+      CACHE_URL: redis://redis:6379/1
+      LLM_KEY_ENCRYPTION_KEY: ${LLM_KEY_ENCRYPTION_KEY:-}
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      EMAIL_BACKEND: ${EMAIL_BACKEND:-django.core.mail.backends.smtp.EmailBackend}
+      EMAIL_HOST: ${EMAIL_HOST:-}
+      EMAIL_PORT: ${EMAIL_PORT:-587}
+      EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
+      EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
+      EMAIL_USE_TLS: ${EMAIL_USE_TLS:-true}
+      DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-OpenVault <no-reply@example.com>}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ov_data:/app/data
+      - ov_media:/app/media
+    expose:
+      - "8000"
+
+  web:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: https://${DOMAIN}
+    restart: always
+    logging: *default-logging
+    depends_on:
+      api:
+        condition: service_healthy
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    logging: *default-logging
+    depends_on:
+      web:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  ov_pgdata:
+  ov_redis:
+  ov_data:
+  ov_media:
+  caddy_data:
+  caddy_config:

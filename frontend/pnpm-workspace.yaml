@@ -19,3 +19,5 @@ minimumReleaseAgeExclude:
 # The legacy `node-linker=hoisted` line is kept in .npmrc too for older pnpm.
 nodeLinker: hoisted
 
+allowBuilds:
+  esbuild: true
