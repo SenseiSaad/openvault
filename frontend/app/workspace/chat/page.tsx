@@ -977,8 +977,8 @@ function GeminiKeyModal({
               onChange={(e) => setModel(e.target.value)}
               className="mt-1 h-11 w-full rounded-xl border border-[#d8d5cc] bg-white px-3 text-sm outline-none focus:border-[#1d1d1b]"
             >
-              <option value="gemini-2.5-flash">gemini-2.5-flash (Recommended)</option>
-              <option value="gemini-2.5-flash-lite">gemini-2.5-flash-lite (Fastest / Ultra-low latency)</option>
+              <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Recommended)</option>
+              <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Fastest / Ultra-low latency)</option>
             </select>
           </div>
 
