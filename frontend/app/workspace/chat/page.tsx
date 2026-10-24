@@ -9,7 +9,6 @@ import {
   FileText,
   Globe,
   History,
-  KeyRound,
   Laptop,
   Loader2,
   Mail,
@@ -28,7 +27,6 @@ import {
   askStream,
   chatApi,
   downloadGeneratedForm,
-  settingsApi,
   workApi,
   type Conversation,
   type LlmStatus,
@@ -62,7 +60,6 @@ export default function WorkspaceChatPage() {
   const [streaming, setStreaming] = useState(false)
   const [llm, setLlm] = useState<LlmStatus | null>(null)
   const [mode, setMode] = useState<'local' | 'online'>('online')
-  const [showKeyModal, setShowKeyModal] = useState(false)
 
   // Chat conversation history state
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -94,6 +91,10 @@ export default function WorkspaceChatPage() {
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
   }, [messages])
+
+  const onlineAvailable =
+    llm?.online_api?.provider === 'bedrock' && !!llm.online_api.online
+  const localAvailable = llm?.local?.provider === 'ollama' && !!llm.local.online
 
   const selectConversation = useCallback(
     async (id: number) => {
@@ -160,6 +161,14 @@ export default function WorkspaceChatPage() {
     async (question: string) => {
       const q = question.trim()
       if (!q || streaming) return
+      if (mode === 'online' && !onlineAvailable) {
+        toast.error('Bedrock is not connected. Ask the platform admin to check AI settings.')
+        return
+      }
+      if (mode === 'local' && !localAvailable) {
+        toast.error('The configured Ollama server is not reachable from OpenVault.')
+        return
+      }
       setInput('')
       setStreaming(true)
 
@@ -221,17 +230,13 @@ export default function WorkspaceChatPage() {
         loadConversations()
       }
     },
-    [streaming, mode, currentConversationId, loadConversations],
+    [streaming, mode, currentConversationId, loadConversations, onlineAvailable, localAvailable],
   )
 
   const stop = useCallback(() => {
     abortRef.current?.abort()
     setStreaming(false)
   }, [])
-
-  const onlineAvailable = !!llm?.online_api?.online || (mode === 'online' && !!llm?.online)
-  const localAvailable = !!llm?.local?.online || (mode === 'local' && !!llm?.online)
-  const hasGeminiKey = !!llm?.online_api?.has_key
 
   return (
     <div className="flex h-[calc(100vh-5rem)] gap-4">
@@ -322,7 +327,6 @@ export default function WorkspaceChatPage() {
           llm={llm}
           mode={mode}
           onModeChange={setMode}
-          onOpenKeyModal={() => setShowKeyModal(true)}
         />
 
         <div ref={scrollRef} className="mt-4 flex-1 space-y-6 overflow-y-auto pr-1">
@@ -336,8 +340,6 @@ export default function WorkspaceChatPage() {
             <EmptyState
               mode={mode}
               isAvailable={mode === 'online' ? onlineAvailable : localAvailable}
-              hasGeminiKey={hasGeminiKey}
-              onOpenKeyModal={() => setShowKeyModal(true)}
               onPick={send}
             />
           ) : (
@@ -365,15 +367,6 @@ export default function WorkspaceChatPage() {
           placeholder={t('askPlaceholder', language)}
         />
 
-        {showKeyModal && (
-          <GeminiKeyModal
-            onClose={() => setShowKeyModal(false)}
-            onSaved={() => {
-              setShowKeyModal(false)
-              refreshLlm()
-            }}
-          />
-        )}
       </div>
     </div>
   )
@@ -383,16 +376,13 @@ function ChatHeader({
   llm,
   mode,
   onModeChange,
-  onOpenKeyModal,
 }: {
   llm: LlmStatus | null
   mode: 'local' | 'online'
   onModeChange: (m: 'local' | 'online') => void
-  onOpenKeyModal: () => void
 }) {
   const localOnline = !!llm?.local?.online
-  const onlineReady = !!llm?.online_api?.online
-  const hasKey = !!llm?.online_api?.has_key
+  const onlineReady = llm?.online_api?.provider === 'bedrock' && !!llm.online_api.online
 
   return (
     <header className="border-b border-[#e6e3dc] pb-4">
@@ -407,7 +397,7 @@ function ChatHeader({
           </p>
         </div>
 
-        {/* Local vs Online Switch */}
+        {/* Bedrock vs Local Ollama switch */}
         <div className="flex flex-col items-start gap-1.5 sm:items-end">
           <div className="inline-flex items-center rounded-2xl border border-[#d8d5cc] bg-[#f2efe9] p-1 shadow-inner">
             <button
@@ -420,7 +410,7 @@ function ChatHeader({
               }`}
             >
               <Laptop className="size-3.5" />
-              <span>Locally</span>
+              <span>Local (Ollama)</span>
               <span
                 className={`size-1.5 rounded-full ${
                   localOnline ? 'bg-[#4a8a5c]' : 'bg-[#b9b6ae]'
@@ -438,47 +428,30 @@ function ChatHeader({
               }`}
             >
               <Globe className="size-3.5" />
-              <span>Online (Gemini)</span>
+              <span>Bedrock (AWS)</span>
               <span
                 className={`size-1.5 rounded-full ${
-                  onlineReady ? 'bg-[#4a8a5c]' : hasKey ? 'bg-amber-400' : 'bg-[#b9b6ae]'
+                  onlineReady ? 'bg-[#4a8a5c]' : 'bg-[#b9b6ae]'
                 }`}
-                title={onlineReady ? 'Gemini ready' : 'Gemini key needed'}
+                title={onlineReady ? 'Bedrock ready' : 'Bedrock not connected'}
               />
             </button>
           </div>
 
           <div className="flex items-center gap-2 text-[11px] text-[#6b6862]">
             {mode === 'online' ? (
-              hasKey ? (
-                <div className="flex items-center gap-1.5">
-                  <span className="inline-flex items-center gap-1 text-[#3f6b45]">
-                    <Check className="size-3" /> Gemini ready ({llm?.online_api?.model || 'active'})
-                  </span>
-                  <span>·</span>
-                  <button
-                    type="button"
-                    onClick={onOpenKeyModal}
-                    className="underline hover:text-[#1d1d1b]"
-                  >
-                    Change key
-                  </button>
-                </div>
+              onlineReady ? (
+                <span className="inline-flex items-center gap-1 text-[#3f6b45]">
+                  <Check className="size-3" /> Bedrock ready ({llm?.online_api?.model || 'active'})
+                </span>
               ) : (
-                <button
-                  type="button"
-                  onClick={onOpenKeyModal}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-[#e2d5bc] bg-[#fbf6ea] px-2 py-0.5 text-[11px] font-medium text-[#876527] hover:bg-[#f6eed8]"
-                >
-                  <KeyRound className="size-3" />
-                  Attach Gemini key
-                </button>
+                <span>Bedrock is not connected; ask the platform admin to check AI settings.</span>
               )
             ) : (
               <span>
                 {localOnline
-                  ? `Ollama local (${llm?.local?.model || 'active'})`
-                  : 'Ollama offline (start via ollama serve)'}
+                  ? `Ollama server ready (${llm?.local?.model || 'active'}); retrieval uses the configured embedding provider`
+                  : 'Ollama server offline or unreachable from the API'}
               </span>
             )}
           </div>
@@ -491,14 +464,10 @@ function ChatHeader({
 function EmptyState({
   mode,
   isAvailable,
-  hasGeminiKey,
-  onOpenKeyModal,
   onPick,
 }: {
   mode: 'local' | 'online'
   isAvailable: boolean
-  hasGeminiKey: boolean
-  onOpenKeyModal: () => void
   onPick: (q: string) => void
 }) {
   return (
@@ -515,31 +484,13 @@ function EmptyState({
           Ask anything about your documents
         </h2>
 
-        {mode === 'online' && !hasGeminiKey ? (
-          <div className="mt-3 rounded-2xl border border-[#e6dccb] bg-[#fdfaf3] p-4 text-left">
-            <p className="text-xs font-semibold uppercase tracking-wider text-[#876527]">
-              Gemini API Key Required
-            </p>
-            <p className="mt-1 text-xs leading-relaxed text-[#6b6862]">
-              Attach your Google Gemini key once to enable real-time questions over your documents.
-            </p>
-            <button
-              type="button"
-              onClick={onOpenKeyModal}
-              className="mt-3 inline-flex items-center gap-1.5 rounded-xl bg-[#1d1d1b] px-3.5 py-2 text-xs font-medium text-white transition hover:bg-[#3c3b37]"
-            >
-              <KeyRound className="size-3.5" /> Attach Gemini Key
-            </button>
-          </div>
-        ) : (
-          <p className="mt-1.5 text-sm text-[#6b6862]">
-            {isAvailable
-              ? `Ready using ${mode === 'online' ? 'Gemini (Online)' : 'Ollama (Local)'}. Try one of these:`
-              : mode === 'online'
-              ? 'Checking Gemini connectivity…'
-              : 'The local Ollama model is offline right now. Switch to "Online (Gemini)" or start `ollama serve`.'}
-          </p>
-        )}
+        <p className="mt-1.5 text-sm text-[#6b6862]">
+          {isAvailable
+            ? `Ready using ${mode === 'online' ? 'AWS Bedrock' : 'Local Ollama'}. Try one of these:`
+            : mode === 'online'
+              ? 'Bedrock is not connected. Ask the platform admin to check Workspace Settings → AI.'
+              : 'The configured Ollama server is offline or unreachable from the API.'}
+        </p>
 
         <div className="mt-5 flex flex-col gap-2">
           {EXAMPLES.map((ex) => (
@@ -577,7 +528,7 @@ function Bubble({
           {msg.content}
         </div>
         <span className="mt-1 px-2 text-[10px] text-[#8c8a83]">
-          {msg.mode === 'online' ? '🌐 via Gemini' : '💻 via Local Ollama'}
+          {msg.mode === 'online' ? '🌐 via AWS Bedrock' : '💻 via Local Ollama'}
         </span>
       </div>
     )
@@ -858,7 +809,7 @@ function Composer({
           }}
           rows={1}
           disabled={disabled}
-          placeholder={placeholder || (mode === 'online' ? 'Ask anything using online Gemini model…' : 'Ask anything using local Ollama model…')}
+          placeholder={placeholder || (mode === 'online' ? 'Ask anything using AWS Bedrock…' : 'Ask using the configured local Ollama model…')}
           className="max-h-40 min-h-[2.5rem] flex-1 resize-none bg-transparent px-3 py-2 text-sm text-[#1d1d1b] outline-none placeholder:text-[#6b6862]"
           aria-label="Your question"
         />
@@ -885,125 +836,8 @@ function Composer({
       <div className="mt-2 flex items-center justify-between px-2 text-[11px] text-[#6b6862]">
         <span>Enter to send · Shift+Enter for new line</span>
         <span className="font-mono text-[10px]">
-          Target: {mode === 'online' ? 'Gemini API' : 'Local Ollama'}
+          Target: {mode === 'online' ? 'AWS Bedrock' : 'Local Ollama server'}
         </span>
-      </div>
-    </div>
-  )
-}
-
-function GeminiKeyModal({
-  onClose,
-  onSaved,
-}: {
-  onClose: () => void
-  onSaved: () => void
-}) {
-  const [key, setKey] = useState('')
-  const [model, setModel] = useState('gemini-2.5-flash')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  async function handleSave(e: React.FormEvent) {
-    e.preventDefault()
-    if (!key.trim()) {
-      setError('Please provide a Gemini API key.')
-      return
-    }
-    setSaving(true)
-    setError('')
-    try {
-      await settingsApi.updateLlmConfig({
-        provider: 'gemini',
-        api_key: key.trim(),
-        chat_model: model,
-      })
-      onSaved()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not save Gemini key.')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
-      <div className="w-full max-w-md rounded-3xl border border-[#e6e3dc] bg-[#fffdfa] p-6 shadow-xl">
-        <div className="flex items-center justify-between border-b border-[#e6e3dc] pb-4">
-          <div className="flex items-center gap-2">
-            <span className="grid size-8 place-items-center rounded-xl bg-[#e8f2e8] text-[#3f6b45]">
-              <Globe className="size-4" />
-            </span>
-            <h2 className="text-base font-semibold text-[#1d1d1b]">Configure Gemini API</h2>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg p-1 text-[#6b6862] hover:bg-[#f2efe9]"
-          >
-            <X className="size-5" />
-          </button>
-        </div>
-
-        <form onSubmit={handleSave} className="mt-4 space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-[#6b6862]">Gemini API Key</label>
-            <input
-              type="password"
-              value={key}
-              onChange={(e) => setKey(e.target.value)}
-              placeholder="Paste AI Studio key (e.g. AIzaSy...)"
-              className="mt-1 h-11 w-full rounded-xl border border-[#d8d5cc] bg-white px-3 text-sm outline-none focus:border-[#1d1d1b]"
-              autoFocus
-            />
-            <p className="mt-1 text-[11px] text-[#6b6862]">
-              Get a key from{' '}
-              <a
-                href="https://aistudio.google.com/app/apikey"
-                target="_blank"
-                rel="noreferrer"
-                className="underline hover:text-[#1d1d1b]"
-              >
-                Google AI Studio
-              </a>
-              . Only one API key is needed.
-            </p>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-[#6b6862]">Gemini Model</label>
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="mt-1 h-11 w-full rounded-xl border border-[#d8d5cc] bg-white px-3 text-sm outline-none focus:border-[#1d1d1b]"
-            >
-              <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Recommended)</option>
-              <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (Fastest / Ultra-low latency)</option>
-            </select>
-          </div>
-
-          {error && (
-            <p className="rounded-xl bg-[#fbe4e0] px-3 py-2 text-xs text-[#9a3b2c]">{error}</p>
-          )}
-
-          <div className="flex justify-end gap-2 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-full border border-[#dcdad3] px-4 py-2 text-xs font-medium text-[#6b6862] hover:bg-[#f2efe9]"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="inline-flex items-center gap-1.5 rounded-full bg-[#1d1d1b] px-4 py-2 text-xs font-medium text-white hover:bg-[#3c3b37] disabled:opacity-50"
-            >
-              {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
-              Save & Connect
-            </button>
-          </div>
-        </form>
       </div>
     </div>
   )

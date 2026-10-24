@@ -66,6 +66,37 @@ def test_resolution_prefers_company_override(make_company):
     assert resolved["model"] == "gpt-4o-mini"
 
 
+def test_online_mode_uses_bedrock_instead_of_a_legacy_gemini_config(monkeypatch):
+    LLMConfig.objects.create(
+        company=None,
+        provider="gemini",
+        chat_model="gemini-2.5-flash",
+        api_key="old-gemini-key",
+    )
+    monkeypatch.setenv("LLM_PROVIDER", "bedrock")
+    monkeypatch.setenv("BEDROCK_MODEL", "in.anthropic.claude-haiku-4-5-20251001-v1:0")
+    monkeypatch.setenv("BEDROCK_REGION", "ap-south-1")
+    monkeypatch.setenv("BEDROCK_API_KEY", "bedrock-test-key-long-enough-123456")
+
+    provider = providers.get_chat_provider(mode="online")
+
+    assert provider.label == "bedrock"
+    assert provider.chat_model == "in.anthropic.claude-haiku-4-5-20251001-v1:0"
+    assert provider.api_key == "bedrock-test-key-long-enough-123456"
+
+
+def test_local_mode_uses_ollama_when_bedrock_is_the_default(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "bedrock")
+    monkeypatch.setenv("LLM_URL", "http://ollama.internal:11434")
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5:1.5b")
+
+    provider = providers.get_chat_provider(mode="local")
+
+    assert provider.label == "ollama"
+    assert provider.base == "http://ollama.internal:11434"
+    assert provider.chat_model == "qwen2.5:1.5b"
+
+
 def test_bedrock_api_key_uses_bearer_auth_without_network():
     provider = providers.BedrockProvider(
         "test-bedrock-bearer-token-1234567890", "ap-south-1", "in.example-model"

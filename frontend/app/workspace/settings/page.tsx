@@ -43,8 +43,14 @@ const ghostBtn =
   `inline-flex h-10 items-center justify-center gap-2 rounded-full border border-[#dcdad3] bg-[#fffdfa] px-4 text-xs font-medium text-[#1d1d1b] transition-colors hover:border-[#1d1d1b] disabled:cursor-not-allowed disabled:opacity-60 ${focusRing}`
 const label = 'mb-1 block text-xs font-medium text-[#1d1d1b]'
 
+const BEDROCK_DEFAULT_MODEL = 'in.anthropic.claude-haiku-4-5-20251001-v1:0'
+const BEDROCK_DEFAULT_REGION = 'ap-south-1'
+const OLLAMA_DEFAULT_MODEL = 'qwen2.5:1.5b'
+const OLLAMA_DEFAULT_URL = 'http://localhost:11434'
+type ActiveLlmProvider = Extract<LlmProvider, 'bedrock' | 'ollama'>
+
 const PROVIDERS: {
-  value: LlmProvider
+  value: ActiveLlmProvider
   label: string
   blurb: string
   badge?: string
@@ -53,42 +59,19 @@ const PROVIDERS: {
   usesBaseUrl?: boolean
 }[] = [
   {
-    value: 'ollama',
-    label: 'Local model (Ollama)',
-    blurb: 'Runs entirely on your machine/server: no API key, fully private.',
-    modelHint: 'e.g. qwen2.5:1.5b',
-    usesBaseUrl: true,
-  },
-  {
-    value: 'openai',
-    label: 'OpenAI / Compatible',
-    blurb: 'OpenAI or compatible endpoint (vLLM, Groq, LM Studio).',
-    keyLabel: 'OpenAI API key',
-    modelHint: 'e.g. gpt-4o-mini',
-    usesBaseUrl: true,
-  },
-  {
-    value: 'anthropic',
-    label: 'Anthropic (Claude)',
-    blurb: 'Claude models. Retrieval uses keyword search.',
-    keyLabel: 'Anthropic API key',
-    modelHint: 'e.g. claude-3-5-haiku-latest',
-  },
-  {
-    value: 'gemini',
-    label: 'Google Gemini',
-    blurb: 'Gemini chat and embeddings via Google AI Studio.',
-    keyLabel: 'Gemini API key',
-    modelHint: 'e.g. gemini-2.5-flash',
-  },
-  {
     value: 'bedrock',
     label: 'AWS Bedrock (India)',
-    blurb:
-      'Claude and Titan through Bedrock’s India inference profile. In Render deployments, store the Bedrock key as a backend secret; never put it in the browser.',
+    blurb: 'The platform default for online answers. Only permission-approved passages are sent to Bedrock.',
     badge: 'India inference',
-    keyLabel: 'AWS key pair (ACCESS:SECRET) or Bedrock API key (blank = IAM role)',
-    modelHint: 'e.g. in.anthropic.claude-haiku-4-5-20251001-v1:0',
+    keyLabel: 'Bedrock API key or ACCESS_KEY_ID:SECRET_ACCESS_KEY',
+    modelHint: BEDROCK_DEFAULT_MODEL,
+    usesBaseUrl: true,
+  },
+  {
+    value: 'ollama',
+    label: 'Local model (Ollama)',
+    blurb: 'Uses an Ollama server reachable by the API for chat generation; embeddings remain on the configured platform provider.',
+    modelHint: OLLAMA_DEFAULT_MODEL,
     usesBaseUrl: true,
   },
 ]
@@ -117,7 +100,7 @@ export default function SettingsPage() {
   // AI config
   const [cfg, setCfg] = useState<LlmConfig | null>(null)
   const [aiLoading, setAiLoading] = useState(true)
-  const [provider, setProvider] = useState<LlmProvider>('ollama')
+  const [provider, setProvider] = useState<ActiveLlmProvider>('bedrock')
   const [chatModel, setChatModel] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
@@ -130,9 +113,23 @@ export default function SettingsPage() {
 
   const hydrateAi = useCallback((c: LlmConfig) => {
     setCfg(c)
-    setProvider(c.provider)
-    setChatModel(c.chat_model)
-    setBaseUrl(c.base_url)
+    const supportedProvider: ActiveLlmProvider = c.provider === 'ollama' ? 'ollama' : 'bedrock'
+    const isLegacyProvider = c.provider !== 'bedrock' && c.provider !== 'ollama'
+    setProvider(supportedProvider)
+    setChatModel(
+      isLegacyProvider || !c.chat_model
+        ? supportedProvider === 'bedrock'
+          ? BEDROCK_DEFAULT_MODEL
+          : OLLAMA_DEFAULT_MODEL
+        : c.chat_model,
+    )
+    setBaseUrl(
+      isLegacyProvider || !c.base_url
+        ? supportedProvider === 'bedrock'
+          ? BEDROCK_DEFAULT_REGION
+          : OLLAMA_DEFAULT_URL
+        : c.base_url,
+    )
     setTemperature(String(c.temperature))
     setMaxTokens(String(c.max_tokens))
     setApiKey('')
@@ -203,20 +200,37 @@ export default function SettingsPage() {
     }
   }
 
+  function currentAiUpdate() {
+    const update: Parameters<typeof settingsApi.updateLlmConfig>[0] = {
+      provider,
+      chat_model: chatModel.trim(),
+      base_url: baseUrl.trim(),
+      temperature: Number(temperature) || 0,
+      max_tokens: Number(maxTokens) || 0,
+    }
+    if (apiKey.trim()) {
+      update.api_key = apiKey.trim()
+    } else if (cfg && cfg.provider !== provider) {
+      // Don't accidentally send a saved Gemini/OpenAI secret as a Bedrock key.
+      // An empty key clears that legacy secret and lets Render's Bedrock secret
+      // be used instead.
+      update.api_key = ''
+    }
+    return update
+  }
+
+  async function persistAiConfig() {
+    const updated = await settingsApi.updateLlmConfig(currentAiUpdate())
+    hydrateAi(updated)
+    return updated
+  }
+
   async function onSaveAi(e: FormEvent) {
     e.preventDefault()
     setSavingAi(true)
     setTestResult(null)
     try {
-      const updated = await settingsApi.updateLlmConfig({
-        provider,
-        chat_model: chatModel.trim(),
-        base_url: baseUrl.trim(),
-        temperature: Number(temperature) || 0,
-        max_tokens: Number(maxTokens) || 0,
-        ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
-      })
-      hydrateAi(updated)
+      await persistAiConfig()
       toast.success('AI settings saved.')
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Could not save AI settings.')
@@ -242,6 +256,8 @@ export default function SettingsPage() {
     setTestingAi(true)
     setTestResult(null)
     try {
+      // Test the values currently shown in the form, not a stale database row.
+      await persistAiConfig()
       const res = await settingsApi.llmTest()
       setTestResult(res)
     } catch (err) {
@@ -270,6 +286,7 @@ export default function SettingsPage() {
   if (!user) return null
 
   const activeProvider = PROVIDERS.find((p) => p.value === provider) ?? PROVIDERS[0]
+  const hasLegacyProviderConfig = !!cfg && cfg.provider !== 'bedrock' && cfg.provider !== 'ollama'
   const currentPlan = profile?.plan
 
   return (
@@ -600,14 +617,18 @@ export default function SettingsPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <span className="font-semibold text-[#1d1d1b]">
-                      {cfg?.is_company_override
+                      {hasLegacyProviderConfig
+                        ? 'Legacy AI provider needs updating'
+                        : cfg?.is_company_override
                         ? 'Custom Company Override Active'
                         : isPlatformAdmin
                         ? 'Platform Default Settings'
                         : 'Inheriting Platform Default AI'}
                     </span>
                     <p className="mt-0.5 text-[#6b6862]">
-                      {cfg?.is_company_override
+                      {hasLegacyProviderConfig
+                        ? 'Saving will switch this configuration to Bedrock. Its old provider key will be cleared; enter a Bedrock key or leave it blank to use the Render secret.'
+                        : cfg?.is_company_override
                         ? 'Your organization is overriding the platform LLM with its own model/key.'
                         : 'Currently using the system-wide default LLM provider.'}
                     </p>
@@ -635,7 +656,7 @@ export default function SettingsPage() {
                       id="provider"
                       value={provider}
                       onChange={(e) => {
-                        setProvider(e.target.value as LlmProvider)
+                       setProvider(e.target.value as ActiveLlmProvider)
                         setTestResult(null)
                       }}
                       className={selectClass}
@@ -706,11 +727,11 @@ export default function SettingsPage() {
                         value={apiKey}
                         onChange={(e) => setApiKey(e.target.value)}
                         placeholder={
-                          cfg?.has_api_key
+                          cfg?.has_api_key && cfg.provider === provider
                             ? '•••••••• (stored, type to replace)'
                             : provider === 'bedrock'
-                            ? 'Bedrock API key or ACCESS_KEY_ID:SECRET_ACCESS_KEY'
-                            : 'Paste API key'
+                              ? 'Paste Bedrock API key (or leave blank to use Render secret)'
+                              : 'Ollama does not require an API key'
                         }
                         className={`${inputClass} pl-10`}
                       />
@@ -782,7 +803,7 @@ export default function SettingsPage() {
                     className={ghostBtn}
                   >
                     {testingAi ? <Loader2 className="size-3.5 animate-spin" /> : <PlugZap className="size-3.5" />}
-                    Test Connectivity
+                    Save & Test Connectivity
                   </button>
                 </div>
               </form>

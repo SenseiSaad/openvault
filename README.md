@@ -12,7 +12,7 @@ OpenVault is an enterprise document repository and retrieval-augmented generatio
 2. [Key Implemented Features](#key-implemented-features)
 3. [Security & Authentication Flow](#security--authentication-flow)
 4. [Plans & PKR Billing](#plans--pkr-billing)
-5. [Data Privacy: Google Gemini vs. Local Ollama](#data-privacy-google-gemini-vs-local-ollama)
+5. [Data Privacy: AWS Bedrock and Ollama](#data-privacy-aws-bedrock-and-ollama)
 6. [API Endpoints Reference](#api-endpoints-reference)
 7. [Repository Layout](#repository-layout)
 8. [Local Development & Quick Start](#local-development--quick-start)
@@ -66,10 +66,10 @@ Unlike conventional document repositories or public search tools, OpenVault is b
 - Instant revocation (`DELETE /api/documents/<id>/shares/<user_id>`).
 - Dedicated "Shared with me" view displaying externally granted files.
 
-### 🤖 Multi-Provider Hybrid RAG Assistant
-- Dual-mode chat interface:
-  - **Local Mode:** Offline, privacy-first inference via **Ollama** (`qwen2.5:1.5b` or `llama3.2:3b`, `nomic-embed-text`).
-  - **Online Mode:** Cloud inference via **Google Gemini** (the Render blueprint uses `gemini-2.5-flash` with `gemini-embedding-001`), with optional OpenAI, Anthropic Claude, and AWS Bedrock providers.
+### 🤖 Bedrock + Ollama RAG Assistant
+- Two chat modes: **AWS Bedrock** is the hosted default; **Ollama** is the optional local/server endpoint.
+- Bedrock uses the India inference profile for chat and Titan Text Embeddings V2 for document retrieval. The Render service stores the Bedrock API key as a secret.
+- Ollama must be running at an endpoint reachable from the Django API. On the hosted Render deployment, “Local” means that configured server endpoint—not Ollama on each user's computer.
 - **Hybrid Retrieval:** Blended 70% dense cosine similarity + 30% BM25 keyword retrieval.
 - **Persistent Threads:** Threaded chat history sidebar, title renaming, and deletion.
 - **User Feedback:** Thumbs up / down rating on assistant answers.
@@ -120,7 +120,7 @@ OpenVault subscription tiers are denominated in **Pakistani Rupees (PKR)** and e
 > numbers; the pricing page reads them from `GET /api/plans` at runtime.
 
 ### Infrastructure Cost Basis
-- A typical deployment running on an AWS EC2 `t3.small` instance (~$15/month ≈ PKR 4,200/month) easily supports the cloud-API configuration (Gemini / OpenAI).
+- A typical deployment running on an AWS EC2 `t3.small` instance (~$15/month ≈ PKR 4,200/month) easily supports the Bedrock API configuration.
 - Deployments running local models via Ollama run smoothly on an EC2 `t3.medium` or GPU-backed instance (~$30/month ≈ PKR 8,400/month).
 
 To seed or refresh plans in the database:
@@ -130,18 +130,18 @@ backend/.venv/bin/python backend/manage.py seed_plans
 
 ---
 
-## Data Privacy: Google Gemini vs. Local Ollama
+## Data Privacy: AWS Bedrock and Ollama
 
 Organizations often ask about data security when querying documents with AI. OpenVault provides complete clarity and control:
 
-### 1. Cloud AI: Google Gemini (Online Mode)
-- **What is sent:** When a user asks a question, the question and the top retrieved passages from permitted documents are transmitted over TLS to the Google Gemini API.
-- **Paid / Commercial API Tier:** Under Google's enterprise API terms, **customer data is NOT used to train Google models**. Data is processed solely for inference and retained only temporarily for abuse monitoring.
-- **Free AI Studio Tier:** Prompt data may be sampled by Google for product improvement. Use paid API keys in enterprise production.
+### 1. Cloud AI: Amazon Bedrock
+- **What is sent:** A user's question and only the passages allowed by the document permission filter are sent over TLS to the configured Bedrock inference profile.
+- The current profile is the India geographic profile. Files and the database remain on the Render service in Oregon, so the selected passages travel from Render to Bedrock in India for inference.
+- AWS states that Bedrock inputs and outputs are not used to train the underlying foundation models. Review the relevant model and AWS service terms before processing regulated data.
 
-### 2. Local AI: Ollama (Offline Mode)
-- **Zero Data Leakage:** Both the embedding model (`nomic-embed-text`) and chat model (`qwen2.5` or `llama3.2`) run 100% on your own server.
-- **Strict Privacy:** No text, vectors, or questions ever leave your server or network. Ideal for classified, healthcare, or sensitive legal documents.
+### 2. Ollama mode
+- Chat generation runs on the configured Ollama server. For a fully local RAG path, document and query embeddings must also use a private Ollama endpoint and the document index must be rebuilt with that embedding model.
+- The current hosted setup uses Bedrock embeddings. Selecting Ollama for chat alone does not make retrieval fully local.
 
 ---
 
@@ -342,7 +342,7 @@ Key points:
   The PostgreSQL database already exists in Render and is attached through a
   secret `DATABASE_URL`; the 10 GB upload disk is declared in `render.yaml` and
   is single-instance.
-- `DATABASE_URL`, `GEMINI_API_KEY`, SMTP credentials, and the platform-admin
+- `DATABASE_URL`, `BEDROCK_API_KEY`, SMTP credentials, and the platform-admin
   password are Render secrets. Never put them in `amplify.yml`,
   `NEXT_PUBLIC_*`, or Git.
 - The attached Render database starts empty. To avoid the paid Render Shell,

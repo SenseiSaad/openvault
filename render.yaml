@@ -73,12 +73,14 @@ services:
       - key: EMAIL_HOST_PASSWORD
         sync: false
       - key: LLM_PROVIDER
-        value: gemini
-      - key: GEMINI_MODEL
-        value: gemini-2.5-flash
-      - key: GEMINI_EMBED_MODEL
-        value: gemini-embedding-001
+        value: bedrock
+      - key: BEDROCK_MODEL
+        value: in.anthropic.claude-haiku-4-5-20251001-v1:0
+      - key: BEDROCK_REGION
+        value: ap-south-1
+      - key: BEDROCK_EMBED_MODEL
+        value: amazon.titan-embed-text-v2:0
       - key: EMBED_PROVIDER
-        value: gemini
-      - key: GEMINI_API_KEY
+        value: bedrock
+      - key: BEDROCK_API_KEY
         sync: false

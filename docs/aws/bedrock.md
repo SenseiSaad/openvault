@@ -1,21 +1,19 @@
 # Bedrock setup for OpenVault
 
-> **Deployment note:** the initial Render launch uses Google Gemini
-> (`gemini-2.5-flash`). This document covers the optional AWS-native Bedrock
-> path that is retained for the future ECS/ECR migration.
+> **Deployment note:** the Render launch uses Amazon Bedrock as the default
+> online provider. Local Ollama is a separate optional mode.
 
 ## Credential status
 
-There is **no valid Bedrock API key configured for this project**. A key cannot
-be created without access to the OpenVault AWS account, so this repository
-contains no credential value. The provider supports a Bedrock bearer API key
-through `BEDROCK_API_KEY`, but production should use an ECS task role whenever
-possible.
+Bedrock credentials are deployment secrets and are intentionally not present in
+this repository. The provider supports a Bedrock API key through
+`BEDROCK_API_KEY` or the protected Workspace AI settings; never commit or share
+the key. An AWS-hosted API should prefer an IAM task role.
 
-For the selected Render deployment, the backend is outside AWS and cannot use
-an ECS task role. Add the Bedrock key to Render's **secret** environment
-variables as `BEDROCK_API_KEY`; never add it to Amplify or a `NEXT_PUBLIC_*`
-variable. A future AWS-hosted API should switch to a task role instead.
+For the Render deployment, the backend is outside AWS and cannot use an ECS
+task role. Add the Bedrock key to Render's **secret** environment variables as
+`BEDROCK_API_KEY` or save it through the platform-admin AI settings; never add
+it to Amplify or a `NEXT_PUBLIC_*` variable.
 
 AWS access keys that were previously present in local helper/docs files have
 been removed from those files. If those credentials were ever active, rotate
