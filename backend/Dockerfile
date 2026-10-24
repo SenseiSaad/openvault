@@ -39,6 +39,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD curl -fsS -H "X-Forwarded-Proto: https" "http://localhost:${PORT:-8000}/api/health" || exit 1
 
-# migrate runs at container start (idempotent); seed_plans ensures tiers exist.
+# Migrations and seed_plans run at container start. The optional bootstrap
+# command creates the first platform admin from Render secret env vars.
 # Scale with GUNICORN_WORKERS / GUNICORN_THREADS (2 x CPU + 1 is a good default).
-CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py seed_plans && exec gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers ${GUNICORN_WORKERS:-3} --threads ${GUNICORN_THREADS:-2} --timeout 300 --access-logfile - --error-logfile -"]
+CMD ["sh", "-c", "python manage.py migrate --noinput && python manage.py seed_plans && python manage.py bootstrap_platform_admin && exec gunicorn config.wsgi:application --bind 0.0.0.0:${PORT:-8000} --workers ${GUNICORN_WORKERS:-3} --threads ${GUNICORN_THREADS:-2} --timeout 300 --access-logfile - --error-logfile -"]

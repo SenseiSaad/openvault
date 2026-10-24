@@ -345,8 +345,10 @@ Key points:
 - `DATABASE_URL`, `GEMINI_API_KEY`, SMTP credentials, and the platform-admin
   password are Render secrets. Never put them in `amplify.yml`,
   `NEXT_PUBLIC_*`, or Git.
-- The attached Render database starts empty. Create the single platform admin
-  from Render's shell (see [Platform Administration Commands](#platform-administration-commands)).
+- The attached Render database starts empty. To avoid the paid Render Shell,
+  set `BOOTSTRAP_PLATFORM_ADMIN_EMAIL` and `BOOTSTRAP_PLATFORM_ADMIN_PASSWORD`
+  as Render environment secrets; startup creates the single platform admin.
+  Remove both variables after the first successful startup.
 
 ---
 
@@ -400,9 +402,13 @@ python backend/manage.py create_platform_admin root@openvault.internal
 python backend/manage.py create_platform_admin user@company.com --promote
 ```
 
-Passwords are never stored in this repository. On Render, run the command from
-the service shell and enter the password at the prompt. Use a unique, strong
-password for the production account.
+Passwords are never stored in this repository. For Render deployments without
+Shell access, set `BOOTSTRAP_PLATFORM_ADMIN_EMAIL` and
+`BOOTSTRAP_PLATFORM_ADMIN_PASSWORD` as secret environment variables. The
+container creates/promotes that account after migrations; remove both variables
+after the first successful startup. Use a unique, strong password. The
+`create_platform_admin` command remains available for local and self-hosted
+deployments with shell access.
 
 ### Seed Subscription Plans
 ```bash
