@@ -567,10 +567,9 @@ def _resolve(company=None):
 def get_chat_provider(mode: str = None, provider_override: str = None, company=None):
     """The provider used to ANSWER questions.
 
-    If mode == 'local', uses Ollama.
-    If mode == 'online', uses the online provider (Gemini by default).
-    If provider_override is specified, uses that provider.
-    Otherwise resolves company config -> platform config -> .env.
+    Bedrock is the supported online provider; Ollama is the local/server-hosted
+    option. Legacy provider overrides fall back to Bedrock so a stale
+    Gemini/OpenAI row cannot bypass the two-mode product configuration.
     """
     c = _resolve(company)
     from .models import LLMConfig
@@ -579,13 +578,12 @@ def get_chat_provider(mode: str = None, provider_override: str = None, company=N
     target_provider = (provider_override or "").strip().lower()
     if mode == "local":
         target_provider = "ollama"
-    elif mode == "online":
-        if not target_provider or target_provider == "ollama":
-            # Default online provider is Gemini
-            target_provider = "gemini" if cfg.provider in ("gemini", "ollama") else cfg.provider
-
+    elif mode == "online" and target_provider not in ("bedrock", "ollama"):
+        target_provider = "bedrock"
     if not target_provider:
-        target_provider = c["provider"]
+        target_provider = c["provider"] if c["provider"] in ("bedrock", "ollama") else "bedrock"
+    if target_provider not in ("bedrock", "ollama"):
+        target_provider = "bedrock"
 
     if target_provider == "gemini":
         key = (cfg.api_key if cfg.provider == "gemini" else "") or _env_key("gemini")
@@ -678,7 +676,4 @@ def platform_key(provider):
     from .models import LLMConfig
     cfg = LLMConfig.load()
     return cfg.api_key if cfg.provider == provider else ""
-
-
-
 

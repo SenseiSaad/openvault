@@ -508,15 +508,15 @@ def stream_answer(user, question: str, mode: str | None = None, provider_overrid
         }) + "\n"
 
     if not chat.available():
-        if mode == "online" or chat.label == "gemini":
+        if mode == "online" or chat.label == "bedrock":
             msg = (
-                "The Gemini model is not configured. Please add your Gemini API key "
-                "in AI settings or in the chat toolbar."
+                "The Bedrock model is not configured. Ask a platform admin to "
+                "check Workspace Settings → AI and the Render Bedrock secret."
             )
         elif mode == "local" or chat.label == "ollama":
             msg = (
-                "The local Ollama model is not reachable. Ensure Ollama is running "
-                "(`ollama serve`), or switch to 'Online' mode to chat with Gemini."
+                "The configured Ollama server is not reachable from the API. "
+                "Check its endpoint, or switch to Bedrock."
             )
         else:
             msg = f"The '{chat.label}' model is not reachable. Check your API settings."
@@ -623,4 +623,3 @@ def _log_ask(user, question, mode, provider, chunks_found, answered, flagged, st
         )
     except Exception:
         pass
-

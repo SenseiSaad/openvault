@@ -8,13 +8,13 @@
 | Django API | Render Web Service | `https://api.saadops.site` |
 | PostgreSQL | Render Postgres, private connection | Render internal database URL |
 | Uploaded files/generated forms | Render persistent disk, Oregon (US West) | Not directly public |
-| AI chat + embeddings | Google Gemini API | Called by Django only; `GEMINI_API_KEY` stays in Render |
+| AI chat + embeddings | Amazon Bedrock | Called by Django only; `BEDROCK_API_KEY` stays in Render |
 | DNS | Cloudflare | DNS-only CNAME records initially |
 
-**Billing boundary:** AWS Activate credits can cover eligible AWS Amplify
-charges. They do **not** cover the Render API, database, persistent disk, or
-Gemini API charges. Amazon Bedrock/ECS/ECR remain future AWS deployment options;
-the AWS roadmap elsewhere in the project is retained as future architecture.
+**Billing boundary:** AWS Activate credits may cover eligible AWS Amplify and
+Bedrock charges, subject to the specific award's terms. They do **not** cover
+the Render API, database, or persistent disk. The AWS-native ECS/ECR hosting
+roadmap remains a future option.
 
 ## Why Amplify uses a static export
 
@@ -121,14 +121,13 @@ move the backend into the Amplify build.
    Render Dashboard. The preferred final URL is `https://api.saadops.site`.
 5. The service stores uploads at `/var/data/documents` and generated files at
    `/var/data/media`. Migrations and plan seeding run when the container starts.
-6. Set `GEMINI_API_KEY` as a **secret** environment variable in Render. The
+6. Set `BEDROCK_API_KEY` as a **secret** environment variable in Render. The
    Blueprint marks it `sync: false`; no provider key is committed.
 7. Configure SES SMTP credentials if SES is ready for production sending.
    Email verification is enabled, so configure and test email before public
-   registration. For the present launch, `LLM_PROVIDER=gemini`,
-   `GEMINI_MODEL=gemini-2.5-flash`, and Gemini embeddings are selected by the
-   Blueprint. Bedrock remains available as a later AWS option, not required for
-   the Render launch.
+   registration. For the present launch, the Blueprint selects Bedrock chat
+   with `in.anthropic.claude-haiku-4-5-20251001-v1:0` and Titan embeddings with
+   `amazon.titan-embed-text-v2:0`.
 
 ### Render environment values
 
@@ -142,7 +141,7 @@ secrets in Render's environment screen:
 | `DATABASE_URL` | Internal connection string for the existing Render Postgres database. Store it as a secret; never commit it. |
 | `BOOTSTRAP_PLATFORM_ADMIN_EMAIL` | Email for the one-time initial platform-admin bootstrap. Remove after the account is created. |
 | `BOOTSTRAP_PLATFORM_ADMIN_PASSWORD` | Strong one-time bootstrap password; Render secret only. Remove after the account is created. |
-| `GEMINI_API_KEY` | Secret from Google AI Studio / Google AI API credentials. Required for chat and Gemini embeddings. |
+| `BEDROCK_API_KEY` | Bedrock API key (or supported AWS key pair) stored as a Render secret. Required for the Render-hosted API unless AWS credentials are supplied another way. |
 | `EMAIL_HOST_USER` | SES SMTP username for `ap-south-1`, if sending verification/reset emails through SES. |
 | `EMAIL_HOST_PASSWORD` | Matching SES SMTP password; store as a Render secret. |
 
@@ -153,11 +152,19 @@ The admin bootstrap runs after migrations and plan seeding. Wait for the
 `Platform admin ... created` startup log, then remove both bootstrap variables
 from the Render service and let it restart. The command will not reset an
 existing platform-admin password on later startups.
-Keep `GEMINI_API_KEY` off Amplify—anything named `NEXT_PUBLIC_*` is
-browser-visible. The `LLM_PROVIDER`, `GEMINI_MODEL`, `GEMINI_EMBED_MODEL`, and
-`EMBED_PROVIDER` values in `render.yaml` select Gemini for the initial
-server-side provider. A `LLMConfig` row saved later from workspace settings can
-override environment defaults.
+Keep `BEDROCK_API_KEY` off Amplify—anything named `NEXT_PUBLIC_*` is
+browser-visible. The `LLM_PROVIDER`, `BEDROCK_MODEL`, `BEDROCK_REGION`,
+`BEDROCK_EMBED_MODEL`, and `EMBED_PROVIDER` values in `render.yaml` set Bedrock
+as the platform default. A saved `LLMConfig` row in the database takes
+precedence over Render environment defaults; set the platform default in
+**Workspace → Settings → AI** and use **Test Connectivity** after saving.
+
+The chat's Local option calls Ollama from the Django API using `LLM_URL` (default
+`http://localhost:11434`). Render does not run Ollama in the API container, so
+the option remains offline unless you provide a separate Ollama endpoint
+reachable by the API. It does not connect to Ollama installed on each customer's
+computer. The current Bedrock embedding index is shared by both chat modes;
+fully local retrieval requires changing the embedding endpoint and re-indexing.
 
 If testing before custom domains are ready, temporarily add the exact Amplify
 branch hostname to `CORS_ALLOWED_ORIGINS` and `CSRF_TRUSTED_ORIGINS` in Render.
@@ -283,7 +290,7 @@ Render, test the account flow, then restore it to `true` as soon as email works.
 - [ ] File uploads and generated files survive a Render redeploy (test this
       before real customer data).
 - [ ] Postgres backup/restore and Render disk snapshot/restore are understood.
-- [ ] Gemini test connectivity succeeds, then run one cited-answer test.
+- [ ] Bedrock test connectivity succeeds, then run one cited-answer test.
 - [ ] SES verification and reset mail arrive before inviting real users.
-- [ ] AWS Budget alerts are set for Amplify. Render and Gemini spending are
+- [ ] AWS Budget alerts are set for Amplify and Bedrock. Render spending is
       monitored separately in Render.

@@ -19,7 +19,7 @@ const FAQS = [
   },
   {
     q: 'Where does the AI actually run?',
-    a: 'Companies can use Amazon Bedrock in the AWS India region, another cloud provider, or local models through Ollama. With Bedrock, only permission-approved passages are sent to the model; prompts and documents are not used to train foundation models. Local mode keeps questions, passages, and answers entirely on your own infrastructure.',
+    a: 'The hosted default uses Amazon Bedrock in the AWS India geographic profile; only permission-approved passages are sent for generation. The Local Ollama option runs generation on the Ollama endpoint configured for the API. A fully local RAG deployment must also use a private embedding endpoint and re-index documents with it.',
   },
   {
     q: 'Can we share a document with another company?',

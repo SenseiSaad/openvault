@@ -400,6 +400,8 @@ export interface DocumentShareRow {
   created_at: string
 }
 
+// Read legacy provider values from existing database rows, while the settings
+// UI only offers the two supported launch modes.
 export type LlmProvider = 'ollama' | 'openai' | 'anthropic' | 'gemini' | 'bedrock'
 
 // LLM settings: the platform default (platform admins) or a company override.
