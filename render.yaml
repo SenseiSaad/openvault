@@ -26,6 +26,10 @@ services:
         generateValue: true
       - key: LLM_KEY_ENCRYPTION_KEY
         generateValue: true
+      - key: BOOTSTRAP_PLATFORM_ADMIN_EMAIL
+        sync: false
+      - key: BOOTSTRAP_PLATFORM_ADMIN_PASSWORD
+        sync: false
       - key: ENVIRONMENT
         value: production
       - key: DEBUG

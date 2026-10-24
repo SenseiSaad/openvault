@@ -140,6 +140,8 @@ secrets in Render's environment screen:
 | Key | Value / handling |
 | --- | --- |
 | `DATABASE_URL` | Internal connection string for the existing Render Postgres database. Store it as a secret; never commit it. |
+| `BOOTSTRAP_PLATFORM_ADMIN_EMAIL` | Email for the one-time initial platform-admin bootstrap. Remove after the account is created. |
+| `BOOTSTRAP_PLATFORM_ADMIN_PASSWORD` | Strong one-time bootstrap password; Render secret only. Remove after the account is created. |
 | `GEMINI_API_KEY` | Secret from Google AI Studio / Google AI API credentials. Required for chat and Gemini embeddings. |
 | `EMAIL_HOST_USER` | SES SMTP username for `ap-south-1`, if sending verification/reset emails through SES. |
 | `EMAIL_HOST_PASSWORD` | Matching SES SMTP password; store as a Render secret. |
@@ -147,6 +149,10 @@ secrets in Render's environment screen:
 The database password appears in the connection string, so do not paste that
 URL into `render.yaml`, GitHub, issue trackers, screenshots, or chat. Rotate the
 database password if it has already been shared outside the Render dashboard.
+The admin bootstrap runs after migrations and plan seeding. Wait for the
+`Platform admin ... created` startup log, then remove both bootstrap variables
+from the Render service and let it restart. The command will not reset an
+existing platform-admin password on later startups.
 Keep `GEMINI_API_KEY` off Amplify—anything named `NEXT_PUBLIC_*` is
 browser-visible. The `LLM_PROVIDER`, `GEMINI_MODEL`, `GEMINI_EMBED_MODEL`, and
 `EMBED_PROVIDER` values in `render.yaml` select Gemini for the initial
@@ -188,20 +194,19 @@ restore path. The database is PostgreSQL, not the checked-in local SQLite file.
 The first Render deployment creates an empty database; moving any existing local
 users/documents requires a deliberate export/import and reindex.
 
-Create the single platform administrator after the first successful deploy
-using Render's service shell. Use the production admin email; the command
-prompts for a password without echoing it, or generates a random one if you
-submit a blank password:
+The Render image supports a one-time admin bootstrap so a paid service shell is
+not required. Set `BOOTSTRAP_PLATFORM_ADMIN_EMAIL` and
+`BOOTSTRAP_PLATFORM_ADMIN_PASSWORD` in the Render service's Environment page.
+After the first successful startup, confirm the log says the account was
+created/promoted, then remove both variables. The container never logs the
+password and will not reset an existing platform-admin password. If another
+platform admin already exists, it will not create a second one.
 
-```text
-python manage.py create_platform_admin YOUR_ADMIN_EMAIL
-```
-
-Do not put the admin email or password in `render.yaml`, GitHub, or Amplify
-environment variables. If the account already exists, use the command's
-`--promote` option instead of creating a second user. OpenVault is intended to
-operate with one platform administrator; create tenant users through the normal
-invite/registration flow rather than adding more platform admins.
+Do not put the admin password in `render.yaml`, GitHub, or Amplify environment
+variables. OpenVault is intended to operate with one platform administrator;
+create tenant users through the normal invite/registration flow rather than
+adding more platform admins. The `create_platform_admin` management command
+remains available for local and self-hosted deployments with shell access.
 
 > Use a unique, strong password for the production admin even if the local
 > development database uses a simpler one. The local SQLite database is ignored
