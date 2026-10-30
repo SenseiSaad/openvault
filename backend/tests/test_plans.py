@@ -8,7 +8,7 @@ pytestmark = pytest.mark.django_db
 
 
 def _plan(**overrides):
-    defaults = dict(name="Test Tier", price_pkr=0, max_members=5, max_documents=50,
+    defaults = dict(name="Test Tier", price_usd=0, max_members=5, max_documents=50,
                     storage_mb=512, monthly_ask_limit=100, is_default=False)
     defaults.update(overrides)
     return Plan.objects.create(**defaults)

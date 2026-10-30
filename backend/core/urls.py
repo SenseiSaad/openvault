@@ -19,6 +19,8 @@ urlpatterns = [
     # documents
     path("documents", views.documents),
     path("documents/upload", views.upload_document),
+    path("documents/presign", views.upload_presign),
+    path("documents/confirm", views.upload_confirm),
     path("documents/<int:pk>", views.document_detail),
     path("documents/<int:pk>/download", views.download_document),
     path("documents/<int:pk>/preview", views.document_preview),

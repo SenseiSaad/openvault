@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+db.sqlite3
+data/
+media/
+tests/
+scripts/
+Dockerfile
+render-entrypoint.sh
+pytest.ini
+requirements-dev.txt
+.env
+.env.*

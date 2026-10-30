@@ -22,7 +22,7 @@ from django.http import StreamingHttpResponse, Http404, FileResponse, JsonRespon
 from django.utils import timezone
 from django.utils.text import slugify
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, authentication_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
@@ -31,6 +31,8 @@ from django.conf import settings
 from . import rag
 from . import providers
 from . import moderation
+from . import billing
+from . import storage
 from . import attendance as attendance_svc
 from .auth import (
     set_auth_cookies, clear_auth_cookies, revoke_user_refresh_tokens,
@@ -501,13 +503,8 @@ def upload_document(request):
             return Response({"detail": "Department scoping is not part of your current plan."},
                             status=402)
 
-    folder = os.path.join(settings.DATA_DIR, company.slug)
-    os.makedirs(folder, exist_ok=True)
-    stored = os.path.join(folder, f"{uuid.uuid4().hex}_{f.name}")
-
-    with open(stored, "wb") as out:
-        for chunk in f.chunks():
-            out.write(chunk)
+    rel_key = os.path.join(company.slug, f"{uuid.uuid4().hex}_{f.name}")
+    stored = storage.save_uploaded_file(rel_key, f, base_dir=settings.DATA_DIR)
 
     from django.db import transaction
     with transaction.atomic():
@@ -525,16 +522,90 @@ def upload_document(request):
     return Response(DocumentSerializer(doc).data, status=201)
 
 
+@api_view(["POST"])
+@permission_classes([IsEditor])
+def upload_presign(request):
+    """Return a presigned S3 PUT URL so the browser can upload large files (>4.5 MB)
+    directly to S3 without hitting Vercel's serverless request body limit."""
+    if not storage.is_s3_enabled():
+        return Response({"detail": "Direct S3 upload is not enabled on this server."}, status=400)
+    filename = os.path.basename(str(request.data.get("filename") or "").strip())
+    if not filename:
+        return Response({"detail": "filename is required."}, status=400)
+    size = int(request.data.get("size") or 0)
+    max_size = getattr(settings, "DATA_UPLOAD_MAX_MEMORY_SIZE", 50 * 1024 * 1024)
+    if size > max_size:
+        return Response({"detail": f"File too large. Max size is {max_size // (1024*1024)} MB."}, status=413)
+    company = request.user.company
+    if company is None:
+        return Response({"detail": "Your account is not attached to a company."}, status=400)
+    content_type = str(request.data.get("content_type") or "application/octet-stream")
+    key = f"{company.slug}/{uuid.uuid4().hex}_{filename}"
+    url = storage.generate_presigned_put(key, content_type=content_type)
+    return Response({"upload_url": url, "key": key, "filename": filename})
+
+
+@api_view(["POST"])
+@permission_classes([IsEditor])
+def upload_confirm(request):
+    """Confirm a direct-to-S3 upload, create the Document row, and trigger indexing."""
+    if not storage.is_s3_enabled():
+        return Response({"detail": "Direct S3 upload is not enabled on this server."}, status=400)
+    key = str(request.data.get("key") or "").strip().lstrip("/")
+    filename = os.path.basename(str(request.data.get("filename") or "").strip())
+    company = request.user.company
+    if company is None or not key.startswith(f"{company.slug}/"):
+        return Response({"detail": "Invalid storage key for your company."}, status=400)
+    if not storage.exists(key):
+        return Response({"detail": "Uploaded object not found in storage."}, status=404)
+
+    size = int(request.data.get("size") or 0)
+    content_type = str(request.data.get("content_type") or "")
+    is_okf = str(request.data.get("is_okf", "")).lower() in ("1", "true", "yes", "on")
+    access_scope = (request.data.get("access_scope") or "company").strip().lower()
+    if access_scope not in {"company", "restricted", "department"}:
+        return Response({"detail": "access_scope must be company, department or restricted."}, status=400)
+    category = request.data.get("category") or "Other"
+    description = request.data.get("description") or ""
+    tags = str(request.data.get("tags") or "").strip()[:300]
+
+    plan = _plan_for(company)
+    department = None
+    if access_scope == "department":
+        dept_id = request.data.get("department_id")
+        if dept_id:
+            department = Department.objects.filter(pk=dept_id, company=company).first()
+        if department is None and request.user.department_id:
+            department = request.user.department
+        if department is None:
+            return Response({"detail": "Pick a department (or join one) to use department scope."}, status=400)
+        if not (plan and plan.allow_departments):
+            return Response({"detail": "Department scoping is not part of your current plan."}, status=402)
+
+    from django.db import transaction
+    with transaction.atomic():
+        doc = Document.objects.create(
+            company=company, filename=filename, stored_path=key,
+            content_type=content_type, size=size,
+            category=category, description=description, tags=tags,
+            is_okf=is_okf, access_scope=access_scope, department=department,
+            uploaded_by=request.user, indexing_status="pending",
+        )
+        DocumentAccess.objects.create(document=doc, user=request.user)
+        audit(request, "upload", filename)
+
+    _index_in_background(doc)
+    return Response(DocumentSerializer(doc).data, status=201)
+
+
 def _index_in_background(doc: Document):
-    """Extract/chunk/embed a document off the request thread. Status flips to
-    ready/failed so the UI can show progress. SQLite-safe: one writer at a time,
-    short transaction, and failures leave the row marked failed (retryable)."""
+    """Extract/chunk/embed a document. On serverless platforms (SYNC_INDEXING=True)
+    this runs inline before returning; otherwise it runs on a daemon thread."""
     def run():
         from django.db import close_old_connections
         close_old_connections()
         try:
-            with open(doc.stored_path, "rb") as disk_file:
-                raw = disk_file.read()
+            raw = storage.read_bytes(doc.stored_path, base_dir=settings.DATA_DIR)
             n = rag.index_document(doc, raw)
             doc.indexing_status = "ready" if n >= 0 else "failed"
             doc.index_error = ""
@@ -543,13 +614,19 @@ def _index_in_background(doc: Document):
             doc.index_error = str(exc)[:300]
         finally:
             doc.save(update_fields=["indexing_status", "index_error"])
-            close_old_connections()
+            if not getattr(settings, "SYNC_INDEXING", False):
+                close_old_connections()
+
+    if getattr(settings, "SYNC_INDEXING", False):
+        run()
+        return
+
     try:
         threading.Thread(target=run, daemon=True).start()
     except Exception:
         # Thread creation failed (rare): index inline so the doc is searchable.
-        with open(doc.stored_path, "rb") as disk_file:
-            rag.index_document(doc, disk_file.read())
+        raw = storage.read_bytes(doc.stored_path, base_dir=settings.DATA_DIR)
+        rag.index_document(doc, raw)
         doc.indexing_status = "ready"
         doc.save(update_fields=["indexing_status"])
 
@@ -578,11 +655,8 @@ def document_detail(request, pk):
     if request.method == "DELETE":
         if not _is_editor_request(request):
             return Response({"detail": "Viewers cannot delete documents."}, status=403)
-        if doc.stored_path and os.path.exists(doc.stored_path):
-            try:
-                os.remove(doc.stored_path)
-            except OSError:
-                pass
+        if doc.stored_path:
+            storage.delete(doc.stored_path, base_dir=settings.DATA_DIR)
         name = doc.filename
         doc.delete()
         audit(request, "delete", name)
@@ -644,12 +718,8 @@ def document_new_version(request, pk):
         document=doc, version_number=doc.version, stored_path=old_path,
         filename=doc.filename, size=old_size, uploaded_by=request.user,
     )
-    folder = os.path.join(settings.DATA_DIR, company.slug)
-    os.makedirs(folder, exist_ok=True)
-    stored = os.path.join(folder, f"{uuid.uuid4().hex}_{f.name}")
-    with open(stored, "wb") as out:
-        for chunk in f.chunks():
-            out.write(chunk)
+    rel_key = os.path.join(company.slug, f"{uuid.uuid4().hex}_{f.name}")
+    stored = storage.save_uploaded_file(rel_key, f, base_dir=settings.DATA_DIR)
     doc.stored_path = stored
     doc.filename = f.name
     doc.content_type = f.content_type or ""
@@ -727,12 +797,16 @@ def download_document(request, pk):
     doc = _accessible_doc(request, pk)
     if not _can_download(request, doc):
         return Response({"detail": "Download is disabled for this document."}, status=403)
-    if not doc.stored_path or not os.path.exists(doc.stored_path):
+    if not doc.stored_path or not storage.exists(doc.stored_path, base_dir=settings.DATA_DIR):
         raise Http404
     doc.downloads += 1
     doc.save(update_fields=["downloads"])
     audit(request, "download", doc.filename)
-    return FileResponse(open(doc.stored_path, "rb"), as_attachment=True, filename=doc.filename)
+    return FileResponse(
+        storage.open_stream(doc.stored_path, base_dir=settings.DATA_DIR),
+        as_attachment=True,
+        filename=doc.filename,
+    )
 
 
 @api_view(["GET"])
@@ -740,12 +814,12 @@ def download_document(request, pk):
 def document_preview(request, pk):
     """Return extracted plain text for in-browser preview (ACL-checked)."""
     doc = _accessible_doc(request, pk)
-    if not doc.stored_path or not os.path.exists(doc.stored_path):
+    if not doc.stored_path or not storage.exists(doc.stored_path, base_dir=settings.DATA_DIR):
         raise Http404
     from django.utils.text import slugify  # noqa: F401
     try:
-        with open(doc.stored_path, "rb") as fh:
-            text = rag.extract_text(fh.read(), doc.filename, doc.content_type)
+        raw = storage.read_bytes(doc.stored_path, base_dir=settings.DATA_DIR)
+        text = rag.extract_text(raw, doc.filename, doc.content_type)
     except OSError:
         raise Http404
     audit(request, "preview", doc.filename)
@@ -894,6 +968,7 @@ def llm_status(request):
         "provider": prov.label,
         "model": prov.chat_model,
         "company_override": _LLMConfig.for_company(company) is not None if company else False,
+        "key_source": providers._resolve(company)["key_source"],
         "local": {
             "online": local_prov.available(),
             "provider": local_prov.label,
@@ -1182,8 +1257,19 @@ def llm_config(request):
     if request.method == "GET":
         data = LLMConfigSerializer(cfg).data
         if not is_override:
-            # Surface the platform defaults to plain company admins too.
-            pass
+            # Surface the EFFECTIVE platform defaults. A stale platform row must
+            # not hide the shared Render Bedrock key / Claude 4.5 model.
+            effective = providers._resolve(request.user.company)
+            data.update({
+                "provider": effective["provider"],
+                "chat_model": effective["model"],
+                "base_url": effective["base_url"],
+                "temperature": effective["temperature"],
+                "max_tokens": effective["max_tokens"],
+                "key_source": effective["key_source"],
+                "platform_key_in_use": effective["key_source"] == "platform_env",
+                "has_api_key": effective["key_source"] in ("platform_env", "row", "company"),
+            })
         return Response(data)
     if request.method == "DELETE" and is_override:
         cfg.delete()
@@ -1377,8 +1463,8 @@ def usage(request):
     def remaining(used, cap):
         return None if cap is None else max(cap - used, 0)
 
-    upgrades = Plan.objects.filter(is_active=True, price_pkr__gt=plan.price_pkr) \
-                           .order_by("price_pkr")
+    upgrades = Plan.objects.filter(is_active=True, price_usd__gt=plan.price_usd) \
+                           .order_by("price_usd")
     return Response({
         "plan": PlanSerializer(plan).data,
         "usage": {
@@ -1405,7 +1491,7 @@ def usage(request):
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def plans(request):
-    """Public plan catalogue (PKR pricing) for the pricing page."""
+    """Public plan catalogue (USD pricing) for the pricing page."""
     qs = Plan.objects.filter(is_active=True)
     return Response(PlanSerializer(qs, many=True).data)
 
@@ -1425,7 +1511,7 @@ def company_set_plan(request, pk):
     company.plan = plan
     company.save(update_fields=["plan"])
     AuditLog.objects.create(company=company, user=request.user, action="plan_change",
-                            detail=f"-> {plan.name} (PKR {plan.price_pkr}/{plan.billing_period})",
+                            detail=f"-> {plan.name} (${plan.price_usd}/{plan.billing_period})",
                             ip=client_ip(request))
     return Response({"ok": True, "company": company.name, "plan": PlanSerializer(plan).data})
 
@@ -1477,12 +1563,25 @@ def detach_company(request):
 @permission_classes([IsAuthenticated])
 def workflow_form_download(request, user_id, name):
     """Serve a generated workflow document (e.g. an auto-filled leave form) to
-    its owner. Path is confined to MEDIA_ROOT/forms/<user_id>/."""
+    its owner. Path is confined to MEDIA_ROOT/forms/<user_id>/ (or S3 forms/<user_id>/)."""
     if not (_is_platform_level(request.user) or request.user.id == user_id):
         return Response({"detail": "You can only download your own forms."}, status=403)
 
+    safe_name = os.path.basename(name)
+    if safe_name != name or ".." in name:
+        raise Http404
+
+    rel_key = os.path.join("forms", str(user_id), safe_name)
+    if storage.is_s3_enabled() and storage.exists(rel_key, base_dir=settings.MEDIA_ROOT):
+        audit(request, "form_download", safe_name)
+        return FileResponse(
+            storage.open_stream(rel_key, base_dir=settings.MEDIA_ROOT),
+            as_attachment=True,
+            filename=safe_name,
+        )
+
     base_dir = os.path.realpath(os.path.join(settings.MEDIA_ROOT, "forms", str(user_id)))
-    requested = os.path.realpath(os.path.join(base_dir, name))
+    requested = os.path.realpath(os.path.join(base_dir, safe_name))
     if requested != base_dir and not requested.startswith(base_dir + os.sep):
         raise Http404
     if not os.path.isfile(requested):

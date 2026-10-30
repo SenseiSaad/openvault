@@ -56,7 +56,7 @@ export function PlanCard({
         )}
         <div className="flex items-baseline gap-1.5 whitespace-nowrap">
           <span className="text-[1.7rem] font-medium tracking-[-0.045em]">
-            PKR {plan.price_pkr.toLocaleString('en-PK')}
+            ${plan.price_usd.toLocaleString('en-US')}
           </span>
           <span className="text-[11px] text-muted-foreground">{perMonthLabel}</span>
         </div>

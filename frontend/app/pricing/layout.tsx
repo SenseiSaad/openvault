@@ -1,9 +1,9 @@
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Pricing',
+  title: 'Early-access pricing',
   description:
-    'Simple, honest pricing for private company knowledge. Every OpenVault plan includes tenant isolation, permission-aware AI, and an audit trail.',
+    'OpenVault is in early access. USD plans and local payment options are being finalized and will be published before general availability.',
 }
 
 export default function PricingLayout({ children }: { children: React.ReactNode }) {

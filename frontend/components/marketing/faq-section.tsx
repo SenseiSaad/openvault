@@ -22,6 +22,10 @@ const FAQS = [
     a: 'The hosted default uses Amazon Bedrock in the AWS India geographic profile; only permission-approved passages are sent for generation. The Local Ollama option runs generation on the Ollama endpoint configured for the API. A fully local RAG deployment must also use a private embedding endpoint and re-index documents with it.',
   },
   {
+    q: 'Is OpenVault running entirely on AWS today?',
+    a: 'AWS Amplify serves the live frontend today. The production target is AWS for the backend and AI: Bedrock, ECS/Fargate, RDS, S3, Route 53 and CloudWatch. During development and the private beta, some supporting services may run outside AWS for testing. Tenant isolation and permission filtering are enforced by the application, so the privacy model does not change during the transition. The privacy page lists the services in the current deployment.',
+  },
+  {
     q: 'Can we share a document with another company?',
     a: 'Yes. Find the registered partner by its five-character company code, select one of its employees, and grant one document. Download permission is configurable, access is logged, and revocation is immediate.',
   },

@@ -9,7 +9,7 @@ pytestmark = pytest.mark.django_db
 
 
 def _custom_llm_plan():
-    return Plan.objects.create(name="BYO LLM", price_pkr=0, max_members=5,
+    return Plan.objects.create(name="BYO LLM", price_usd=0, max_members=5,
                                allow_custom_llm=True, is_default=False)
 
 
@@ -83,6 +83,78 @@ def test_online_mode_uses_bedrock_instead_of_a_legacy_gemini_config(monkeypatch)
     assert provider.label == "bedrock"
     assert provider.chat_model == "in.anthropic.claude-haiku-4-5-20251001-v1:0"
     assert provider.api_key == "bedrock-test-key-long-enough-123456"
+    assert providers._resolve()["key_source"] == "platform_env"
+
+
+def test_render_bedrock_key_beats_a_stale_platform_bedrock_row(monkeypatch):
+    """A saved platform row must not pin an old key/model for every user."""
+    LLMConfig.objects.create(
+        company=None,
+        provider="bedrock",
+        chat_model="in.anthropic.claude-3-5-sonnet-20240620-v1:0",
+        api_key="stale-platform-key-123456",
+        base_url="us-east-1",
+    )
+    monkeypatch.setenv("LLM_PROVIDER", "bedrock")
+    monkeypatch.setenv("BEDROCK_MODEL", "in.anthropic.claude-haiku-4-5-20251001-v1:0")
+    monkeypatch.setenv("BEDROCK_REGION", "ap-south-1")
+    monkeypatch.setenv("BEDROCK_API_KEY", "render-shared-key-long-enough-123456")
+
+    resolved = providers._resolve()
+    assert resolved["provider"] == "bedrock"
+    assert resolved["model"] == "in.anthropic.claude-haiku-4-5-20251001-v1:0"
+    assert resolved["api_key"] == "render-shared-key-long-enough-123456"
+    assert resolved["base_url"] == "ap-south-1"
+    assert resolved["key_source"] == "platform_env"
+
+    online = providers.get_chat_provider(mode="online")
+    assert online.api_key == "render-shared-key-long-enough-123456"
+    assert online.chat_model == "in.anthropic.claude-haiku-4-5-20251001-v1:0"
+
+
+def test_embedding_uses_the_render_bedrock_key(monkeypatch):
+    LLMConfig.objects.create(
+        company=None, provider="bedrock",
+        api_key="stale-embedding-key-123456",
+        chat_model="in.anthropic.claude-haiku-4-5-20251001-v1:0",
+    )
+    monkeypatch.setenv("EMBED_PROVIDER", "bedrock")
+    monkeypatch.setenv("LLM_PROVIDER", "bedrock")
+    monkeypatch.setenv("BEDROCK_REGION", "ap-south-1")
+    monkeypatch.setenv("BEDROCK_API_KEY", "render-shared-key-long-enough-123456")
+
+    provider = providers.get_embed_provider()
+    assert isinstance(provider, providers.BedrockProvider)
+    assert provider.api_key == "render-shared-key-long-enough-123456"
+    assert provider.region == "ap-south-1"
+
+
+def test_llm_config_read_reports_platform_key_without_leaking_it(auth_client, monkeypatch):
+    from core.models import User
+
+    caller = User.objects.create_user(
+        email="platform@example.com", password="Valid!Pass99", company=None,
+        role="admin", is_platform_admin=True, email_verified=True,
+    )
+    LLMConfig.objects.create(
+        company=None, provider="gemini", chat_model="gemini-2.5-flash",
+        api_key="old-gemini-key",
+    )
+    monkeypatch.setenv("LLM_PROVIDER", "bedrock")
+    monkeypatch.setenv("BEDROCK_MODEL", "in.anthropic.claude-haiku-4-5-20251001-v1:0")
+    monkeypatch.setenv("BEDROCK_REGION", "ap-south-1")
+    monkeypatch.setenv("BEDROCK_API_KEY", "render-shared-key-long-enough-123456")
+
+    resp = auth_client(caller).get("/api/admin/llm-config")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["provider"] == "bedrock"
+    assert body["chat_model"] == "in.anthropic.claude-haiku-4-5-20251001-v1:0"
+    assert body["key_source"] == "platform_env"
+    assert body["platform_key_in_use"] is True
+    assert body["has_api_key"] is True
+    assert "api_key" not in body
+    assert "render-shared-key" not in str(body)
 
 
 def test_local_mode_uses_ollama_when_bedrock_is_the_default(monkeypatch):

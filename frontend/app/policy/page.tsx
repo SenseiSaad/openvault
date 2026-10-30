@@ -38,6 +38,44 @@ const POLICIES = [
   },
 ]
 
+const SERVICES = [
+  {
+    name: 'AWS Amplify',
+    role: 'Web delivery',
+    location: 'AWS edge network',
+    detail:
+      'Builds and serves the statically exported frontend. It does not receive uploaded documents or chat content.',
+  },
+  {
+    name: 'Amazon Bedrock',
+    role: 'AI inference',
+    location: 'AWS Asia Pacific (Mumbai)',
+    detail:
+      'Receives only the question and the passages the asking user is permitted to see. Claude Haiku 4.5 generates the answer; Titan Text Embeddings V2 creates the vectors used for retrieval.',
+  },
+  {
+    name: 'Render',
+    role: 'API, database, files',
+    location: 'Oregon, United States',
+    detail:
+      'Runs the Django API and PostgreSQL database and stores uploaded documents and generated forms on a persistent disk during the private beta.',
+  },
+  {
+    name: 'Cloudflare',
+    role: 'DNS',
+    location: 'Global anycast network',
+    detail:
+      'Provides authoritative DNS for the OpenVault custom domains. It does not receive document or chat content.',
+  },
+  {
+    name: 'Vercel Analytics',
+    role: 'Public-site analytics',
+    location: 'United States',
+    detail:
+      'Measures aggregate page views on the public marketing site. It does not receive uploaded documents, chat content, or account credentials.',
+  },
+]
+
 const slug = (value: string) =>
   value
     .toLowerCase()
@@ -144,6 +182,58 @@ export default function PolicyPage() {
             </Reveal>
           </div>
         </div>
+      </section>
+
+      <section
+        className="container-page scroll-mt-28 pb-16 sm:pb-20"
+        aria-labelledby="services-title"
+      >
+        <Reveal>
+          <div className="border-t border-border pt-10 sm:pt-12">
+            <div className="max-w-2xl">
+              <p className="eyebrow">Current deployment</p>
+              <h2 id="services-title" className="display-md mt-4">
+                Services that can touch data.
+              </h2>
+              <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
+                OpenVault is in private beta. These are the third-party services in the current
+                deployment, what each receives, and where it runs.
+              </p>
+            </div>
+
+            <div className="mt-9 divide-y divide-border border-y border-border">
+              {SERVICES.map((service) => (
+                <div
+                  key={service.name}
+                  className="grid gap-2 py-5 sm:grid-cols-[0.85fr_0.55fr_1.6fr] sm:gap-6"
+                >
+                  <div>
+                    <p className="text-[13px] font-medium">{service.name}</p>
+                    <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.13em] text-accent">
+                      {service.role}
+                    </p>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-muted-foreground">
+                    {service.location}
+                  </p>
+                  <p className="text-[12px] leading-relaxed text-muted-foreground">
+                    {service.detail}
+                  </p>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-6 flex items-start gap-3 rounded-xl border border-border bg-surface/60 p-5">
+              <ShieldCheck className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden />
+              <p className="max-w-3xl text-[11.5px] leading-relaxed text-muted-foreground">
+                <span className="font-medium text-foreground">Production target.</span> The backend
+                and data layer are being prepared on AWS: ECS/Fargate, RDS, S3, Route 53 and
+                CloudWatch, alongside Amplify and Bedrock. Until that cutover is complete, the beta
+                services above remain in use. We will update this page before production onboarding.
+              </p>
+            </div>
+          </div>
+        </Reveal>
       </section>
 
       <section className="container-page pb-16 sm:pb-20">

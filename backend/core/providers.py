@@ -543,24 +543,71 @@ def _env_base(provider):
     return ""
 
 
+def shared_bedrock_key():
+    """The platform-wide Bedrock bearer token from the Render environment.
+
+    Returns an empty string unless Bedrock is the configured platform provider
+    (or LLM_PROVIDER is unset). This is deliberately separate from a company's
+    optional BYO key: it is the key every ordinary signed-in user shares.
+    """
+    provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+    if provider not in ("", "bedrock"):
+        return ""
+    return os.getenv("BEDROCK_API_KEY", "").strip()
+
+
 def _resolve(company=None):
     """Merge LLM settings over the .env defaults.
 
-    Precedence: the company's own override row (per-tenant BYO key), then the
-    platform-wide row, then .env.
+    Precedence:
+      1. A company's explicit override row (per-tenant BYO key).
+      2. For the platform default, the Render environment's Bedrock key/model
+         wins over a stale platform LLMConfig row. This is what makes every
+         ordinary signed-in user share the same Bedrock key and Claude 4.5
+         default without needing to paste a key.
+      3. The platform row, then .env.
     """
     from .models import LLMConfig
-    row = LLMConfig.for_company(company) or LLMConfig.load()
-    provider = (row.provider or os.getenv("LLM_PROVIDER", "ollama")).strip().lower()
-    if provider not in DEFAULT_MODELS:
-        provider = "ollama"
+    company_row = LLMConfig.for_company(company)
+    row = company_row or LLMConfig.load()
+    shared_key = shared_bedrock_key()
+    env_provider = os.getenv("LLM_PROVIDER", "").strip().lower()
+
+    # A platform-wide Bedrock key in Render is authoritative for the shared
+    # default. Ignore an older platform row that may still say Gemini/OpenAI or
+    # carry a different Bedrock key/model.
+    if company_row is None and shared_key and env_provider in ("", "bedrock"):
+        provider = "bedrock"
+        model = _env_model("bedrock")
+        api_key = shared_key
+        base_url = _env_base("bedrock")
+        key_source = "platform_env"
+    else:
+        provider = (row.provider or os.getenv("LLM_PROVIDER", "ollama")).strip().lower()
+        if provider not in DEFAULT_MODELS:
+            provider = "ollama"
+        model = (row.chat_model or "").strip() or _env_model(provider)
+        api_key = (row.api_key or "").strip() or _env_key(provider)
+        base_url = (row.base_url or "").strip() or _env_base(provider)
+        if company_row is not None and (company_row.api_key or "").strip():
+            key_source = "company"
+        elif shared_key and provider == "bedrock":
+            key_source = "platform_env"
+        elif (row.api_key or "").strip():
+            key_source = "row"
+        elif provider == "bedrock":
+            key_source = "iam"
+        else:
+            key_source = "none"
+
     return {
         "provider": provider,
-        "model": (row.chat_model or "").strip() or _env_model(provider),
-        "api_key": (row.api_key or "").strip() or _env_key(provider),
-        "base_url": (row.base_url or "").strip() or _env_base(provider),
+        "model": model,
+        "api_key": api_key,
+        "base_url": base_url,
         "temperature": row.temperature,
         "max_tokens": row.max_tokens,
+        "key_source": key_source,
     }
 
 
@@ -572,8 +619,6 @@ def get_chat_provider(mode: str = None, provider_override: str = None, company=N
     Gemini/OpenAI row cannot bypass the two-mode product configuration.
     """
     c = _resolve(company)
-    from .models import LLMConfig
-    cfg = LLMConfig.for_company(company) or LLMConfig.load()
 
     target_provider = (provider_override or "").strip().lower()
     if mode == "local":
@@ -582,35 +627,32 @@ def get_chat_provider(mode: str = None, provider_override: str = None, company=N
         target_provider = "bedrock"
     if not target_provider:
         target_provider = c["provider"] if c["provider"] in ("bedrock", "ollama") else "bedrock"
-    if target_provider not in ("bedrock", "ollama"):
+    if target_provider not in ("bedrock", "ollama", "gemini", "openai", "anthropic"):
         target_provider = "bedrock"
 
     if target_provider == "gemini":
-        key = (cfg.api_key if cfg.provider == "gemini" else "") or _env_key("gemini")
-        if not key and cfg.api_key:
-            # Fallback to key in LLMConfig
-            key = cfg.api_key
-        model = (cfg.chat_model if cfg.provider == "gemini" else "") or _env_model("gemini") or "gemini-2.5-flash"
+        key = c["api_key"] if c["provider"] == "gemini" else _env_key("gemini")
+        model = c["model"] if c["provider"] == "gemini" else _env_model("gemini")
         prov = GeminiProvider(key, model)
     elif target_provider == "openai":
-        key = (cfg.api_key if cfg.provider == "openai" else "") or _env_key("openai") or cfg.api_key
-        model = (cfg.chat_model if cfg.provider == "openai" else "") or _env_model("openai") or "gpt-4o-mini"
-        base = (cfg.base_url if cfg.provider == "openai" else "") or _env_base("openai")
+        key = c["api_key"] if c["provider"] == "openai" else _env_key("openai")
+        model = c["model"] if c["provider"] == "openai" else _env_model("openai")
+        base = c["base_url"] if c["provider"] == "openai" else _env_base("openai")
         prov = OpenAIProvider(key, base, model)
     elif target_provider == "anthropic":
-        key = (cfg.api_key if cfg.provider == "anthropic" else "") or _env_key("anthropic") or cfg.api_key
-        model = (cfg.chat_model if cfg.provider == "anthropic" else "") or _env_model("anthropic") or "claude-3-5-haiku-latest"
+        key = c["api_key"] if c["provider"] == "anthropic" else _env_key("anthropic")
+        model = c["model"] if c["provider"] == "anthropic" else _env_model("anthropic")
         prov = AnthropicProvider(key, model)
     elif target_provider == "bedrock":
         # Blank key = boto3 default credential chain (IAM role on EC2).
-        key = (cfg.api_key if cfg.provider == "bedrock" else "") or _env_key("bedrock")
-        region = (cfg.base_url if cfg.provider == "bedrock" else "") or _env_base("bedrock")
-        model = (cfg.chat_model if cfg.provider == "bedrock" else "") or _env_model("bedrock") or DEFAULT_MODELS["bedrock"]
+        key = c["api_key"] if c["provider"] == "bedrock" else _env_key("bedrock")
+        region = c["base_url"] if c["provider"] == "bedrock" else _env_base("bedrock")
+        model = c["model"] if c["provider"] == "bedrock" else _env_model("bedrock")
         prov = BedrockProvider(key, region, model)
     else:
         # ollama / local
-        base = (cfg.base_url if cfg.provider == "ollama" else "") or _env_base("ollama")
-        model = (cfg.chat_model if cfg.provider == "ollama" else "") or _env_model("ollama") or "qwen2.5:1.5b"
+        base = c["base_url"] if c["provider"] == "ollama" else _env_base("ollama")
+        model = c["model"] if c["provider"] == "ollama" else _env_model("ollama")
         prov = OllamaProvider(base, model, os.getenv("EMBED_MODEL", "nomic-embed-text"))
 
     prov.temperature = c["temperature"]
@@ -672,8 +714,16 @@ def get_embed_provider(company=None):
 
 
 def platform_key(provider):
-    """The platform LLMConfig row's api_key when it is configured for `provider`."""
+    """The platform key for `provider`, preferring the Render Bedrock secret.
+
+    A stale platform row must not pin an old Bedrock key for embeddings either;
+    the shared Render key is the single key ordinary users should use.
+    """
     from .models import LLMConfig
+    if provider == "bedrock":
+        env_key = shared_bedrock_key()
+        if env_key:
+            return env_key
     cfg = LLMConfig.load()
     return cfg.api_key if cfg.provider == provider else ""
 

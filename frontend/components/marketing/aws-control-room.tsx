@@ -36,16 +36,16 @@ export function AwsControlRoom() {
             <Cloud className="size-3.5" aria-hidden />
           </span>
           <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#f3efe5]/70">
-            Production control room
+            Production target · AWS
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[9.5px] uppercase tracking-[0.13em] text-[#f3efe5]/40">
           <span className="inline-flex items-center gap-1.5">
             <span className="pulse-dot size-1.5 rounded-full bg-[#7fb889]" aria-hidden />
-            Bedrock · AWS India
+            Amplify · live web
           </span>
-          <span>Amplify · static web</span>
-          <span>Render · Oregon</span>
+          <span>Bedrock · AI target</span>
+          <span>AWS · final product</span>
         </div>
       </div>
 
@@ -97,12 +97,12 @@ export function AwsControlRoom() {
 
           <div className="mt-6 hidden border-t border-white/10 pt-5 lg:block">
             <p className="text-[10px] leading-relaxed text-[#f3efe5]/35">
-              Launch topology: Amplify serves the frontend, Render runs the API and data, and
-              Bedrock provides the managed AI path.
+              Amplify is live today. Bedrock, ECS, RDS and S3 are the production target; the beta
+              may use supporting test services outside AWS. The access model is unchanged.
             </p>
             <p className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-white/10 px-2.5 py-1 text-[9px] uppercase tracking-[0.12em] text-[#f3efe5]/45">
               <ShieldCheck className="size-3 text-[#d9a75f]" aria-hidden />
-              Reference architecture
+              Target architecture
             </p>
           </div>
         </div>

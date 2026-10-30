@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { ArrowRight } from 'lucide-react'
+import { ArrowRight, ShieldCheck } from 'lucide-react'
 import { Reveal } from '@/components/reveal'
 import { AwsControlRoom } from './aws-control-room'
 import { AWS_OUTCOMES } from './aws-infrastructure-data'
@@ -24,9 +24,8 @@ export function AwsInfrastructure() {
             </div>
             <div className="max-w-sm lg:pb-1">
               <p className="text-sm leading-relaxed text-muted-foreground">
-                The launch setup splits responsibilities: AWS Amplify hosts the web app, Render
-                runs the API and database, and Amazon Bedrock powers permission-filtered AI.
-                Cloudflare manages the custom-domain DNS.
+                AWS is the production target for the final product. Amplify serves the web app
+                today; the API, data layer and AI are being prepared on Bedrock, ECS, RDS and S3.
               </p>
               <Link href="/infrastructure" className="link-arrow mt-4">
                 Read the AWS blueprint <ArrowRight className="size-3.5" aria-hidden />
@@ -35,8 +34,21 @@ export function AwsInfrastructure() {
           </div>
         </Reveal>
 
+        <Reveal delay={80}>
+          <div className="mt-8 flex items-start gap-3 rounded-xl border border-border bg-surface/60 p-5">
+            <ShieldCheck className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden />
+            <p className="max-w-3xl text-[12px] leading-relaxed text-muted-foreground">
+              <span className="font-medium text-foreground">Private in every phase.</span> During
+              development and the private beta, some supporting services may run outside AWS while
+              the production stack is prepared. The privacy model does not depend on the host:
+              tenant isolation and permission filtering are enforced by OpenVault before any model
+              call, and only approved passages leave the API.
+            </p>
+          </div>
+        </Reveal>
+
         <Reveal delay={90}>
-          <div className="mt-11">
+          <div className="mt-8">
             <AwsControlRoom />
           </div>
         </Reveal>

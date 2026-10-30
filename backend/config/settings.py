@@ -23,6 +23,13 @@ RENDER_EXTERNAL_HOSTNAME = os.getenv("RENDER_EXTERNAL_HOSTNAME", "").strip()
 if RENDER_EXTERNAL_HOSTNAME and RENDER_EXTERNAL_HOSTNAME not in ALLOWED_HOSTS:
     ALLOWED_HOSTS.append(RENDER_EXTERNAL_HOSTNAME)
 
+# Vercel provides runtime hostnames automatically for preview and production deployments.
+IS_VERCEL = os.getenv("VERCEL", "").strip() in ("1", "true")
+for _vercel_var in ("VERCEL_URL", "VERCEL_BRANCH_URL", "VERCEL_PROJECT_PRODUCTION_URL"):
+    _v_host = os.getenv(_vercel_var, "").strip()
+    if _v_host and _v_host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(_v_host)
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -70,7 +77,14 @@ TEMPLATES = [
 # DATABASE_URL or the POSTGRES_* variables (see .env.example).
 if os.getenv("DATABASE_URL"):
     import dj_database_url  # optional dependency
-    DATABASES = {"default": dj_database_url.config(default=os.environ["DATABASE_URL"], conn_max_age=600)}
+    _conn_max_age = 0 if IS_VERCEL else int(os.getenv("DB_CONN_MAX_AGE", "600"))
+    DATABASES = {
+        "default": dj_database_url.config(
+            default=os.environ["DATABASE_URL"],
+            conn_max_age=_conn_max_age,
+            conn_health_checks=True,
+        )
+    }
 elif os.getenv("POSTGRES_DB"):
     DATABASES = {
         "default": {
@@ -173,8 +187,23 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = DATA_UPLOAD_MAX_MEMORY_SIZE
 RATELIMIT_ENABLED = os.getenv("RATELIMIT_ENABLED", "true").lower() in ("1", "true", "yes")
 
 # ── App/LLM config ──
-DATA_DIR = os.getenv("DATA_DIR", str(BASE_DIR / "data"))
-os.makedirs(DATA_DIR, exist_ok=True)
+_default_data_dir = "/tmp/openvault/data" if IS_VERCEL else str(BASE_DIR / "data")
+DATA_DIR = os.getenv("DATA_DIR", _default_data_dir)
+try:
+    os.makedirs(DATA_DIR, exist_ok=True)
+except OSError:
+    pass
+
+# ── Optional S3 Object Storage (used on Vercel / stateless hosts) ──
+AWS_STORAGE_BUCKET_NAME = os.getenv("AWS_STORAGE_BUCKET_NAME", "").strip()
+AWS_S3_REGION_NAME = os.getenv("AWS_S3_REGION_NAME", os.getenv("BEDROCK_REGION", "ap-south-1")).strip()
+AWS_S3_ENDPOINT_URL = os.getenv("AWS_S3_ENDPOINT_URL", "").strip()
+AWS_ACCESS_KEY_ID = os.getenv("AWS_ACCESS_KEY_ID", "").strip()
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "").strip()
+
+# Run RAG indexing synchronously on serverless platforms where daemon threads are frozen after response.
+SYNC_INDEXING = os.getenv("SYNC_INDEXING", "true" if IS_VERCEL else "false").lower() in ("1", "true", "yes")
+
 # ── LLM provider config ──
 # API keys saved through the settings UI are encrypted at rest. Set a stable
 # LLM_KEY_ENCRYPTION_KEY in production (back it up); when blank it is derived
@@ -190,8 +219,12 @@ REQUIRE_EMAIL_VERIFICATION = os.getenv("REQUIRE_EMAIL_VERIFICATION", "false").lo
 
 # ── Media (generated artefacts: auto-filled leave forms, etc.) ──
 MEDIA_URL = os.getenv("MEDIA_URL", "/media/")
-MEDIA_ROOT = os.getenv("MEDIA_ROOT", str(BASE_DIR / "media"))
-os.makedirs(os.path.join(MEDIA_ROOT, "forms"), exist_ok=True)
+_default_media_root = "/tmp/openvault/media" if IS_VERCEL else str(BASE_DIR / "media")
+MEDIA_ROOT = os.getenv("MEDIA_ROOT", _default_media_root)
+try:
+    os.makedirs(os.path.join(MEDIA_ROOT, "forms"), exist_ok=True)
+except OSError:
+    pass
 
 # ── Email (verification / reset / meeting confirmations) ──
 EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")

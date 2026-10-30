@@ -261,12 +261,27 @@ def _generate_leave_docx(user, company_name, reason, leave_date) -> tuple[str, s
             if not run.font.size:
                 run.font.size = Pt(11)
 
-    user_dir = os.path.join(settings.MEDIA_ROOT, "forms", str(user.id))
-    os.makedirs(user_dir, exist_ok=True)
     safe = _SAFE_NAME_RE.sub("_", (full_name or "employee").strip()) or "employee"
     filename = f"{uuid.uuid4().hex}_Leave_Application_{safe}.docx"
+    rel_path = os.path.join("forms", str(user.id), filename)
+
+    from . import storage
+    import io
+
+    if storage.is_s3_enabled():
+        buf = io.BytesIO()
+        doc.save(buf)
+        storage.save_bytes(
+            rel_path,
+            buf.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            base_dir=settings.MEDIA_ROOT,
+        )
+        return rel_path, filename
+
+    user_dir = os.path.join(settings.MEDIA_ROOT, "forms", str(user.id))
+    os.makedirs(user_dir, exist_ok=True)
     abs_path = os.path.join(user_dir, filename)
     doc.save(abs_path)
 
-    rel_path = os.path.join("forms", str(user.id), filename)
     return rel_path, filename
