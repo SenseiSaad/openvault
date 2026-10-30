@@ -47,7 +47,7 @@ export function SiteFooter() {
               <span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1">
                 <ShieldCheck className="size-3 text-accent" aria-hidden /> Tenant-isolated
               </span>
-              <span className="rounded-full border border-border px-2.5 py-1">PKR billing</span>
+              <span className="rounded-full border border-border px-2.5 py-1">USD pricing</span>
               <span className="rounded-full border border-border px-2.5 py-1">Local AI ready</span>
             </div>
           </div>

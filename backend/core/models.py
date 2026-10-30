@@ -56,6 +56,10 @@ class Company(models.Model):
     plan = models.ForeignKey(
         "Plan", on_delete=models.PROTECT, related_name="companies", null=True, blank=True,
     )
+    # Stripe linkage (blank when billing is handled offline / not configured).
+    stripe_customer_id = models.CharField(max_length=120, blank=True, default="")
+    stripe_subscription_id = models.CharField(max_length=120, blank=True, default="")
+    subscription_status = models.CharField(max_length=30, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):
@@ -157,9 +161,11 @@ class Department(models.Model):
 class Plan(models.Model):
     """A subscription tier. Limits are enforced server-side (seats on member
     creation, document count + storage on upload, monthly asks on /api/ask).
-    Prices are in PKR; the Free plan is auto-attached to every new company."""
+    Prices are in USD per month; the Free plan is auto-attached to every new
+    company. Local payment methods and a PKR equivalent are handled at
+    checkout, not in this table."""
     name = models.CharField(max_length=60, unique=True)
-    price_pkr = models.PositiveIntegerField(default=0)
+    price_usd = models.PositiveIntegerField(default=0)
     billing_period = models.CharField(max_length=20, default="month")
     max_members = models.PositiveIntegerField(null=True, blank=True)      # None = unlimited
     max_documents = models.PositiveIntegerField(null=True, blank=True)
@@ -185,7 +191,7 @@ class Plan(models.Model):
             plan = cls.objects.filter(name="Free").first()
         if plan is None:
             plan = cls.objects.create(
-                name="Free", price_pkr=0, billing_period="month",
+                name="Free", price_usd=0, billing_period="month",
                 max_members=3, max_documents=20, storage_mb=512, monthly_ask_limit=50,
                 is_default=True,
             )
@@ -455,9 +461,11 @@ class LLMConfig(models.Model):
     """Runtime-editable LLM settings.
 
     Two levels: the platform-wide row (company NULL, pk arbitrary) and optional
-    per-company overrides (a company's own provider/model/key). Resolution order
-    in providers._resolve(): company row -> platform row -> .env. The api_key is
-    encrypted at rest (core.crypto) and never returned by the API.
+    per-company overrides (a company's own provider/model/key). Resolution in
+    providers._resolve(): company row -> platform row -> .env, except that the
+    Render BEDROCK_API_KEY/BEDROCK_MODEL win over a stale platform row so every
+    ordinary user shares the platform key. The api_key is encrypted at rest
+    (core.crypto) and never returned by the API.
     """
     PROVIDERS = [("ollama", "ollama"), ("openai", "openai"),
                  ("anthropic", "anthropic"), ("gemini", "gemini"),

@@ -91,7 +91,7 @@ export default function HelpPage() {
                 Most teams upload their first policy and ask a cited question in under ten minutes.
               </p>
               <div className="mt-7 flex flex-wrap gap-2">
-                {['No card required', 'PKR billing', 'Cancel anytime'].map((item) => (
+                {['No card required', 'USD pricing', 'Cancel anytime'].map((item) => (
                   <span
                     key={item}
                     className="rounded-full border border-border px-2.5 py-1 text-[10px] text-muted-foreground"

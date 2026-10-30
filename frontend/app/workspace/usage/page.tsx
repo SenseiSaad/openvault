@@ -5,7 +5,7 @@ import { Loader2, Sparkles, AlertTriangle, Check, HardDrive, Users, Building2, A
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth'
 import { usageApi, type UsageReport } from '@/lib/api'
-import { formatPKR, storageLabel, PLAN_COPY } from '@/lib/pricing'
+import { formatUSD, storageLabel, PLAN_COPY } from '@/lib/pricing'
 
 function limitLabel(used: number, remaining: number | null, limit: number | null) {
   if (limit === null) return `${used.toLocaleString()} used · unlimited`
@@ -58,7 +58,7 @@ export default function WorkspaceUsagePage() {
           <span className="font-serif font-normal italic">{plan.name}</span>
         </h1>
         <p className="mt-2 max-w-xl text-xs leading-relaxed text-[#6b6862]">
-          PKR {formatPKR(plan.price_pkr)}/{plan.billing_period}. Meters reset on the 1st of each month.
+          {formatUSD(plan.price_usd)}/{plan.billing_period}. Meters reset on the 1st of each month.
         </p>
       </header>
 
@@ -122,7 +122,7 @@ export default function WorkspaceUsagePage() {
                     href={`mailto:hello@openvault.site?subject=${encodeURIComponent(`Upgrade to ${u.name}`)}`}
                     className="inline-flex items-center gap-1 rounded-full bg-[#1d1d1b] px-4 py-2 text-xs font-medium text-white hover:bg-[#3c3b37]"
                   >
-                    {formatPKR(u.price_pkr)}/mo <ArrowUpRight className="size-3.5" />
+                    {formatUSD(u.price_usd)}/mo <ArrowUpRight className="size-3.5" />
                   </a>
                 </li>
               ))}

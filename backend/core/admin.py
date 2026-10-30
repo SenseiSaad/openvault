@@ -12,7 +12,7 @@ admin.site.index_title = "Private knowledge platform management"
 
 @admin.register(Plan)
 class PlanAdmin(admin.ModelAdmin):
-    list_display = ("name", "price_pkr", "billing_period", "max_members", "max_documents",
+    list_display = ("name", "price_usd", "billing_period", "max_members", "max_documents",
                     "storage_mb", "monthly_ask_limit", "is_default")
     search_fields = ("name",)
 

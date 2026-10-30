@@ -13,7 +13,7 @@ class PlanSerializer(serializers.ModelSerializer):
     class Meta:
         model = Plan
         fields = [
-            "id", "name", "price_pkr", "billing_period", "max_members", "max_documents",
+            "id", "name", "price_usd", "billing_period", "max_members", "max_documents",
             "storage_mb", "monthly_ask_limit", "allow_versions", "allow_departments",
             "allow_custom_llm", "is_default",
         ]
@@ -199,17 +199,32 @@ class LLMConfigSerializer(serializers.ModelSerializer):
     )
     has_api_key = serializers.SerializerMethodField()
     is_company_override = serializers.SerializerMethodField()
+    key_source = serializers.SerializerMethodField()
+    platform_key_in_use = serializers.SerializerMethodField()
 
     class Meta:
         model = LLMConfig
         fields = ["provider", "chat_model", "base_url", "temperature",
-                  "max_tokens", "api_key", "has_api_key", "is_company_override", "updated_at"]
+                  "max_tokens", "api_key", "has_api_key", "is_company_override",
+                  "key_source", "platform_key_in_use", "updated_at"]
 
     def get_has_api_key(self, obj):
         return bool(obj.api_key)
 
     def get_is_company_override(self, obj):
         return obj.company_id is not None
+
+    def get_key_source(self, obj):
+        from . import providers
+        if obj.company_id is not None and obj.api_key:
+            return "company"
+        if obj.company_id is None and providers.shared_bedrock_key():
+            return "platform_env"
+        return "row" if obj.api_key else "none"
+
+    def get_platform_key_in_use(self, obj):
+        from . import providers
+        return obj.company_id is None and bool(providers.shared_bedrock_key())
 
 
 class AttendanceRecordSerializer(serializers.ModelSerializer):

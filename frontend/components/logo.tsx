@@ -1,7 +1,68 @@
 import Link from 'next/link'
 
-// OpenVault mark: a vault dial reduced to a keyhole. The wordmark stays
-// typographic so it reads cleanly at every size and in both themes.
+// OpenVault mark: an open book whose pages close into a shield, with a brass
+// keyhole at the spine. The mark is drawn in the brand's ink/blue/brass
+// palette and sits on a parchment chip so it stays legible in both themes.
+export function VaultMark({ className = '' }: { className?: string }) {
+  return (
+    <svg
+      viewBox="3 3 58 58"
+      className={className}
+      fill="none"
+      aria-hidden
+      focusable="false"
+    >
+      <path
+        d="M32 15.3C25 11 17 9.5 9.5 10.5C7.7 11.2 6.8 12.8 6.8 14.8V32.4C6.8 44.6 15.8 54.1 29.8 58.9C30.9 59.3 32 59.2 32 58.9Z"
+        fill="#cfe7f8"
+      />
+      <path
+        d="M32 15.3C39 11 47 9.5 54.5 10.5C56.3 11.2 57.2 12.8 57.2 14.8V32.4C57.2 44.6 48.2 54.1 34.2 58.9C33.1 59.3 32 59.2 32 58.9Z"
+        fill="#79b2e2"
+      />
+      <path
+        d="M11 15.2C18 14.4 25 16.2 30.2 20.1"
+        stroke="#10263f"
+        strokeOpacity=".35"
+        strokeWidth=".75"
+        strokeLinecap="round"
+      />
+      <path
+        d="M10.6 19.4C17.6 18.7 24.4 20.4 29.6 24.1"
+        stroke="#10263f"
+        strokeOpacity=".22"
+        strokeWidth=".75"
+        strokeLinecap="round"
+      />
+      <path
+        d="M53 15.2C46 14.4 39 16.2 33.8 20.1"
+        stroke="#10263f"
+        strokeOpacity=".28"
+        strokeWidth=".75"
+        strokeLinecap="round"
+      />
+      <path
+        d="M53.4 19.4C46.4 18.7 39.6 20.4 34.4 24.1"
+        stroke="#10263f"
+        strokeOpacity=".18"
+        strokeWidth=".75"
+        strokeLinecap="round"
+      />
+      <path
+        d="M9.5 10.5C17 9.5 25 11 31.2 15.2C31.5 15.4 32.5 15.4 32.8 15.2C39 11 47 9.5 54.5 10.5C56.3 11.2 57.2 12.8 57.2 14.8V32.4C57.2 44.6 48.2 54.1 34.2 58.9C32.8 59.4 31.2 59.4 29.8 58.9C15.8 54.1 6.8 44.6 6.8 32.4V14.8C6.8 12.8 7.7 11.2 9.5 10.5Z"
+        stroke="#10263f"
+        strokeWidth="2.4"
+        strokeLinejoin="round"
+      />
+      <path d="M32 15.4V52" stroke="#10263f" strokeWidth="2.4" strokeLinecap="round" />
+      <circle cx="32" cy="32.5" r="6.9" fill="#10263f" />
+      <circle cx="32" cy="32.5" r="5.1" stroke="#d9a75f" strokeWidth="1.25" />
+      <circle cx="32" cy="30.7" r="1.85" fill="#d9a75f" />
+      <path d="M30.9 32.2H33.1L33.6 37.8H30.4L30.9 32.2Z" fill="#d9a75f" />
+    </svg>
+  )
+}
+
 export function Logo({
   size = 'md',
   href = '/',
@@ -13,15 +74,10 @@ export function Logo({
   className?: string
   tone?: 'default' | 'inverse'
 }) {
-  const chip = size === 'sm' ? 'size-7 rounded-[9px]' : 'size-8 rounded-[10px]'
+  const chip = size === 'sm' ? 'size-7 rounded-[9px]' : 'size-9 rounded-[11px]'
   const word = size === 'sm' ? 'text-[15px]' : 'text-[17px]'
-  const chipTone =
-    tone === 'inverse'
-      ? 'bg-[#f3efe5] text-[#151412]'
-      : 'bg-foreground text-background'
   const vaultTone = tone === 'inverse' ? 'text-[#f3efe5]/45' : 'text-muted-foreground'
   const openTone = tone === 'inverse' ? 'text-[#f3efe5]' : ''
-  const mark = tone === 'inverse' ? '#9b631e' : 'var(--accent)'
 
   return (
     <Link
@@ -29,13 +85,10 @@ export function Logo({
       aria-label="OpenVault home"
       className={`inline-flex items-center gap-2.5 font-display tracking-[-0.045em] ${word} ${className}`}
     >
-      <span className={`relative grid shrink-0 place-items-center overflow-hidden ${chipTone} ${chip}`}>
-        <svg viewBox="0 0 32 32" className="size-full" aria-hidden>
-          <circle cx="16" cy="16" r="7.5" fill="none" stroke="currentColor" strokeWidth="1.3" opacity="0.45" />
-          <path d="M16 4.5v3M16 24.5v3M4.5 16h3M24.5 16h3" stroke="currentColor" strokeWidth="1.2" opacity="0.35" />
-          <circle cx="16" cy="16" r="2.8" fill={mark} />
-          <path d="M16 18.6v3.1" stroke={mark} strokeWidth="2.2" strokeLinecap="round" />
-        </svg>
+      <span
+        className={`relative grid shrink-0 place-items-center overflow-hidden bg-[#f3efe5] ring-1 ring-black/[0.06] ${chip}`}
+      >
+        <VaultMark className="size-full" />
       </span>
       <span className={`leading-none ${openTone}`}>
         Open<span className={vaultTone}>Vault</span>

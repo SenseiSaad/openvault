@@ -53,7 +53,7 @@ export function Hero() {
               className="mt-7 flex animate-fade-up flex-wrap items-center gap-x-5 gap-y-2 text-[12px] text-muted-foreground"
               style={{ animationDelay: '460ms' }}
             >
-              {['Private by default', 'Cited answers', 'PKR billing'].map((item) => (
+              {['Private by default', 'Cited answers', 'USD pricing'].map((item) => (
                 <span key={item} className="inline-flex items-center gap-1.5">
                   <Check className="size-3.5 text-accent" aria-hidden /> {item}
                 </span>

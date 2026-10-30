@@ -210,11 +210,11 @@ export const JOB_TITLES = [
   'Team Lead', 'Engineer', 'Analyst', 'Other',
 ] as const
 
-// Subscription plan (PKR pricing; limits enforced server-side).
+// Subscription plan (USD pricing; limits enforced server-side).
 export interface Plan {
   id: number
   name: string
-  price_pkr: number
+  price_usd: number
   billing_period: string
   max_members: number | null
   max_documents: number | null
@@ -367,6 +367,7 @@ export interface LlmStatus {
   provider?: string
   model: string
   company_override?: boolean
+  key_source?: 'platform_env' | 'company' | 'row' | 'iam' | 'none'
   local?: {
     online: boolean
     provider: string
@@ -413,6 +414,8 @@ export interface LlmConfig {
   max_tokens: number
   has_api_key: boolean
   is_company_override: boolean
+  key_source?: 'platform_env' | 'company' | 'row' | 'iam' | 'none'
+  platform_key_in_use?: boolean
   updated_at: string
 }
 
@@ -447,7 +450,43 @@ export interface NewUser {
 export const workApi = {
   documents: (page = 1, pageSize = 200): Promise<Paged<EnterpriseDoc>> =>
     api.get(`/documents?page=${page}&page_size=${pageSize}`),
-  upload: (form: FormData): Promise<EnterpriseDoc> => api.upload('/documents/upload', form),
+  upload: async (form: FormData): Promise<EnterpriseDoc> => {
+    const file = form.get('file')
+    // On Vercel serverless, bodies > 4.5 MB are rejected; try direct S3 presigned upload when file > 4 MB.
+    if (file instanceof File && file.size > 4 * 1024 * 1024) {
+      try {
+        const presign = await api.post('/documents/presign', {
+          filename: file.name,
+          size: file.size,
+          content_type: file.type || 'application/octet-stream',
+        })
+        if (presign?.upload_url && presign?.key) {
+          const putRes = await fetch(presign.upload_url, {
+            method: 'PUT',
+            headers: { 'Content-Type': file.type || 'application/octet-stream' },
+            body: file,
+          })
+          if (putRes.ok) {
+            return api.post('/documents/confirm', {
+              key: presign.key,
+              filename: file.name,
+              size: file.size,
+              content_type: file.type || '',
+              category: form.get('category') ?? 'Other',
+              description: form.get('description') ?? '',
+              tags: form.get('tags') ?? '',
+              is_okf: form.get('is_okf') ?? 'false',
+              access_scope: form.get('access_scope') ?? 'company',
+              department_id: form.get('department_id') ?? null,
+            })
+          }
+        }
+      } catch {
+        // Fall back to standard multipart upload if S3 presigning is not enabled.
+      }
+    }
+    return api.upload('/documents/upload', form)
+  },
   docDetail: (id: number): Promise<EnterpriseDoc> => api.get(`/documents/${id}`),
   updateDoc: (id: number, p: Partial<EnterpriseDoc>): Promise<EnterpriseDoc> =>
     api.patch(`/documents/${id}`, p),

@@ -297,7 +297,7 @@ export default function SettingsPage() {
           Settings &amp; <span className="font-serif font-normal italic">plans.</span>
         </h1>
         <p className="mt-2 max-w-xl text-xs leading-relaxed text-[#6b6862]">
-          Manage company profile, subscription quotas (PKR), and AI model configurations.
+          Manage company profile, subscription quotas (USD), and AI model configurations.
         </p>
 
         {/* Tab Switcher */}
@@ -447,7 +447,7 @@ export default function SettingsPage() {
                       {currentPlan?.name || 'Free'} Plan
                     </h2>
                     <p className="mt-1 text-xs text-[#6b6862]">
-                      PKR {currentPlan?.price_pkr?.toLocaleString() || 0} / {currentPlan?.billing_period || 'month'}
+                      ${currentPlan?.price_usd?.toLocaleString('en-US') || 0} / {currentPlan?.billing_period || 'month'}
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
@@ -514,10 +514,10 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              {/* PKR Tier Table */}
+              {/* USD Tier Table */}
               <div>
                 <h3 className="text-sm font-semibold uppercase tracking-[0.1em] text-[#6b6862]">
-                  Available Tiers (PKR)
+                  Available Tiers (USD)
                 </h3>
                 <div className="mt-4 grid gap-4 md:grid-cols-4">
                   {plans.map((p) => {
@@ -541,7 +541,7 @@ export default function SettingsPage() {
                             )}
                           </div>
                           <p className="mt-3 text-xl font-bold tracking-tight text-[#1d1d1b]">
-                            PKR {p.price_pkr.toLocaleString()}
+                            ${p.price_usd.toLocaleString('en-US')}
                             <span className="text-xs font-normal text-[#6b6862]">/mo</span>
                           </p>
 
@@ -621,6 +621,8 @@ export default function SettingsPage() {
                         ? 'Legacy AI provider needs updating'
                         : cfg?.is_company_override
                         ? 'Custom Company Override Active'
+                        : cfg?.platform_key_in_use
+                        ? 'Platform Bedrock key in use'
                         : isPlatformAdmin
                         ? 'Platform Default Settings'
                         : 'Inheriting Platform Default AI'}
@@ -630,6 +632,8 @@ export default function SettingsPage() {
                         ? 'Saving will switch this configuration to Bedrock. Its old provider key will be cleared; enter a Bedrock key or leave it blank to use the Render secret.'
                         : cfg?.is_company_override
                         ? 'Your organization is overriding the platform LLM with its own model/key.'
+                        : cfg?.platform_key_in_use
+                        ? 'The shared Render Bedrock key and Claude 4.5 default are active for this workspace. You do not need to enter a key.'
                         : 'Currently using the system-wide default LLM provider.'}
                     </p>
                   </div>
@@ -718,7 +722,11 @@ export default function SettingsPage() {
 
                 {activeProvider.keyLabel && (
                   <div>
-                    <label htmlFor="api-key" className={label}>{activeProvider.keyLabel}</label>
+                    <label htmlFor="api-key" className={label}>
+                      {provider === 'bedrock' && cfg?.platform_key_in_use && !cfg?.is_company_override
+                        ? 'Bedrock API key (optional)'
+                        : activeProvider.keyLabel}
+                    </label>
                     <div className="relative">
                       <KeyRound className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-[#6b6862]" />
                       <input
@@ -727,15 +735,22 @@ export default function SettingsPage() {
                         value={apiKey}
                         onChange={(e) => setApiKey(e.target.value)}
                         placeholder={
-                          cfg?.has_api_key && cfg.provider === provider
-                            ? '•••••••• (stored, type to replace)'
-                            : provider === 'bedrock'
-                              ? 'Paste Bedrock API key (or leave blank to use Render secret)'
-                              : 'Ollama does not require an API key'
+                          cfg?.platform_key_in_use && !cfg?.is_company_override
+                            ? 'Platform key in use — leave blank to keep using it'
+                            : cfg?.has_api_key && cfg.provider === provider
+                              ? '•••••••• (stored, type to replace)'
+                              : provider === 'bedrock'
+                                ? 'Paste Bedrock API key (or leave blank to use Render secret)'
+                                : 'Ollama does not require an API key'
                         }
                         className={`${inputClass} pl-10`}
                       />
                     </div>
+                    {cfg?.platform_key_in_use && !cfg?.is_company_override && (
+                      <p className="mt-1 text-[11px] text-[#6b6862]">
+                        The shared key is managed in Render. Leave this blank unless you need a separate key.
+                      </p>
+                    )}
                   </div>
                 )}
 

@@ -8,7 +8,10 @@ import { useAuth } from '@/lib/auth'
 import { Logo } from './logo'
 import { ThemeToggle } from './theme-toggle'
 
-const NAV = [
+type NavItem = { href: string; label: string; anchor?: string }
+
+const NAV: NavItem[] = [
+  { href: '/', label: 'Home' },
   { href: '/#system', label: 'Platform', anchor: '#system' },
   { href: '/#how-it-works', label: 'How it works', anchor: '#how-it-works' },
   { href: '/#security', label: 'Security', anchor: '#security' },
@@ -22,14 +25,57 @@ export function SiteHeader() {
   const pathname = usePathname()
   const [menuOpen, setMenuOpen] = useState(false)
   const [scrolled, setScrolled] = useState(false)
+  const [activeHash, setActiveHash] = useState('')
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const firstLinkRef = useRef<HTMLAnchorElement>(null)
   const currentLinkRef = useRef<HTMLAnchorElement>(null)
 
-  const active = (href: string) =>
-    !href.includes('#') && (pathname === href || pathname.startsWith(href + '/'))
-  const currentPageItem = NAV.find((item) => active(item.href))
-  const currentPageLabel = currentPageItem?.label ?? (pathname === '/' ? 'Home' : 'OpenVault')
+  const active = (item: NavItem) => {
+    if (item.anchor) return pathname === '/' && activeHash === item.anchor
+    if (item.href === '/') return pathname === '/' && !activeHash
+    return pathname === item.href || pathname.startsWith(item.href + '/')
+  }
+  const currentPageItem = NAV.find((item) => active(item))
+  const currentPageLabel = currentPageItem?.label ?? 'OpenVault'
+
+  // On the landing page, highlight the section currently in view (and Home at
+  // the top). Inner pages highlight themselves through pathname matching.
+  useEffect(() => {
+    if (pathname !== '/') {
+      setActiveHash('')
+      return
+    }
+    const syncHash = () => setActiveHash(window.location.hash || '')
+    syncHash()
+    window.addEventListener('hashchange', syncHash)
+
+    const ids = ['system', 'how-it-works', 'security']
+    const sections = ids
+      .map((id) => document.getElementById(id))
+      .filter((el): el is HTMLElement => Boolean(el))
+    let observer: IntersectionObserver | undefined
+    if (sections.length && typeof IntersectionObserver !== 'undefined') {
+      const visible = new Map<string, number>()
+      observer = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) visible.set(entry.target.id, entry.intersectionRatio)
+            else visible.delete(entry.target.id)
+          })
+          const best = [...visible.entries()].sort((a, b) => b[1] - a[1])[0]
+          if (best) setActiveHash('#' + best[0])
+          else if (window.scrollY < 240) setActiveHash('')
+        },
+        { rootMargin: '-20% 0px -55% 0px', threshold: [0.05, 0.25, 0.5, 0.75] },
+      )
+      sections.forEach((el) => observer?.observe(el))
+    }
+
+    return () => {
+      window.removeEventListener('hashchange', syncHash)
+      observer?.disconnect()
+    }
+  }, [pathname])
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 12)
@@ -99,8 +145,8 @@ export function SiteHeader() {
                 key={item.href}
                 href={item.href}
                 className="nav-link"
-                data-active={active(item.href)}
-                aria-current={active(item.href) ? 'page' : undefined}
+                data-active={active(item)}
+                aria-current={active(item) ? 'page' : undefined}
               >
                 {item.label}
               </Link>
@@ -171,7 +217,7 @@ export function SiteHeader() {
             </div>
 
             {NAV.map((item, index) => {
-              const isCurrent = active(item.href)
+              const isCurrent = active(item)
               return (
                 <Link
                   key={item.href}
