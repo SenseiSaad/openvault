@@ -95,7 +95,10 @@ def _upload_rejection(f):
 @permission_classes([AllowAny])
 def health(request):
     """Liveness/readiness probe for load balancers and uptime monitors.
-    DB is exercised with a real query; everything else is static info."""
+
+    Exercises the two things a broken deployment actually breaks: the database
+    (a real query) and document storage (a write/read/delete probe), so an
+    instance that cannot serve uploads or downloads leaves rotation."""
     from django.db import connection
     db_ok = True
     try:
@@ -104,12 +107,23 @@ def health(request):
             cursor.fetchone()
     except Exception:
         db_ok = False
+
+    storage_ok = True
+    try:
+        probe_key = f"_health/{uuid.uuid4().hex}.txt"
+        storage.save_bytes(probe_key, b"ok", base_dir=settings.DATA_DIR)
+        storage_ok = storage.read_bytes(probe_key, base_dir=settings.DATA_DIR) == b"ok"
+        storage.delete(probe_key, base_dir=settings.DATA_DIR)
+    except Exception:
+        storage_ok = False
+
     payload = {
-        "status": "ok" if db_ok else "degraded",
+        "status": "ok" if (db_ok and storage_ok) else "degraded",
         "db": db_ok,
+        "storage": storage_ok,
         "time": timezone.now().isoformat(),
     }
-    return JsonResponse(payload, status=200 if db_ok else 503)
+    return JsonResponse(payload, status=200 if (db_ok and storage_ok) else 503)
 
 
 def audit(request, action, detail=""):
