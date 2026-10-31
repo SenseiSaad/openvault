@@ -543,6 +543,31 @@ def _env_base(provider):
     return ""
 
 
+def _safe_tenant_base_url(raw, company_row):
+    """SSRF gate for tenant-supplied base_url values.
+
+    Environment and platform-row values come from the operator and pass
+    through unchanged (that is what keeps "Ollama on this host" working).
+    A COMPANY row's URL must be https to a public host — private/loopback/
+    metadata addresses are refused and the override silently falls back to
+    the platform default, so a bad URL can never be used as a network pivot.
+    """
+    raw = (raw or "").strip()
+    if not raw or company_row is None:
+        return raw
+    if not raw.lower().startswith(("http://", "https://")):
+        return raw  # non-URL values (e.g. a Bedrock region) are not fetchable
+    from .netguard import UnsafeURLError, validate_public_url
+    try:
+        return validate_public_url(raw, allow_http=False)
+    except UnsafeURLError:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Rejected unsafe LLMConfig.base_url for company %s", company_row.company_id
+        )
+        return ""
+
+
 def shared_bedrock_key():
     """The platform-wide Bedrock bearer token from the Render environment.
 
@@ -588,7 +613,7 @@ def _resolve(company=None):
             provider = "ollama"
         model = (row.chat_model or "").strip() or _env_model(provider)
         api_key = (row.api_key or "").strip() or _env_key(provider)
-        base_url = (row.base_url or "").strip() or _env_base(provider)
+        base_url = _safe_tenant_base_url(row.base_url, company_row) or _env_base(provider)
         if company_row is not None and (company_row.api_key or "").strip():
             key_source = "company"
         elif shared_key and provider == "bedrock":

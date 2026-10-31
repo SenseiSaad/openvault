@@ -193,7 +193,11 @@ class DocumentShareSerializer(serializers.ModelSerializer):
 
 
 class LLMConfigSerializer(serializers.ModelSerializer):
-    """The api_key is write-only; reads expose only whether one is set."""
+    """The api_key is write-only; reads expose only whether one is set.
+
+    base_url is a tenant-supplied outbound endpoint, so it is validated as a
+    public https URL here (SSRF defence) AND again at fetch time in providers.
+    """
     api_key = serializers.CharField(
         required=False, allow_blank=True, write_only=True, style={"input_type": "password"}
     )
@@ -201,6 +205,17 @@ class LLMConfigSerializer(serializers.ModelSerializer):
     is_company_override = serializers.SerializerMethodField()
     key_source = serializers.SerializerMethodField()
     platform_key_in_use = serializers.SerializerMethodField()
+
+    def validate_base_url(self, value):
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        from django.conf import settings
+        from .netguard import UnsafeURLError, validate_public_url
+        try:
+            return validate_public_url(raw, allow_http=bool(settings.DEBUG))
+        except UnsafeURLError as exc:
+            raise serializers.ValidationError(str(exc))
 
     class Meta:
         model = LLMConfig

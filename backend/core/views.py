@@ -1362,9 +1362,14 @@ def llm_test(request):
         ))
         return Response({"ok": True, "provider": prov.label, "model": prov.chat_model,
                          "sample": out.strip()[:120]})
-    except Exception as e:
+    except Exception:
+        # The raw provider error can echo internal endpoints/bodies back to the
+        # browser (SSRF response disclosure); log it server-side instead.
+        import logging
+        logging.getLogger(__name__).exception("llm-test connectivity check failed")
         return Response({"ok": False, "provider": prov.label, "model": prov.chat_model,
-                         "detail": str(e)[:200]})
+                         "detail": "The AI endpoint could not be reached or rejected the "
+                                   "request. Check the provider, model and key settings."})
 
 
 # --------------------------------------------------------- departments
