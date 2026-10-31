@@ -833,6 +833,7 @@ def document_preview(request, pk):
 # ------------------------------------------------------------------- chat
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@rate_limit("ask", rate=20, per_seconds=60, key="user")
 def ask(request):
     """Stream an answer as NDJSON, grounded only in documents this user may see.
     Persists the conversation when conversation_id is supplied (or creates one).
@@ -846,6 +847,18 @@ def ask(request):
     mode = s.validated_data.get("mode")
     provider = s.validated_data.get("provider")
     conversation_id = s.validated_data.get("conversation_id")
+
+    # Provider selection is a bring-your-own-key feature: without the company's
+    # own stored key a caller could steer shared platform spend at a costlier
+    # provider, so the field is rejected outright for everyone else.
+    if provider:
+        own_cfg = LLMConfig.for_company(request.user.company) if request.user.company_id else None
+        if not (own_cfg and (own_cfg.api_key or "").strip()):
+            return Response(
+                {"detail": "Choosing an AI provider requires your company's own AI key "
+                           "(Workspace settings → AI)."},
+                status=400,
+            )
 
     # Plan quota: monthly ask limit counted over AskLog rows.
     plan = _plan_for(request.user.company) if request.user.company_id else None

@@ -32,7 +32,10 @@ PLANS = [
     ),
     dict(
         name="Enterprise", price_usd=129, billing_period="month",
-        max_members=None, max_documents=None, storage_mb=None, monthly_ask_limit=None,
+        max_members=None, max_documents=None, storage_mb=None,
+        # Unlimited seats/storage, but token spend stays bounded: one
+        # compromised seat can never run an unbounded provider bill.
+        monthly_ask_limit=25000,
         allow_versions=True, allow_departments=True, allow_custom_llm=True,
     ),
 ]
