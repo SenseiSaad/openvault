@@ -75,6 +75,19 @@ def _split_system(messages):
     return system, rest
 
 
+# Socket timeouts for provider calls. For streaming responses urllib applies
+# the timeout per read, so this caps the silence between tokens — not total
+# generation time — while guaranteeing a wedged endpoint can never pin a
+# gunicorn thread forever.
+_STREAM_TIMEOUT = float(os.getenv("LLM_STREAM_TIMEOUT", "300"))
+_CONNECT_TIMEOUT = float(os.getenv("LLM_CONNECT_TIMEOUT", "15"))
+_BOTOCORE_CONFIG_KWARGS = {
+    "retries": {"max_attempts": 3, "mode": "standard"},
+    "connect_timeout": _CONNECT_TIMEOUT,
+    "read_timeout": _STREAM_TIMEOUT,
+}
+
+
 # ------------------------------------------------------------------- providers
 class BaseProvider:
     label = "base"
@@ -90,6 +103,8 @@ class BaseProvider:
 
     def stream_chat(self, messages, temperature=0.2, max_tokens=512):
         raise NotImplementedError
+
+
 class OllamaProvider(BaseProvider):
     """A model running locally (or on your EC2) through Ollama."""
     label = "ollama"
@@ -122,7 +137,7 @@ class OllamaProvider(BaseProvider):
     def stream_chat(self, messages, temperature=0.2, max_tokens=512):
         payload = {"model": self.chat_model, "messages": messages, "stream": True,
                    "options": {"temperature": temperature, "num_predict": max_tokens}}
-        with _open(f"{self.base}/api/chat", payload, timeout=None) as r:
+        with _open(f"{self.base}/api/chat", payload, timeout=_STREAM_TIMEOUT) as r:
             for line in _sse_lines(r):
                 try:
                     data = json.loads(line)
@@ -169,7 +184,7 @@ class OpenAIProvider(BaseProvider):
         payload = {"model": self.chat_model, "messages": messages, "stream": True,
                    "temperature": temperature, "max_tokens": max_tokens}
         with _open(f"{self.base}/chat/completions", payload,
-                   headers=self._headers(), timeout=None) as r:
+                   headers=self._headers(), timeout=_STREAM_TIMEOUT) as r:
             for line in _sse_lines(r):
                 if line == "[DONE]":
                     break
@@ -202,7 +217,7 @@ class AnthropicProvider(BaseProvider):
                    "temperature": temperature, "system": system,
                    "messages": rest, "stream": True}
         with _open(f"{self.base}/v1/messages", payload,
-                   headers=self._headers(), timeout=None) as r:
+                   headers=self._headers(), timeout=_STREAM_TIMEOUT) as r:
             for line in _sse_lines(r):
                 try:
                     data = json.loads(line)
@@ -422,7 +437,7 @@ class BedrockProvider(BaseProvider):
                 "bedrock-runtime", region_name=self.region,
                 aws_access_key_id=access_key.strip(),
                 aws_secret_access_key=secret_key.strip(),
-                config=Config(retries={"max_attempts": 3, "mode": "standard"}),
+                config=Config(**_BOTOCORE_CONFIG_KWARGS),
             )
         if self.api_key:
             # Bedrock API keys are bearer tokens, not SigV4 credentials. Give
@@ -441,7 +456,7 @@ class BedrockProvider(BaseProvider):
         # Blank key -> boto3 default credential chain (IAM role on EC2/ECS).
         return boto3.client(
             "bedrock-runtime", region_name=self.region,
-            config=Config(retries={"max_attempts": 3, "mode": "standard"}),
+            config=Config(**_BOTOCORE_CONFIG_KWARGS),
         )
 
     def available(self):
