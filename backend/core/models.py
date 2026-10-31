@@ -31,8 +31,12 @@ _COMPANY_CODE_ALPHABET = string.ascii_uppercase + string.digits
 
 
 def generate_company_code():
-    """Return a short, human-shareable identifier unique to one company."""
-    return "".join(secrets.choice(_COMPANY_CODE_ALPHABET) for _ in range(5))
+    """Return a short, human-shareable identifier unique to one company.
+
+    Eight characters (36^8 ≈ 2.8 trillion) keeps the directory endpoints
+    un-enumerable while staying typeable by hand.
+    """
+    return "".join(secrets.choice(_COMPANY_CODE_ALPHABET) for _ in range(8))
 
 
 class Company(models.Model):
@@ -42,8 +46,9 @@ class Company(models.Model):
     slug = models.SlugField(unique=True)
     # Short identifier shown to admins and used for cross-company lookup.
     # It is intentionally not derived from the company name, so it is safe to
-    # share without exposing a predictable tenant URL.
-    access_code = models.CharField(max_length=5, unique=True, null=True, blank=True)
+    # share without exposing a predictable tenant URL. 8 chars since the
+    # directory hardening; older 5-char codes keep working.
+    access_code = models.CharField(max_length=8, unique=True, null=True, blank=True)
     # --- optional company profile (collected at registration, shown in the workspace) ---
     website = models.CharField(max_length=200, blank=True, default="")
     contact_email = models.EmailField(blank=True, default="")
