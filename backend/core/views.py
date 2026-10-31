@@ -39,6 +39,7 @@ from .auth import (
     ACCESS_COOKIE, REFRESH_COOKIE,
 )
 from .ratelimit import rate_limit
+from .uploads import UploadRejected, guard_zip_archive, validate_extension, validate_filename
 from .models import (
     Announcement, AskLog, AuditLog, ChatConversation, ChatMessage, Company, Department,
     Document, DocumentAccess, DocumentShare, DocumentVersion, LLMConfig, Plan,
@@ -78,6 +79,24 @@ def _password_error(password, user=None):
         validate_password(password, user=user)
     except DjangoValidationError as exc:
         return " ".join(exc.messages)
+    return None
+
+
+def _upload_rejection(f):
+    """A 400 Response for rejected uploads, or None when the file is acceptable.
+
+    Cheap checks (name, extension) and the zip-bomb guard run here so a bad
+    file never reaches storage; PDF page/text caps are enforced later inside
+    extract_text, which is the single path every consumer goes through.
+    """
+    try:
+        validate_filename(f.name)
+        validate_extension(f.name)
+        if (f.name or "").lower().endswith((".docx", ".pptx")):
+            guard_zip_archive(f.read())
+            f.seek(0)
+    except UploadRejected as exc:
+        return Response({"detail": str(exc)}, status=400)
     return None
 
 
@@ -458,6 +477,9 @@ def upload_document(request):
     if f.size > max_size:
         return Response({"detail": f"File too large. Max size is {max_size // (1024*1024)} MB."},
                         status=413)
+    rejected = _upload_rejection(f)
+    if rejected:
+        return rejected
 
     is_okf = str(request.data.get("is_okf", "")).lower() in ("1", "true", "yes", "on")
     access_scope = (request.data.get("access_scope") or "company").strip().lower()
@@ -556,6 +578,11 @@ def upload_confirm(request):
     company = request.user.company
     if company is None or not key.startswith(f"{company.slug}/"):
         return Response({"detail": "Invalid storage key for your company."}, status=400)
+    try:
+        validate_filename(filename)
+        validate_extension(filename)
+    except UploadRejected as exc:
+        return Response({"detail": str(exc)}, status=400)
     if not storage.exists(key):
         return Response({"detail": "Uploaded object not found in storage."}, status=404)
 
@@ -711,6 +738,9 @@ def document_new_version(request, pk):
     if f.size > max_size:
         return Response({"detail": f"File too large. Max size is {max_size // (1024*1024)} MB."},
                         status=413)
+    rejected = _upload_rejection(f)
+    if rejected:
+        return rejected
 
     # Archive the current file as the previous version.
     old_path, old_size = doc.stored_path, doc.size
