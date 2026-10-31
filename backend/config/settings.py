@@ -160,6 +160,11 @@ else:
         }
     }
 
+# Number of trusted reverse proxies in front of Django (Caddy/ALB/Render = 1).
+# Controls how much of X-Forwarded-For is believed for rate limiting and the
+# audit trail; 0 ignores the header entirely (direct exposure).
+TRUSTED_PROXY_COUNT = int(os.getenv("TRUSTED_PROXY_COUNT", "1"))
+
 # Tighten CORS in production: list exact origins. The wide-open flag defaults OFF.
 CORS_ALLOW_ALL_ORIGINS = os.getenv("CORS_ALLOW_ALL_ORIGINS", "false").lower() in ("1", "true", "yes")
 CORS_ALLOWED_ORIGINS = [
