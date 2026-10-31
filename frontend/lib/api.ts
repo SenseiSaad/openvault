@@ -268,12 +268,28 @@ export interface AuthResponse {
   user: User
 }
 
+// Platform-admin sign-ins stop after the password and return this instead —
+// the second TOTP step completes via mfaActivate/mfaVerify.
+export interface MfaLoginResponse {
+  mfa_required: true
+  enrollment?: { secret: string; uri: string }
+  challenge: string
+}
+
+export function isMfaResponse(res: unknown): res is MfaLoginResponse {
+  return !!res && typeof res === 'object' && (res as MfaLoginResponse).mfa_required === true
+}
+
 // ---- Auth endpoints ------------------------------------------------------
 export const authApi = {
   me: (): Promise<User> => api.get('/auth/me'),
   // Enterprise: sign in with EMAIL.
-  enterpriseLogin: (p: { email: string; password: string }): Promise<AuthResponse> =>
+  enterpriseLogin: (p: { email: string; password: string }): Promise<AuthResponse | MfaLoginResponse> =>
     api.post('/auth/login', p),
+  mfaActivate: (challenge: string, code: string): Promise<AuthResponse> =>
+    api.post('/auth/mfa/activate', { challenge, code }),
+  mfaVerify: (challenge: string, code: string): Promise<AuthResponse> =>
+    api.post('/auth/mfa/verify', { challenge, code }),
   enterpriseRegister: (p: {
     company_name: string
     admin_name?: string

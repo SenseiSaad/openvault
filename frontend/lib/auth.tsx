@@ -2,8 +2,14 @@
 
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
 import {
-  authApi, type AuthResponse, type User, type UiLanguage,
+  authApi, isMfaResponse, type AuthResponse, type MfaLoginResponse, type User, type UiLanguage,
 } from './api'
+
+export interface MfaStep {
+  kind: 'activate' | 'verify'
+  challenge: string
+  enrollment?: { secret: string; uri: string }
+}
 
 interface AuthContextValue {
   user: User | null
@@ -24,6 +30,7 @@ interface AuthContextValue {
     email: string
     password: string
   }) => Promise<User>
+  completeMfa: (step: MfaStep, code: string) => Promise<User>
   refreshUser: () => Promise<User | null>
   logout: () => Promise<void>
 }
@@ -50,7 +57,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const enterpriseLogin = useCallback(
-    (email: string, password: string) => authApi.enterpriseLogin({ email, password }).then(apply),
+    (email: string, password: string) =>
+      authApi.enterpriseLogin({ email, password }).then((res) => {
+        // Platform admins must finish a TOTP step; surface it as a typed error
+        // the login form can catch and turn into a code input.
+        if (isMfaResponse(res)) {
+          const err = new Error('mfa_required') as Error & { mfa?: MfaLoginResponse }
+          err.mfa = res
+          throw err
+        }
+        return apply(res)
+      }),
+    [apply],
+  )
+
+  const completeMfa = useCallback(
+    async (step: MfaStep, code: string) =>
+      apply(step.kind === 'activate'
+        ? await authApi.mfaActivate(step.challenge, code)
+        : await authApi.mfaVerify(step.challenge, code)),
     [apply],
   )
   const enterpriseRegister = useCallback(
@@ -110,6 +135,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setLanguage,
         enterpriseLogin,
         enterpriseRegister,
+        completeMfa,
         refreshUser,
         logout,
       }}

@@ -129,6 +129,10 @@ class User(AbstractBaseUser, PermissionsMixin):
     # LLM default, plans and company plan assignment. Granted via the
     # `create_platform_admin` management command — never hardcoded to an email.
     is_platform_admin = models.BooleanField(default=False)
+    # TOTP two-factor secrets (RFC 6238). Required for platform-admin sign-ins;
+    # see core.mfa. The secret is encrypted at rest like LLMConfig.api_key.
+    mfa_secret = EncryptedCharField(max_length=64, blank=True, default="")
+    mfa_enabled = models.BooleanField(default=False)
     email_verified = models.BooleanField(default=False)
     language = models.CharField(max_length=2, choices=LANGUAGES, default="en")
     is_active = models.BooleanField(default=True)
