@@ -1,5 +1,6 @@
 """Django settings for the OpenVault API."""
 import os
+import tempfile
 from datetime import timedelta
 from pathlib import Path
 
@@ -194,7 +195,7 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = DATA_UPLOAD_MAX_MEMORY_SIZE
 RATELIMIT_ENABLED = os.getenv("RATELIMIT_ENABLED", "true").lower() in ("1", "true", "yes")
 
 # ── App/LLM config ──
-_default_data_dir = "/tmp/openvault/data" if IS_VERCEL else str(BASE_DIR / "data")
+_default_data_dir = str(Path(tempfile.gettempdir()) / "openvault" / "data") if IS_VERCEL else str(BASE_DIR / "data")
 DATA_DIR = os.getenv("DATA_DIR", _default_data_dir)
 try:
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -226,7 +227,7 @@ REQUIRE_EMAIL_VERIFICATION = os.getenv("REQUIRE_EMAIL_VERIFICATION", "false").lo
 
 # ── Media (generated artefacts: auto-filled leave forms, etc.) ──
 MEDIA_URL = os.getenv("MEDIA_URL", "/media/")
-_default_media_root = "/tmp/openvault/media" if IS_VERCEL else str(BASE_DIR / "media")
+_default_media_root = str(Path(tempfile.gettempdir()) / "openvault" / "media") if IS_VERCEL else str(BASE_DIR / "media")
 MEDIA_ROOT = os.getenv("MEDIA_ROOT", _default_media_root)
 try:
     os.makedirs(os.path.join(MEDIA_ROOT, "forms"), exist_ok=True)

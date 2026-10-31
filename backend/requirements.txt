@@ -1,13 +1,13 @@
-Django==5.1.4
-djangorestframework==3.15.2
-djangorestframework-simplejwt==5.3.1
-cryptography==41.0.7
+Django==5.2.18
+djangorestframework==3.18.3
+djangorestframework-simplejwt==5.5.1
+cryptography==50.0.2
 django-cors-headers==4.6.0
 numpy==2.2.1
-pypdf==5.1.0
+pypdf==6.21.4
 python-pptx==1.0.2
 python-docx==1.1.2
-python-dotenv==1.0.1
+python-dotenv==1.2.4
 gunicorn==23.0.0
 whitenoise==6.8.2
 psycopg2-binary==2.9.10
@@ -15,6 +15,8 @@ dj-database-url==2.3.0
 redis==5.2.1
 boto3==1.43.114
 botocore==1.43.114
+sentry-sdk==2.73.0
+celery==5.5.3
 
 # Optional / lazily-imported integrations. The code degrades gracefully when
 # these are absent (calendar sync is simulated, QR falls back to a plain URL,
