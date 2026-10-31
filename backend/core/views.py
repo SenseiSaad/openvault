@@ -58,19 +58,10 @@ from .serializers import (
 
 
 def client_ip(request):
-    """Caller IP for the audit log.
-
-    Behind a reverse proxy the last X-Forwarded-For entry is the one appended by
-    the trusted proxy; taking the *last* value prevents a client-supplied
-    "1.2.3.4, ..." prefix from spoofing the audit trail. Direct connections use
-    REMOTE_ADDR.
-    """
-    fwd = request.META.get("HTTP_X_FORWARDED_FOR")
-    if fwd:
-        parts = [p.strip() for p in fwd.split(",") if p.strip()]
-        if parts:
-            return parts[-1]
-    return request.META.get("REMOTE_ADDR", "") or ""
+    """Caller IP for the audit log — shared trusted-proxy logic with the rate
+    limiter, so a client-supplied X-Forwarded-For prefix cannot forge entries."""
+    from .ratelimit import _client_ip
+    return _client_ip(request)
 
 
 def _password_error(password, user=None):
