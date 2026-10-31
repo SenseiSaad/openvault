@@ -777,6 +777,9 @@ def document_detail(request, pk):
     if request.method == "DELETE":
         if not _is_editor_request(request):
             return Response({"detail": "Viewers cannot delete documents."}, status=403)
+        if not _can_manage_document(request, doc):
+            return Response({"detail": "Only admins or the uploader can delete a document."},
+                            status=403)
         if doc.stored_path:
             storage.delete(doc.stored_path, base_dir=settings.DATA_DIR)
         name = doc.filename
@@ -787,6 +790,9 @@ def document_detail(request, pk):
     if not _is_editor_request(request):
         return Response({"detail": "Viewers cannot edit documents."}, status=403)
     data = request.data
+    if "access_scope" in data and not _can_manage_document(request, doc):
+        return Response({"detail": "Only admins or the uploader can change who can access "
+                                   "this document."}, status=403)
     if "category" in data:
         doc.category = str(data.get("category") or "Other")[:50]
     if "description" in data:
@@ -814,6 +820,18 @@ def document_detail(request, pk):
 def _is_editor_request(request):
     u = request.user
     return bool(u.role in ("admin", "employee") or _is_platform_level(u))
+
+
+def _can_manage_document(request, doc):
+    """True for platform level, company admins, and the document's uploader.
+
+    Changing WHO can read a document (access scope) or destroying it are
+    privilege decisions, not content edits: any editor can fix a typo, but
+    widening a restricted document's audience or deleting it requires this
+    stronger check.
+    """
+    u = request.user
+    return bool(_is_platform_level(u) or u.role == "admin" or doc.uploaded_by_id == u.id)
 
 
 @api_view(["POST"])
