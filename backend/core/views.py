@@ -725,8 +725,20 @@ def upload_confirm(request):
 
 
 def _index_in_background(doc: Document):
-    """Extract/chunk/embed a document. On serverless platforms (SYNC_INDEXING=True)
-    this runs inline before returning; otherwise it runs on a daemon thread."""
+    """Extract/chunk/embed a document. Prefers the Celery worker when a broker
+    is configured; on serverless platforms (SYNC_INDEXING=True) it runs inline
+    before returning; otherwise it runs on a daemon thread."""
+    if getattr(settings, "CELERY_BROKER_URL", "") and not getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False):
+        from .tasks import index_document_task
+        index_document_task.delay(doc.id)
+        return
+
+    if getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False):
+        # Eager mode (tests / single-box debug): execute the task inline.
+        from .tasks import index_document_task
+        index_document_task.apply(args=[doc.id])
+        return
+
     def run():
         from django.db import close_old_connections
         close_old_connections()
