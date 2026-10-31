@@ -392,6 +392,10 @@ class AskLog(models.Model):
     latency_ms = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        # Monthly quota checks and analytics always filter company + time.
+        indexes = [models.Index(fields=["company", "created_at"])]
+
 
 class Announcement(models.Model):
     """A company-wide broadcast from an admin, shown in the workspace."""
@@ -441,6 +445,10 @@ class AuditLog(models.Model):
     detail = models.CharField(max_length=300, blank=True, default="")
     ip = models.CharField(max_length=64, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        # The audit page paginates newest-first within one company.
+        indexes = [models.Index(fields=["company", "-created_at"])]
 
 
 class DocumentShare(models.Model):

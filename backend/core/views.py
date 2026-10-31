@@ -512,7 +512,11 @@ def reset_password(request):
 @permission_classes([IsAuthenticated])
 def documents(request):
     """List documents readable by this member. Paginated with ?page=&page_size="""
-    qs = visible_documents(request.user).order_by("-created_at")
+    # select_related matches DocumentSerializer's FK traversal (company name,
+    # department name) so a 200-row page costs 1 query, not 400.
+    qs = (visible_documents(request.user)
+          .select_related("company", "department")
+          .order_by("-created_at"))
     page_data = _paginate(request, qs)
     return Response({
         "results": DocumentSerializer(page_data["qs"], many=True).data,
@@ -1060,7 +1064,8 @@ def conversations(request):
     if not request.user.company_id:
         return Response([])
     if request.method == "GET":
-        qs = ChatConversation.objects.filter(user=request.user, company=request.user.company)
+        qs = (ChatConversation.objects.filter(user=request.user, company=request.user.company)
+              .annotate(_message_count=Count("messages")))
         page = _paginate(request, qs, default_page_size=30)
         return Response({
             "results": ChatConversationSerializer(page["qs"], many=True).data,
@@ -1475,7 +1480,8 @@ def departments(request):
         return Response({"detail": "No company context."}, status=400)
     plan = _plan_for(company)
     if request.method == "GET":
-        return Response(DepartmentSerializer(company.departments.all(), many=True).data)
+        depts = company.departments.annotate(_members=Count("members"))
+        return Response(DepartmentSerializer(depts, many=True).data)
     if not (plan and plan.allow_departments):
         return Response({"detail": "Departments are not part of your current plan."}, status=402)
     name = str((request.data or {}).get("name") or "").strip()[:120]
@@ -1682,12 +1688,16 @@ def company_set_plan(request, pk):
 @permission_classes([IsPlatformAdmin])
 def list_companies(request):
     """List every registered company with usage counters (platform admin only)."""
-    companies = Company.objects.all().order_by("name")
+    # distinct=True on both counts avoids the cross-product of the two joins.
+    companies = (Company.objects
+                 .annotate(_members=Count("users", distinct=True),
+                           _docs=Count("documents", distinct=True))
+                 .order_by("name"))
     out = []
     for c in companies:
         out.append({
             "id": c.id, "name": c.name, "slug": c.slug, "access_code": c.access_code,
-            "member_count": c.users.count(), "doc_count": c.documents.count(),
+            "member_count": c._members, "doc_count": c._docs,
             "plan": PlanSerializer(c.plan).data if c.plan else None,
         })
     return Response(out)
