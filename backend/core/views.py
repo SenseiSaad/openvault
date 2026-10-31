@@ -796,8 +796,13 @@ def document_detail(request, pk):
         if not _can_manage_document(request, doc):
             return Response({"detail": "Only admins or the uploader can delete a document."},
                             status=403)
-        if doc.stored_path:
-            storage.delete(doc.stored_path, base_dir=settings.DATA_DIR)
+        # Every stored blob goes with it: the current file AND archived
+        # version files, which otherwise leak storage forever.
+        paths = {doc.stored_path}
+        paths.update(DocumentVersion.objects.filter(document=doc)
+                     .values_list("stored_path", flat=True))
+        for path in paths:
+            storage.delete(path, base_dir=settings.DATA_DIR)
         name = doc.filename
         doc.delete()
         audit(request, "delete", name)
@@ -885,6 +890,7 @@ def document_new_version(request, pk):
     doc.size = f.size
     doc.version += 1
     doc.indexing_status = "pending"
+    doc.preview_text = ""  # cached text belongs to the old file; re-index refills it
     doc.save()
     _index_in_background(doc)
     audit(request, "new_version", f"{doc.filename} -> v{doc.version}")
@@ -971,16 +977,23 @@ def download_document(request, pk):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def document_preview(request, pk):
-    """Return extracted plain text for in-browser preview (ACL-checked)."""
+    """Return extracted plain text for in-browser preview (ACL-checked).
+
+    Uses the text cached at index time; falls back to a fresh extraction (and
+    caches it) only for documents indexed before the cache existed.
+    """
     doc = _accessible_doc(request, pk)
     if not doc.stored_path or not storage.exists(doc.stored_path, base_dir=settings.DATA_DIR):
         raise Http404
-    from django.utils.text import slugify  # noqa: F401
-    try:
-        raw = storage.read_bytes(doc.stored_path, base_dir=settings.DATA_DIR)
-        text = rag.extract_text(raw, doc.filename, doc.content_type)
-    except OSError:
-        raise Http404
+    text = doc.preview_text
+    if not text:
+        try:
+            raw = storage.read_bytes(doc.stored_path, base_dir=settings.DATA_DIR)
+            text = rag.extract_text(raw, doc.filename, doc.content_type)
+            doc.preview_text = (text or "")[:500_000]
+            doc.save(update_fields=["preview_text"])
+        except OSError:
+            raise Http404
     audit(request, "preview", doc.filename)
     return Response({
         "id": doc.id, "filename": doc.filename, "content_type": doc.content_type,

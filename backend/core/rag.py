@@ -328,7 +328,10 @@ def index_document(doc: Document, raw: bytes) -> int:
                      "run manage.py reindex_embeddings once the provider is back",
                      doc.filename, doc.company_id, missing, len(pieces))
     doc.num_chunks = len(rows)
-    doc.save(update_fields=["num_chunks", "embed_model"])
+    # Cache the extraction for /preview so viewing a document never re-parses
+    # the file (a 50MB PDF preview would otherwise cost seconds per view).
+    doc.preview_text = (text or "")[:500_000]
+    doc.save(update_fields=["num_chunks", "embed_model", "preview_text"])
     return len(rows)
 
 
