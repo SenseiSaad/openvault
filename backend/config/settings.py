@@ -221,6 +221,14 @@ LLM_URL = os.getenv("LLM_URL", "http://localhost:11434").rstrip("/")
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:1.5b")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "nomic-embed-text")
 TOP_K = int(os.getenv("TOP_K", "4"))
+# pgvector column dimension — must match the embedding provider's output width
+# (titan-embed-text-v2 = 1024, nomic-embed-text = 768, text-embedding-3-small =
+# 1536). Changing it requires a reindex; see docs/runbooks.
+EMBED_DIM = int(os.getenv("EMBED_DIM", "1024"))
+# Upper bound on the chunk pool scanned in Python when pgvector is unavailable
+# (SQLite dev, or a Postgres without the extension). Keeps retrieval latency
+# bounded instead of growing with the whole corpus.
+RETRIEVAL_MAX_POOL = int(os.getenv("RETRIEVAL_MAX_POOL", "2000"))
 
 # Gate login on a verified email address (off for local dev convenience).
 REQUIRE_EMAIL_VERIFICATION = os.getenv("REQUIRE_EMAIL_VERIFICATION", "false").lower() in ("1", "true", "yes")
