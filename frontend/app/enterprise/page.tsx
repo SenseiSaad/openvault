@@ -15,13 +15,13 @@ import {
 } from 'lucide-react'
 import { Logo } from '@/components/logo'
 import { ThemeToggle } from '@/components/theme-toggle'
-import { useAuth } from '@/lib/auth'
-import { JOB_TITLES } from '@/lib/api'
+import { useAuth, type MfaStep } from '@/lib/auth'
+import { JOB_TITLES, type MfaLoginResponse } from '@/lib/api'
 
 function EnterpriseInner() {
   const router = useRouter()
   const params = useSearchParams()
-  const { enterpriseLogin, enterpriseRegister } = useAuth()
+  const { enterpriseLogin, enterpriseRegister, completeMfa } = useAuth()
 
   // ?role=admin|employee just tailors the copy; both sign in with a work email.
   const role = params.get('role')
@@ -33,6 +33,8 @@ function EnterpriseInner() {
   const [error, setError] = useState('')
   const [showSignInPassword, setShowSignInPassword] = useState(false)
   const [showCreatePassword, setShowCreatePassword] = useState(false)
+  // Platform-admin two-factor step: set after the password check succeeded.
+  const [mfa, setMfa] = useState<MfaStep | null>(null)
 
   // After auth, land in the workspace unless a ?next destination was provided.
   const next = params.get('next') || '/workspace'
@@ -46,7 +48,33 @@ function EnterpriseInner() {
       await enterpriseLogin(String(f.get('email') || '').trim(), String(f.get('password') || ''))
       router.push(next)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong.')
+      const mfa = (err as { mfa?: MfaLoginResponse }).mfa
+      if (mfa) {
+        // Platform admin: the password was accepted; finish the TOTP step below.
+        setMfa({
+          kind: mfa.enrollment ? 'activate' : 'verify',
+          challenge: mfa.challenge,
+          enrollment: mfa.enrollment,
+        })
+        setError('')
+      } else {
+        setError(err instanceof Error ? err.message : 'Something went wrong.')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function onMfaCode(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (!mfa) return
+    setError('')
+    setBusy(true)
+    try {
+      await completeMfa(mfa, String(new FormData(e.currentTarget).get('code') || '').trim())
+      router.push(next)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'That code was not accepted.')
     } finally {
       setBusy(false)
     }
@@ -218,7 +246,65 @@ function EnterpriseInner() {
               </p>
             )}
 
-            {tab === 'signin' ? (
+            {tab === 'signin' && mfa ? (
+              <form
+                id="panel-mfa"
+                role="tabpanel"
+                aria-labelledby="tab-signin"
+                className="mt-6 flex flex-col gap-4"
+                onSubmit={onMfaCode}
+              >
+                <div>
+                  <p className="text-[13px] leading-relaxed text-muted-foreground">
+                    Two-factor verification. Enter the 6-digit code from your authenticator app.
+                  </p>
+                  {mfa.enrollment ? (
+                    <p className="mt-3 rounded-lg border border-border bg-surface/65 p-3 font-mono text-[12px] break-all">
+                      First-time setup — add this secret to your authenticator app, then confirm
+                      the code below:<br />
+                      <span className="text-accent">{mfa.enrollment.secret}</span>
+                    </p>
+                  ) : null}
+                </div>
+                <div>
+                  <label htmlFor="mfa-code" className={labelClass}>
+                    Authenticator code
+                  </label>
+                  <input
+                    id="mfa-code"
+                    name="code"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    pattern="[0-9 ]*"
+                    maxLength={7}
+                    required
+                    placeholder="000000"
+                    autoFocus
+                    className="field mt-1.5 text-center tracking-[0.4em]"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={busy}
+                  aria-busy={busy}
+                  className="btn btn-primary mt-1 w-full disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+                  Verify {!busy && <ArrowRight className="size-4" aria-hidden />}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMfa(null)
+                    setError('')
+                  }}
+                  className="text-[11px] text-muted-foreground underline-offset-4 hover:underline"
+                >
+                  Back to sign in
+                </button>
+              </form>
+            ) : tab === 'signin' ? (
               <form
                 id="panel-signin"
                 role="tabpanel"

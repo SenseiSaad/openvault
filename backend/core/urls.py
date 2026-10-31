@@ -8,6 +8,9 @@ urlpatterns = [
     # auth (cookie-based; header still accepted)
     path("auth/register", views.register_company),
     path("auth/login", views.login),
+    path("auth/mfa/activate", views.mfa_activate),
+    path("auth/mfa/verify", views.mfa_verify),
+    path("auth/mfa/setup", views.mfa_setup),
     path("auth/logout", views.logout),
     path("auth/refresh", views.refresh),
     path("auth/me", views.me),

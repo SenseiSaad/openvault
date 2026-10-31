@@ -248,7 +248,13 @@ def register_company(request):
 @permission_classes([AllowAny])
 @rate_limit("login", rate=8, per_seconds=60, key="ip_email")
 def login(request):
-    """Enterprise sign-in with email + password. Sets HttpOnly auth cookies."""
+    """Enterprise sign-in with email + password. Sets HttpOnly auth cookies.
+
+    Platform-level accounts (root admins) get a mandatory second step: the
+    password alone never sets cookies, it returns an `mfa_required` challenge
+    that must be completed via /api/auth/mfa/verify (or activated first via
+    /api/auth/mfa/activate on first enrollment).
+    """
     s = LoginSerializer(data=request.data)
     s.is_valid(raise_exception=True)
     user = authenticate(username=s.validated_data["email"], password=s.validated_data["password"])
@@ -258,9 +264,87 @@ def login(request):
         return Response({"detail": "Please verify your email before signing in. "
                                    "Check your inbox for the verification link.",
                          "code": "email_unverified"}, status=403)
+    if _is_platform_level(user):
+        from . import mfa
+        if not user.mfa_enabled:
+            secret = mfa.generate_secret()
+            return Response({
+                "mfa_required": True,
+                "enrollment": {
+                    "secret": secret,
+                    "uri": mfa.provisioning_uri(secret, user.email),
+                },
+                "challenge": mfa.issue_challenge(user.pk, "enroll", secret=secret),
+            })
+        return Response({"mfa_required": True,
+                         "challenge": mfa.issue_challenge(user.pk, "login")})
     audit(_as(request, user), "login")
     resp = Response({"user": UserSerializer(user).data})
     return set_auth_cookies(resp, user)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@rate_limit("mfa", rate=10, per_seconds=60, key="ip")
+def mfa_activate(request):
+    """Finish first-time TOTP enrollment: challenge (from login) + 6-digit code.
+
+    Saving the secret only happens after the authenticator app proves it can
+    produce valid codes, so a typo during setup cannot lock the admin out.
+    """
+    from . import mfa
+    payload = mfa.read_challenge(str((request.data or {}).get("challenge") or ""), "enroll")
+    code = str((request.data or {}).get("code") or "")
+    if not payload:
+        return Response({"detail": "This verification session expired. Sign in again."}, status=400)
+    try:
+        user = User.objects.get(pk=payload.get("u"), is_active=True)
+    except User.DoesNotExist:
+        return Response({"detail": "This verification session expired. Sign in again."}, status=400)
+    if not mfa.verify_code(payload.get("s") or "", code):
+        return Response({"detail": "That code did not match. Check your authenticator app."}, status=400)
+    user.mfa_secret = payload["s"]
+    user.mfa_enabled = True
+    user.save(update_fields=["mfa_secret", "mfa_enabled"])
+    audit(_as(request, user), "mfa_enrolled")
+    resp = Response({"user": UserSerializer(user, context={"request": request}).data})
+    return set_auth_cookies(resp, user)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@rate_limit("mfa", rate=10, per_seconds=60, key="ip")
+def mfa_verify(request):
+    """Complete a platform-admin login: login challenge + TOTP code -> cookies."""
+    from . import mfa
+    payload = mfa.read_challenge(str((request.data or {}).get("challenge") or ""), "login")
+    code = str((request.data or {}).get("code") or "")
+    if not payload:
+        return Response({"detail": "This verification session expired. Sign in again."}, status=400)
+    try:
+        user = User.objects.get(pk=payload.get("u"), is_active=True)
+    except User.DoesNotExist:
+        return Response({"detail": "This verification session expired. Sign in again."}, status=400)
+    if not (user.mfa_enabled and mfa.verify_code(user.mfa_secret, code)):
+        return Response({"detail": "That code did not match. Check your authenticator app."}, status=400)
+    audit(_as(request, user), "login")
+    resp = Response({"user": UserSerializer(user, context={"request": request}).data})
+    return set_auth_cookies(resp, user)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def mfa_setup(request):
+    """Rotate the TOTP secret for a platform admin (re-enrollment flow)."""
+    if not _is_platform_level(request.user):
+        return Response({"detail": "Only platform admins can manage two-factor auth."}, status=403)
+    from . import mfa
+    secret = mfa.generate_secret()
+    return Response({
+        "secret": secret,
+        "uri": mfa.provisioning_uri(secret, request.user.email),
+        "challenge": mfa.issue_challenge(request.user.pk, "enroll", secret=secret),
+    })
 
 
 @api_view(["POST"])

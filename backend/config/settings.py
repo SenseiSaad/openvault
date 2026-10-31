@@ -54,6 +54,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "core.middleware.OriginCheckMiddleware",
+    "core.mfa_admin.AdminMFAMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
