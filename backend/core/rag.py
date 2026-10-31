@@ -7,10 +7,12 @@ chunks are ALWAYS injected into context regardless of the question.
 """
 import io
 import json
+import logging
 import math
 import re
 import struct
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from django.conf import settings
 from django.db.models import Q
@@ -128,6 +130,54 @@ def chunk_text(text: str, size: int = 900, overlap: int = 150) -> list[str]:
 def llm_available() -> bool:
     """Is the active chat provider reachable / configured? (UI status dot)."""
     return providers.get_chat_provider().available()
+
+
+EMBED_BATCH_SIZE = 8
+EMBED_WORKERS = 4
+_log = logging.getLogger(__name__)
+
+
+def embed_parallel(texts: list[str]) -> list | None:
+    """Embed texts in parallel batches. Returns a list aligned to `texts`
+    (entries may be None for failed batches), or None when the provider is
+    entirely unavailable. Batch failures are logged, never raised."""
+    if not texts:
+        return []
+    provider = providers.get_embed_provider()
+    if len(texts) <= EMBED_BATCH_SIZE:
+        try:
+            vecs = provider.embed(texts)
+        except Exception:
+            _log.exception("embedding provider raised on a %s-text batch", len(texts))
+            return None
+        if vecs is None:
+            _log.warning("embedding provider unavailable: %s chunks will be indexed "
+                         "without vectors (keyword-only retrieval)", len(texts))
+        return vecs
+
+    batches = [texts[i:i + EMBED_BATCH_SIZE] for i in range(0, len(texts), EMBED_BATCH_SIZE)]
+    results: list = [None] * len(batches)
+
+    def run(index: int, batch: list[str]):
+        try:
+            results[index] = provider.embed(batch)
+        except Exception:
+            _log.exception("embedding batch %s/%s failed", index + 1, len(batches))
+
+    with ThreadPoolExecutor(max_workers=EMBED_WORKERS) as pool:
+        list(pool.map(lambda pair: run(*pair), enumerate(batches)))
+
+    flat: list = []
+    any_ok = False
+    for batch, result in zip(batches, results):
+        if result is None:
+            _log.warning("embedding batch failed: %s chunk(s) will be indexed "
+                         "without vectors (keyword-only retrieval)", len(batch))
+            flat.extend([None] * len(batch))
+        else:
+            any_ok = True
+            flat.extend(result)
+    return flat if any_ok else None
 
 
 def embed(texts: list[str]) -> list | None:
@@ -257,19 +307,28 @@ def index_document(doc: Document, raw: bytes) -> int:
         doc.save(update_fields=["num_chunks"])
         return 0
 
-    vecs = embed(pieces)  # None when embeddings are offline
+    vecs = embed_parallel(pieces)  # None when embeddings are fully offline
+    provider = providers.get_embed_provider()
+    doc.embed_model = getattr(provider, "embed_model_name", "") or ""
     Chunk.objects.filter(document=doc).delete()
     rows = []
     for i, piece in enumerate(pieces):
-        blob = _to_bytes(vecs[i]) if vecs is not None else None
+        vec = vecs[i] if vecs is not None else None
+        blob = _to_bytes(vec) if vec is not None else None
         rows.append(Chunk(document=doc, company=doc.company, ord=i, text=piece, embedding=blob))
     Chunk.objects.bulk_create(rows)
     if vecs is not None:
         persist_chunk_vectors(
-            [(row.pk, vecs[i]) for i, row in enumerate(rows) if row.pk is not None]
+            [(row.pk, vecs[i]) for i, row in enumerate(rows)
+             if row.pk is not None and vecs[i] is not None]
         )
+    missing = sum(1 for v in (vecs or [])) if vecs is None else sum(1 for v in vecs if v is None)
+    if missing:
+        _log.warning("document %s (company %s): %d/%d chunks missing embeddings — "
+                     "run manage.py reindex_embeddings once the provider is back",
+                     doc.filename, doc.company_id, missing, len(pieces))
     doc.num_chunks = len(rows)
-    doc.save(update_fields=["num_chunks"])
+    doc.save(update_fields=["num_chunks", "embed_model"])
     return len(rows)
 
 

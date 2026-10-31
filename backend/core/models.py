@@ -321,6 +321,10 @@ class Document(models.Model):
     indexing_status = models.CharField(max_length=10, choices=INDEXING_STATES, default="ready")
     index_error = models.CharField(max_length=300, blank=True, default="")
     version = models.PositiveIntegerField(default=1)
+    # Which embedding model produced this document's vectors. Mixing models
+    # silently breaks cosine retrieval (dimension/geometry mismatch), so the
+    # name is recorded at index time and surfaced by check_embeddings.
+    embed_model = models.CharField(max_length=120, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

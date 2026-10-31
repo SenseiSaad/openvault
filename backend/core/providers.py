@@ -94,6 +94,9 @@ class BaseProvider:
     chat_model = ""
     temperature = 0.2
     max_tokens = 512
+    # Name of the embedding model this provider writes with, stored per
+    # document so mixed-model corpora are detectable (see check_embeddings).
+    embed_model_name = ""
 
     def available(self):
         return False
@@ -113,6 +116,7 @@ class OllamaProvider(BaseProvider):
         self.base = (base_url or "http://localhost:11434").rstrip("/")
         self.chat_model = chat_model or "qwen2.5:1.5b"
         self.embed_model = embed_model or "nomic-embed-text"
+        self.embed_model_name = self.embed_model
 
     def available(self):
         try:
@@ -157,6 +161,7 @@ class OpenAIProvider(BaseProvider):
         self.base = (base_url or "https://api.openai.com/v1").rstrip("/")
         self.chat_model = chat_model or "gpt-4o-mini"
         self.embed_model = embed_model or "text-embedding-3-small"
+        self.embed_model_name = self.embed_model
 
     def _headers(self):
         return {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
@@ -246,6 +251,7 @@ class GeminiProvider(BaseProvider):
         if em.startswith("models/"):
             em = em[len("models/"):]
         self.embed_model = em or "gemini-embedding-001"
+        self.embed_model_name = self.embed_model
 
     def available(self):
         return bool(self.api_key)
@@ -415,6 +421,7 @@ class BedrockProvider(BaseProvider):
         self.region = (region or "").strip() or "ap-south-1"
         self.chat_model = chat_model or DEFAULT_MODELS["bedrock"]
         self.embed_model = embed_model or "amazon.titan-embed-text-v2:0"
+        self.embed_model_name = self.embed_model
 
     def _aws_access_key_pair(self):
         access_key, separator, secret_key = self.api_key.partition(":")

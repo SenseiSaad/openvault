@@ -51,6 +51,10 @@ def main() -> int:
     Plan.default()
     failures = []
 
+    # -- make reruns idempotent ----------------------------------------------
+    Company.objects.filter(slug__in=["acme-verify", "globex-verify"]).delete()
+    User.objects.filter(email__in=["va@acme.test", "vg@globex.test"]).delete()
+
     # -- seed two tenants ----------------------------------------------------
     acme = Company.objects.create(name="Acme", slug="acme-verify")
     globex = Company.objects.create(name="Globex", slug="globex-verify")
