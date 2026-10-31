@@ -31,6 +31,13 @@ def _client_ip(request):
 
 
 def _identity(request, key):
+    if key == "user":
+        # Authenticated endpoints are limited per account, not per IP, so a
+        # shared office NAT does not throttle colleagues into each other.
+        user = getattr(request, "user", None)
+        if user is not None and getattr(user, "is_authenticated", False):
+            return f"u{user.pk}"
+        return _client_ip(request)
     if key == "ip":
         return _client_ip(request)
     if key == "ip_email":
