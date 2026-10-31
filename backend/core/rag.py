@@ -23,6 +23,7 @@ except ImportError:  # numpy only needed for embedding similarity; keyword searc
 
 from .models import Chunk, Document
 from . import providers, workflow
+from .uploads import MAX_PDF_PAGES, UploadRejected, guard_zip_archive, truncate_text
 
 # ---------------------------------------------------------------- extraction
 def _ocr_pdf_bytes(raw: bytes, max_pages: int = 10) -> str:
@@ -42,43 +43,60 @@ def _ocr_pdf_bytes(raw: bytes, max_pages: int = 10) -> str:
 
 def extract_text(raw: bytes, filename: str, content_type: str) -> str:
     """Best-effort text extraction from an uploaded file, with optional OCR for
-    scanned PDFs and images (needs tesseract + poppler installed system-wide)."""
+    scanned PDFs and images (needs tesseract + poppler installed system-wide).
+
+    Extraction is bounded: OOXML archives pass the zip-bomb guard first, PDF
+    parsing stops at MAX_PDF_PAGES, and every result is truncated to
+    MAX_EXTRACTED_CHARS. `UploadRejected` propagates so callers can answer 400;
+    other parse failures degrade to '' like before.
+    """
+    from .uploads import validate_extension
+
     name = (filename or "").lower()
     try:
-        if name.endswith(".pdf"):
+        ext = validate_extension(name)
+    except UploadRejected:
+        # Legacy rows may predate the allowlist; unknown types still decode as text.
+        ext = ""
+    if ext in (".docx", ".pptx"):
+        guard_zip_archive(raw)
+        if ext == ".docx":
+            from docx import Document as Docx
+            doc = Docx(io.BytesIO(raw))
+            return truncate_text("\n".join(p.text for p in doc.paragraphs))
+        from pptx import Presentation
+        prs = Presentation(io.BytesIO(raw))
+        out = []
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    out.append(shape.text_frame.text)
+        return truncate_text("\n".join(out))
+    try:
+        if ext == ".pdf":
             from pypdf import PdfReader
             reader = PdfReader(io.BytesIO(raw))
-            text = "\n".join((p.extract_text() or "") for p in reader.pages)
+            pages = reader.pages[:MAX_PDF_PAGES]
+            text = "\n".join((p.extract_text() or "") for p in pages)
             if len(text.strip()) < 80:
                 # Almost certainly a scan: try OCR before giving up.
                 text = text + "\n" + _ocr_pdf_bytes(raw)
-            return text
-        if name.endswith((".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp")):
+            return truncate_text(text)
+        if ext in (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"):
             try:
                 import pytesseract
                 from PIL import Image
                 image = Image.open(io.BytesIO(raw))
-                return pytesseract.image_to_string(image)
+                return truncate_text(pytesseract.image_to_string(image))
             except Exception:
                 return ""
-        if name.endswith(".docx"):
-            from docx import Document as Docx
-            doc = Docx(io.BytesIO(raw))
-            return "\n".join(p.text for p in doc.paragraphs)
-        if name.endswith(".pptx"):
-            from pptx import Presentation
-            prs = Presentation(io.BytesIO(raw))
-            out = []
-            for slide in prs.slides:
-                for shape in slide.shapes:
-                    if shape.has_text_frame:
-                        out.append(shape.text_frame.text)
-            return "\n".join(out)
+    except UploadRejected:
+        raise
     except Exception:
         pass
     # plain text / markdown / csv / unknown -> decode as utf-8
     try:
-        return raw.decode("utf-8", errors="ignore")
+        return truncate_text(raw.decode("utf-8", errors="ignore"))
     except Exception:
         return ""
 
