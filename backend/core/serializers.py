@@ -43,10 +43,14 @@ class CompanyDirectorySerializer(serializers.ModelSerializer):
 
 
 class MemberDirectorySerializer(serializers.ModelSerializer):
-    """Safe member identity fields for a company selected by access code."""
+    """Pre-grant member identity for a company selected by access code.
+
+    Deliberately excludes email: knowing a share code must not reveal a whole
+    staff address book — the grant reveals the document, not the directory.
+    """
     class Meta:
         model = User
-        fields = ["id", "email", "full_name", "title", "role"]
+        fields = ["id", "full_name", "title", "role"]
 
 
 class CompanyProfileSerializer(serializers.ModelSerializer):

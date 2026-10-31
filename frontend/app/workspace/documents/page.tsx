@@ -888,7 +888,7 @@ function ShareDialog({ doc, onClose }: { doc: EnterpriseDoc; onClose: () => void
                   <option value="">Choose employee…</option>
                   {members.map((m) => (
                     <option key={m.id} value={m.id}>
-                      {m.full_name || m.email}
+                      {m.full_name || `Member #${m.id}`}
                       {m.title ? ` · ${m.title}` : ''} ({m.role})
                     </option>
                   ))}

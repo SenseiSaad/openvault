@@ -19,7 +19,7 @@ def test_register_creates_tenant_and_sets_httponly_cookies(api, register_company
     admin = User.objects.get(email="admin@acme.test")
     assert admin.company_id == company.id
     assert admin.role == "admin"
-    assert company.access_code and len(company.access_code) == 5
+    assert company.access_code and len(company.access_code) == 8
 
     access = resp.cookies["openvault_access"]
     refresh = resp.cookies["openvault_refresh"]

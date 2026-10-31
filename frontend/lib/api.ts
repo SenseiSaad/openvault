@@ -324,7 +324,8 @@ export interface CompanyDirectory {
 
 export interface MemberDirectory {
   id: number
-  email: string
+  // Deliberately excludes email: the directory is pre-grant, so partner
+  // companies must not be able to harvest staff addresses from a share code.
   full_name: string
   title: string
   role: Role
