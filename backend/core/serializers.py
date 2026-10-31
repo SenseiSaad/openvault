@@ -20,11 +20,18 @@ class PlanSerializer(serializers.ModelSerializer):
 
 
 class DepartmentSerializer(serializers.ModelSerializer):
-    member_count = serializers.IntegerField(source="members.count", read_only=True)
+    # Fed by a Count("members") annotation in the departments list view.
+    member_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Department
         fields = ["id", "name", "member_count", "created_at"]
+
+    def get_member_count(self, obj):
+        annotated = getattr(obj, "_members", None)
+        if annotated is not None:
+            return annotated
+        return obj.members.count()
 
 
 class CompanySerializer(serializers.ModelSerializer):
@@ -262,11 +269,19 @@ class UserStrikeSerializer(serializers.ModelSerializer):
 
 
 class ChatConversationSerializer(serializers.ModelSerializer):
-    message_count = serializers.IntegerField(source="messages.count", read_only=True)
+    # Fed by a Count("messages") annotation in the list view; defaults to a
+    # query per row elsewhere (detail views) where the annotation is absent.
+    message_count = serializers.SerializerMethodField()
 
     class Meta:
         model = ChatConversation
         fields = ["id", "title", "message_count", "created_at", "updated_at"]
+
+    def get_message_count(self, obj):
+        annotated = getattr(obj, "_message_count", None)
+        if annotated is not None:
+            return annotated
+        return obj.messages.count()
 
 
 class ChatMessageSerializer(serializers.ModelSerializer):
