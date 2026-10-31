@@ -325,6 +325,9 @@ class Document(models.Model):
     # silently breaks cosine retrieval (dimension/geometry mismatch), so the
     # name is recorded at index time and surfaced by check_embeddings.
     embed_model = models.CharField(max_length=120, blank=True, default="")
+    # Extracted text cached at index time so /documents/<id>/preview does not
+    # re-parse the file on every view. Cleared on new-version upload.
+    preview_text = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
