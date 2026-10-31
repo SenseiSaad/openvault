@@ -35,6 +35,11 @@ _RAW_PATTERNS: dict[str, list[str]] = {
         # US SSN-style and generic 16-digit card numbers.
         r"\b\d{3}-\d{2}-\d{4}\b",
         r"\b(?:\d[ -]?){16}\b",
+        # Pakistani identifiers: CNIC (XXXXX-XXXXXXX-X) and PK-format IBAN
+        # (PK + 2 check digits + 22 chars) — the formats this product's users
+        # are actually likely to paste.
+        r"\b\d{5}-\d{7}-\d\b",
+        r"\bPK\d{2}[A-Z0-9]{4}[A-Z0-9]{18}\b",
     ],
     "policy_bypass": [
         r"\b(bypass|circumvent|get around|override)\b.{0,25}\b(policy|policies|rule|rules|security|control)\b",
