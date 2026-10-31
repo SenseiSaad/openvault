@@ -44,7 +44,10 @@ def _open(url, payload=None, headers=None, method=None, timeout=30.0):
     req = urllib.request.Request(
         url, data=data, headers=h, method=method or ("POST" if data else "GET")
     )
-    return urllib.request.urlopen(req, timeout=timeout)
+    # The only urlopen in the codebase. The only URL reaching it from tenant
+    # input is LLMConfig.base_url, validated as https-to-public-host in
+    # core.netguard before use — hence the nosec with justification.
+    return urllib.request.urlopen(req, timeout=timeout)  # nosec B310
 
 
 def _json(url, payload=None, headers=None, method=None, timeout=30.0):
