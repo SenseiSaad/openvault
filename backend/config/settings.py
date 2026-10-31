@@ -212,6 +212,27 @@ AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY", "").strip()
 # Run RAG indexing synchronously on serverless platforms where daemon threads are frozen after response.
 SYNC_INDEXING = os.getenv("SYNC_INDEXING", "true" if IS_VERCEL else "false").lower() in ("1", "true", "yes")
 
+# ── Celery (background indexing / retention jobs) ──
+# Inactive without CELERY_BROKER_URL: indexing falls back to in-process threads
+# so local/dev keeps working with zero config. Prod compose sets the broker to
+# Redis; beat runs the requeue and retention jobs (see CELERY_BEAT_SCHEDULE).
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "")
+CELERY_TASK_ALWAYS_EAGER = os.getenv("CELERY_TASK_ALWAYS_EAGER", "false").lower() in ("1", "true", "yes")
+CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "900"))
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+if CELERY_BROKER_URL or CELERY_TASK_ALWAYS_EAGER:
+    from celery.schedules import crontab
+    CELERY_BEAT_SCHEDULE = {
+        "requeue-stuck-documents": {
+            "task": "core.tasks.requeue_stuck_documents",
+            "schedule": 900.0,  # every 15 minutes
+        },
+        "prune-asklogs": {
+            "task": "core.tasks.prune_asklogs_task",
+            "schedule": crontab(hour=3, minute=15),
+        },
+    }
+
 # ── LLM provider config ──
 # API keys saved through the settings UI are encrypted at rest. Set a stable
 # LLM_KEY_ENCRYPTION_KEY in production (back it up); when blank it is derived
