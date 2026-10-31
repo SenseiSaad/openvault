@@ -55,6 +55,7 @@ class Command(BaseCommand):
             for chunk, vec in zip(group, vecs):
                 chunk.embedding = rag._to_bytes(vec)
                 chunk.save(update_fields=["embedding"])
+                rag.persist_chunk_vectors([(chunk.pk, vec)])
                 done += 1
 
         if failed:

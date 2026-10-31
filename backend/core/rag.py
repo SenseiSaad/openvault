@@ -150,6 +150,103 @@ def _from_bytes(blob: bytes):
     return list(struct.unpack(f"{count}f", blob))
 
 # -------------------------------------------------------------- index / store
+def _pgvector_ready() -> bool:
+    """True when this connection can use the pgvector KNN column.
+
+    Cached per process: True only on PostgreSQL with the `vector` extension and
+    the embedding_vec column present. Any error means "not available" and
+    retrieval uses the capped in-Python scan instead.
+    """
+    global _PGVECTOR_STATE
+    if _PGVECTOR_STATE["checked"]:
+        return _PGVECTOR_STATE["ok"]
+    from django.db import connection
+    ok = False
+    try:
+        if connection.vendor == "postgresql":
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT 1 FROM pg_extension WHERE extname = 'vector'"
+                )
+                if cursor.fetchone():
+                    cursor.execute(
+                        "SELECT 1 FROM information_schema.columns "
+                        "WHERE table_name = 'core_chunk' AND column_name = 'embedding_vec'"
+                    )
+                    ok = bool(cursor.fetchone())
+    except Exception:
+        ok = False
+    _PGVECTOR_STATE.update(checked=True, ok=ok)
+    return ok
+
+
+_PGVECTOR_STATE = {"checked": False, "ok": False}
+
+
+def _vector_literal(vec) -> str:
+    """Render a float sequence as a pgvector string literal."""
+    if hasattr(vec, "tolist"):
+        vec = vec.tolist()
+    return "[" + ",".join(f"{float(x):.6g}" for x in vec) + "]"
+
+
+def persist_chunk_vectors(pairs) -> int:
+    """Write embedding_vec for (chunk_id, vector) pairs on PostgreSQL.
+
+    The bytea `embedding` column stays the portable source of truth; this
+    mirrors it into the pgvector column so KNN search can run in the database.
+    Returns the number of rows updated (0 when pgvector is unavailable).
+    """
+    if not _pgvector_ready():
+        return 0
+    from django.db import connection
+    rows = [( _vector_literal(vec), chunk_id) for chunk_id, vec in pairs if vec is not None]
+    if not rows:
+        return 0
+    with connection.cursor() as cursor:
+        cursor.executemany(
+            "UPDATE core_chunk SET embedding_vec = %s::vector WHERE id = %s", rows
+        )
+    return len(rows)
+
+
+def _pg_shortlist(document_ids, qvec, limit: int) -> dict:
+    """KNN over the pgvector column, restricted to the caller's document set.
+
+    Returns {chunk_id: distance} for the `limit` nearest chunks, or {} when
+    pgvector is unavailable or the query dimension mismatches the column.
+    Tenant isolation is inherited from document_ids (the same set the Python
+    scan would iterate).
+    """
+    if not _pgvector_ready() or qvec is None or not document_ids:
+        return {}
+    try:
+        if hasattr(qvec, "shape") and getattr(qvec, "size", 0) and qvec.size != settings.EMBED_DIM:
+            return {}
+        if not hasattr(qvec, "shape") and len(qvec) != settings.EMBED_DIM:
+            return {}
+        from django.db import connection
+        ids = list(document_ids)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.id, c.embedding_vec <=> %s::vector AS dist
+                FROM core_chunk c
+                WHERE c.document_id = ANY(%s) AND c.embedding_vec IS NOT NULL
+                ORDER BY c.embedding_vec <=> %s::vector
+                LIMIT %s
+                """,
+                [_vector_literal(qvec), ids, _vector_literal(qvec), limit],
+            )
+            return {row[0]: float(row[1]) for row in cursor.fetchall()}
+    except Exception:
+        # Extension missing mid-flight, dimension drift, transient DB error —
+        # degrade to the Python scan rather than failing the question.
+        import logging
+        logging.getLogger(__name__).exception("pgvector shortlist failed; falling back")
+        return {}
+
+
 def index_document(doc: Document, raw: bytes) -> int:
     """Extract, chunk, embed and persist chunks for one document.
     Returns the number of chunks stored."""
@@ -167,6 +264,10 @@ def index_document(doc: Document, raw: bytes) -> int:
         blob = _to_bytes(vecs[i]) if vecs is not None else None
         rows.append(Chunk(document=doc, company=doc.company, ord=i, text=piece, embedding=blob))
     Chunk.objects.bulk_create(rows)
+    if vecs is not None:
+        persist_chunk_vectors(
+            [(row.pk, vecs[i]) for i, row in enumerate(rows) if row.pk is not None]
+        )
     doc.num_chunks = len(rows)
     doc.save(update_fields=["num_chunks"])
     return len(rows)
@@ -247,12 +348,19 @@ def accessible_doc_ids(user) -> set:
 def retrieve(user, question: str, k: int | None = None) -> list[Chunk]:
     """Return the top-k relevant chunks the user is allowed to see.
 
-    The allowed set is user-scoped (own company incl. department + shared
-    documents), which is the isolation boundary. OKF chunks are ALWAYS prepended
-    so curated notes and exceptions reach the model. The pool is scored with a
-    hybrid of cosine similarity (when embeddings exist) and BM25 keyword
-    relevance, which catches exact terms embeddings miss. Embeddings-off degrades
-    to BM25 alone.
+    Two paths, same isolation boundary (`accessible_doc_ids`):
+    * pgvector (PostgreSQL): a KNN query over the embedding_vec column returns
+      a shortlist of ~40 candidate chunks filtered by the caller's document
+      ids; BM25 then reranks ONLY the shortlist. Cost per question is
+      O(shortlist), independent of corpus size.
+    * fallback (SQLite dev / no pgvector): the legacy in-Python scan over the
+      accessible pool, capped at RETRIEVAL_MAX_POOL chunks so latency stays
+      bounded.
+
+    OKF chunks are ALWAYS prepended so curated notes reach the model. The
+    candidate pool is scored with a hybrid of cosine similarity (when
+    embeddings exist) and BM25 keyword relevance; embeddings-off degrades to
+    BM25 alone.
     """
     k = k or settings.TOP_K
     ids = accessible_doc_ids(user)
@@ -264,21 +372,33 @@ def retrieve(user, question: str, k: int | None = None) -> list[Chunk]:
     )
     okf_ids = {c.id for c in okf}
 
-    pool = list(
-        Chunk.objects.filter(document_id__in=ids)
-        .exclude(id__in=okf_ids)
-        .select_related("document")
-    )
-    if not pool:
-        return okf
-
     qvec = None
     qembed = embed([question])
     if qembed is not None:
         qvec = qembed[0]
 
-    dense = {}
-    if qvec is not None and any(c.embedding for c in pool):
+    dense: dict = {}
+    shortlist_dists = _pg_shortlist(ids, qvec, max(40, k * 8))
+    if shortlist_dists:
+        pool = list(
+            Chunk.objects.filter(id__in=shortlist_dists.keys(), document_id__in=ids)
+            .exclude(id__in=okf_ids)
+            .select_related("document")
+        )
+        # pgvector returns cosine DISTANCE; the caller expects similarity, and
+        # _norm min-max normalises anyway, so the affine flip is harmless.
+        dense = {id(c): 1.0 - shortlist_dists[c.id]
+                 for c in pool if c.id in shortlist_dists}
+    else:
+        pool = list(
+            Chunk.objects.filter(document_id__in=ids)
+            .exclude(id__in=okf_ids)
+            .select_related("document")[:settings.RETRIEVAL_MAX_POOL]
+        )
+    if not pool:
+        return okf
+
+    if not dense and qvec is not None and any(c.embedding for c in pool):
         if np is not None and hasattr(qvec, "shape"):
             qn = qvec / (np.linalg.norm(qvec) + 1e-8)
             for c in pool:
