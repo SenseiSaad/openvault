@@ -563,7 +563,7 @@ def upload_presign(request):
         return Response({"detail": "Your account is not attached to a company."}, status=400)
     content_type = str(request.data.get("content_type") or "application/octet-stream")
     key = f"{company.slug}/{uuid.uuid4().hex}_{filename}"
-    url = storage.generate_presigned_put(key, content_type=content_type)
+    url = storage.generate_presigned_put(key, content_type=content_type, size=size)
     return Response({"upload_url": url, "key": key, "filename": filename})
 
 
@@ -583,10 +583,30 @@ def upload_confirm(request):
         validate_extension(filename)
     except UploadRejected as exc:
         return Response({"detail": str(exc)}, status=400)
-    if not storage.exists(key):
+    real_size = storage.object_size(key)
+    if real_size is None:
         return Response({"detail": "Uploaded object not found in storage."}, status=404)
+    max_size = getattr(settings, "DATA_UPLOAD_MAX_MEMORY_SIZE", 50 * 1024 * 1024)
+    if real_size <= 0 or real_size > max_size:
+        return Response({"detail": "Uploaded object is empty or exceeds the size limit."}, status=400)
 
-    size = int(request.data.get("size") or 0)
+    # The stored object is the source of truth; the browser's claimed size is
+    # ignored for quotas so a client cannot dodge storage limits by under-
+    # reporting. (S3 also enforces the signed ContentLength at PUT time.)
+    size = real_size
+
+    # Plan limits apply on the direct-to-S3 path exactly like normal uploads.
+    plan = _plan_for(company)
+    if plan:
+        if plan.max_documents is not None and company.documents.count() >= plan.max_documents:
+            return Response({"detail": f"Plan limit reached ({plan.max_documents} documents). "
+                                       "Upgrade your plan to upload more."}, status=402)
+        if plan.storage_mb is not None:
+            used = company.documents.aggregate(total=Sum("size"))["total"] or 0
+            if used + size > plan.storage_mb * 1024 * 1024:
+                return Response({"detail": "Storage quota for your plan is full. "
+                                           "Upgrade to upload more."}, status=402)
+
     content_type = str(request.data.get("content_type") or "")
     is_okf = str(request.data.get("is_okf", "")).lower() in ("1", "true", "yes", "on")
     access_scope = (request.data.get("access_scope") or "company").strip().lower()

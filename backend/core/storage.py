@@ -127,11 +127,40 @@ def delete(key_or_path: str, base_dir: str | None = None) -> None:
             pass
 
 
-def generate_presigned_put(key: str, content_type: str = "application/octet-stream", expires_in: int = 900) -> str | None:
-    """Generate a presigned S3 PUT URL for direct browser uploads (>4.5 MB on Vercel)."""
+def object_size(key_or_path: str, base_dir: str | None = None) -> int | None:
+    """The stored object's real byte size, or None when it does not exist.
+
+    Used to verify direct-to-S3 uploads server-side instead of trusting the
+    size the browser claims in /documents/confirm.
+    """
+    if not key_or_path:
+        return None
+    if is_s3_enabled() and not os.path.exists(key_or_path):
+        from botocore.exceptions import ClientError
+
+        try:
+            head = _s3_client().head_object(Bucket=_bucket(), Key=key_or_path.lstrip("/"))
+            return int(head.get("ContentLength") or 0)
+        except ClientError:
+            return None
+    path = _resolve_local_path(key_or_path, base_dir=base_dir)
+    if not os.path.isfile(path):
+        return None
+    return os.path.getsize(path)
+
+
+def generate_presigned_put(key: str, content_type: str = "application/octet-stream",
+                           expires_in: int = 900, size: int | None = None) -> str | None:
+    """Generate a presigned S3 PUT URL for direct browser uploads (>4.5 MB on Vercel).
+
+    When `size` is given it is signed into the request, so S3 itself rejects an
+    object whose Content-Length differs from what the API approved.
+    """
     if not is_s3_enabled():
         return None
     params = {"Bucket": _bucket(), "Key": key.lstrip("/")}
     if content_type:
         params["ContentType"] = content_type
+    if size:
+        params["ContentLength"] = int(size)
     return _s3_client().generate_presigned_url("put_object", Params=params, ExpiresIn=expires_in)
