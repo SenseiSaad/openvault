@@ -1,4 +1,5 @@
 """Django settings for the OpenVault API."""
+import logging
 import os
 import tempfile
 from datetime import timedelta
@@ -45,6 +46,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "core.middleware.RequestIDMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
@@ -315,17 +317,62 @@ if not DEBUG and IS_PRODUCTION:
         raise ValueError("ALLOWED_HOSTS must list explicit hostnames in production.")
 
 # ── Logging (stdout/stderr so Docker/CloudWatch collect it) ──
+LOG_FORMAT = os.getenv("LOG_FORMAT", "plain")  # "json" in production
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+
+class JsonLogFormatter(logging.Formatter):
+    """One JSON object per log line, with the request id when available."""
+
+    def format(self, record):
+        import json as _json
+        payload = {
+            "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S%z"),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        rid = getattr(record, "request_id", "")
+        if rid:
+            payload["request_id"] = rid
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return _json.dumps(payload, ensure_ascii=False)
+
+
+_CONSOLE_HANDLER = {
+    "class": "logging.StreamHandler",
+    "formatter": "json" if LOG_FORMAT == "json" else "verbose",
+    "filters": ["request_id"],
+}
+
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
+    "filters": {
+        "request_id": {"()": "core.middleware.RequestIDLogFilter"},
+    },
     "formatters": {
-        "verbose": {"format": "%(asctime)s %(levelname)s %(name)s %(message)s"},
+        "verbose": {"format": "%(asctime)s %(levelname)s [%(request_id)s] %(name)s %(message)s"},
+        "json": {"()": JsonLogFormatter},
     },
-    "handlers": {
-        "console": {"class": "logging.StreamHandler", "formatter": "verbose"},
-    },
-    "root": {"handlers": ["console"], "level": os.getenv("LOG_LEVEL", "INFO")},
+    "handlers": {"console": _CONSOLE_HANDLER},
+    "root": {"handlers": ["console"], "level": LOG_LEVEL},
     "loggers": {
         "django.request": {"handlers": ["console"], "level": "WARNING", "propagate": False},
     },
 }
+
+# ── Sentry (error tracking) — inactive until SENTRY_DSN is set ──
+SENTRY_DSN = os.getenv("SENTRY_DSN", "").strip()
+if SENTRY_DSN:
+    import sentry_sdk
+    from sentry_sdk.integrations.django import DjangoIntegration
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[DjangoIntegration()],
+        traces_sample_rate=float(os.getenv("SENTRY_TRACES_RATE", "0.1")),
+        send_default_pii=False,
+        environment=os.getenv("ENVIRONMENT", "development"),
+    )

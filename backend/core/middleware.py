@@ -7,10 +7,45 @@ cross-origin (and most same-origin) unsafe requests, so requiring it to match
 a trusted origin closes the remaining CSRF surface without breaking API
 scripts, which simply send no Origin header at all.
 """
+import contextvars
+import logging
+import uuid
+
 from django.conf import settings
 
 
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+# One id per request, visible in every log line and the X-Request-ID response
+# header — the join key between a user report, Sentry and the raw logs.
+_request_id_var: contextvars.ContextVar = contextvars.ContextVar("request_id", default="")
+
+
+def current_request_id() -> str:
+    return _request_id_var.get("")
+
+
+class RequestIDLogFilter(logging.Filter):
+    def filter(self, record):
+        record.request_id = _request_id_var.get("")
+        return True
+
+
+class RequestIDMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        raw = request.headers.get("X-Request-ID", "") or uuid.uuid4().hex
+        rid = "".join(ch for ch in raw if ch.isalnum() or ch == "-")[:64] or uuid.uuid4().hex
+        request.request_id = rid
+        token = _request_id_var.set(rid)
+        try:
+            response = self.get_response(request)
+        finally:
+            _request_id_var.reset(token)
+        response["X-Request-ID"] = rid
+        return response
 
 
 def _trusted_origins(request):
