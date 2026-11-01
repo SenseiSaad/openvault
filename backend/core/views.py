@@ -618,7 +618,13 @@ def upload_document(request):
             return Response({"detail": "Department scoping is not part of your current plan."},
                             status=402)
 
+    # Django's UploadedFile.name setter silently truncates names to 255 chars,
+    # so the raw-length check cannot catch long names here — validate the
+    # storage key instead (uuid prefix + slug + name must fit one FS component).
     rel_key = os.path.join(company.slug, f"{uuid.uuid4().hex}_{f.name}")
+    if len(os.path.basename(rel_key)) > 255:
+        return Response({"detail": "Filename is too long. Use a name of up to 220 characters."},
+                        status=400)
     stored = storage.save_uploaded_file(rel_key, f, base_dir=settings.DATA_DIR)
 
     from django.db import transaction
@@ -897,6 +903,9 @@ def document_new_version(request, pk):
         filename=doc.filename, size=old_size, uploaded_by=request.user,
     )
     rel_key = os.path.join(company.slug, f"{uuid.uuid4().hex}_{f.name}")
+    if len(os.path.basename(rel_key)) > 255:
+        return Response({"detail": "Filename is too long. Use a name of up to 220 characters."},
+                        status=400)
     stored = storage.save_uploaded_file(rel_key, f, base_dir=settings.DATA_DIR)
     doc.stored_path = stored
     doc.filename = f.name
@@ -944,6 +953,8 @@ def _accessible_doc(request, pk):
             return doc
         if doc.access_scope == "department" and doc.department_id and doc.department_id == u.department_id:
             return doc
+        if doc.uploaded_by_id == u.id:
+            return doc  # the uploader can always see (and now manage) their own document
         if DocumentAccess.objects.filter(document=doc, user=u).exists():
             return doc
     if DocumentShare.objects.filter(document=doc, shared_with_user=u).exists():
@@ -1446,6 +1457,10 @@ def llm_config(request):
             if not (plan and plan.allow_custom_llm):
                 return Response({"detail": "Custom AI settings are not part of your plan."},
                                 status=402)
+            # Validate the payload BEFORE creating the override row, so a
+            # rejected base_url (SSRF guard) never leaves an empty row behind.
+            probe = LLMConfigSerializer(data=request.data, partial=True)
+            probe.is_valid(raise_exception=True)
             cfg, _created = LLMConfig.objects.get_or_create(company=request.user.company)
             is_override = True
         else:

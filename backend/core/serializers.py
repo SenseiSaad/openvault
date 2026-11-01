@@ -74,7 +74,9 @@ class CompanyProfileSerializer(serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
-    company_id = serializers.IntegerField(source="company.id", read_only=True)
+    # default=None keeps the key present (as null) when the user has no
+    # company — the frontend reads user.company_id unconditionally.
+    company_id = serializers.IntegerField(source="company.id", read_only=True, default=None)
     # Nested own-company profile (null for platform admins with no company).
     company = CompanyProfileSerializer(read_only=True)
     department_id = serializers.IntegerField(source="department.id", read_only=True, default=None)
