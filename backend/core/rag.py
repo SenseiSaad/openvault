@@ -345,14 +345,27 @@ def _keyword_score(query: str, text: str) -> float:
     return sum(low.count(t) for t in terms) / (len(text) + 1)
 
 
-def _bm25_scores(query: str, texts: list[str]) -> list[float]:
+def _stem(word: str) -> str:
+    """Porter-lite suffix stripping so 'rotate' matches 'rotated' and
+    'password' matches 'passwords' in BM25. Deliberately minimal: classical
+    IR stemming, not language understanding."""
+    for suffix in ("ing", "ed", "es", "s"):
+        if len(word) > 4 and word.endswith(suffix):
+            return word[: -len(suffix)]
+    return word
+
+
+def _bm25_scores(query: str, texts: list[str], normalize: bool = True) -> list[float]:
     """Okapi BM25 over the candidate pool. k1/b1 are the standard defaults;
-    scores are min-max normalised so they can be blended with cosine similarity."""
-    terms = [w for w in re.findall(r"\w+", query.lower()) if len(w) > 2]
+    terms are lightly stemmed; scores are min-max normalised (normalize=True)
+    so they can be blended with cosine similarity — pass normalize=False for
+    the raw Okapi scores, which carry absolute relevance magnitude (used by
+    the eval's refusal proxy)."""
+    terms = [_stem(w) for w in re.findall(r"\w+", query.lower()) if len(w) > 2]
     n = len(texts)
     if not terms or n == 0:
         return [0.0] * n
-    doc_terms = [re.findall(r"\w+", t.lower()) for t in texts]
+    doc_terms = [[_stem(w) for w in re.findall(r"\w+", t.lower())] for t in texts]
     doc_lens = [len(dt) or 1 for dt in doc_terms]
     avg_len = sum(doc_lens) / n
     tf = [{} for _ in range(n)]
@@ -374,6 +387,8 @@ def _bm25_scores(query: str, texts: list[str]) -> list[float]:
             idf = math.log((n - df[t] + 0.5) / (df[t] + 0.5) + 1.0)
             s += idf * (f * (k1 + 1)) / (f + k1 * (1 - b + b * doc_lens[i] / avg_len))
         scores.append(s)
+    if not normalize:
+        return scores
     lo, hi = min(scores), max(scores)
     if hi - lo < 1e-9:
         return [0.0] * n
