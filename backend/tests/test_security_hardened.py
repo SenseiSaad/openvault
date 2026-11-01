@@ -22,17 +22,36 @@ pytestmark = pytest.mark.django_db
 def limits_on(settings):
     # The LocMem cache persists across the whole test process; earlier tests'
     # registrations share this test's IP key, so start every limiter test clean.
+    # NOTE: RATELIMIT_ENABLED is set inside each test BODY (after all fixtures)
+    # because fixture-vs-autouse ordering made it flaky in full-suite runs.
     from django.core.cache import cache
     cache.clear()
     settings.RATELIMIT_ENABLED = True
+    return settings
 
 
-def test_login_rate_limit_blocks_the_ninth_attempt(api, register_company, limits_on):
+class _FrozenClock:
+    """Deterministic clock: the fixed-window limiter must see one stable
+    window even though real logins take ~150ms of password hashing each and
+    can otherwise straddle a 60s boundary."""
+
+    def __init__(self, start=1_800_000_000.5):
+        self.now = start
+
+    def time(self):
+        return self.now
+
+
+def test_login_rate_limit_blocks_the_ninth_attempt(api, register_company, limits_on,
+                                                   monkeypatch):
+    settings = limits_on
+    settings.RATELIMIT_ENABLED = True
+    monkeypatch.setattr("core.ratelimit.time", _FrozenClock())
     register_company(email="rl@acme.test")
     codes = []
     for _ in range(9):
         resp = api.post("/api/auth/login", {"email": "rl@acme.test", "password": "wrong"},
-                        format="json")
+                        format="json", REMOTE_ADDR="10.9.9.1")
         codes.append(resp.status_code)
     assert codes[:8] == [401] * 8, codes
     assert codes[8] == 429, codes
@@ -41,6 +60,9 @@ def test_login_rate_limit_blocks_the_ninth_attempt(api, register_company, limits
 
 def test_ask_rate_limit_is_per_user(api, auth_client, make_company, make_user, limits_on,
                                     monkeypatch):
+    settings = limits_on
+    settings.RATELIMIT_ENABLED = True
+    monkeypatch.setattr("core.ratelimit.time", _FrozenClock())
     from .fakes import StubChatProvider
     company = make_company()
     admin = make_user(company, email="askrl@acme.test", role="admin")
