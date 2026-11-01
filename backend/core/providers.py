@@ -555,9 +555,9 @@ class FakeProvider(BaseProvider):
     def stream_chat(self, messages, temperature=0.2, max_tokens=512):
         import time as _time
         _time.sleep(0.15)  # simulated model latency before the first token
-        word = "The configured policy answer streams token by token for load testing. "
+        word = "The configured policy answer streams token by token for load testing."
         for _ in range(20):
-            for tok in word.split(" "):
+            for tok in word.split():
                 yield tok + " "
                 _time.sleep(0.005)
 

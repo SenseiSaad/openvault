@@ -349,7 +349,7 @@ def _stem(word: str) -> str:
     """Porter-lite suffix stripping so 'rotate' matches 'rotated' and
     'password' matches 'passwords' in BM25. Deliberately minimal: classical
     IR stemming, not language understanding."""
-    for suffix in ("ing", "ed", "es", "s"):
+    for suffix in ("ing", "ed", "es", "s", "e"):
         if len(word) > 4 and word.endswith(suffix):
             return word[: -len(suffix)]
     return word
