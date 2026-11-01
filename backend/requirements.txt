@@ -29,7 +29,8 @@ qrcode==7.4.2
 # Installed above: psycopg2-binary (PostgreSQL), dj-database-url (DATABASE_URL),
 # redis (shared rate-limit cache).
 
-# ── Optional OCR for scanned PDFs/images (also needs system tesseract + poppler) ──
-# pytesseract==0.3.13
-# pdf2image==1.17.0
-# Pillow==11.1.0
+# ── Optional OCR for scanned PDFs/images (needs system tesseract + poppler,
+#    installed in backend/Dockerfile) ──
+pytesseract==0.3.13
+pdf2image==1.17.0
+Pillow==11.3.0

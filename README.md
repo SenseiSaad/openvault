@@ -1,8 +1,8 @@
 # OpenVault
 
-> **Private, Zero-Trust Knowledge Infrastructure & Permission-Aware AI for Registered Organizations.**
+> **Private Knowledge Infrastructure with Least-Privilege Document ACLs & Permission-Aware AI for Registered Organizations.**
 
-OpenVault is an enterprise document repository and retrieval-augmented generation (RAG) assistant designed for organizations that require strict tenant isolation, zero-trust intra-company access controls, auditable cross-company collaboration, multi-turn AI chat history, attendance tracking, and compliance audit readiness.
+OpenVault is an enterprise document repository and retrieval-augmented generation (RAG) assistant designed for organizations that require strict tenant isolation, least-privilege intra-company access controls, auditable cross-company collaboration, multi-turn AI chat history, attendance tracking, and compliance audit readiness.
 
 ---
 
@@ -28,11 +28,11 @@ OpenVault is an enterprise document repository and retrieval-augmented generatio
 OpenVault is built around **employer-controlled private access**:
 
 - **Strict Multi-Tenancy:** Every document, vector chunk, user account, attendance record, and audit entry is bound to a verified `Company` tenant.
-- **Zero-Trust Document Scoping:** Documents can be scoped company-wide, to a specific department, or locked to selected people (`restricted`). Even same-company executives cannot search or view restricted files without an explicit grant.
+- **Least-Privilege Document Scoping:** Documents can be scoped company-wide, to a specific department, or locked to selected people (`restricted`). Even same-company executives cannot search or view restricted files without an explicit grant.
 - **Controlled Cross-Company Collaboration:** Organizations locate partner companies via unique 5-character share codes (`access_code`). Admins can grant a specific document to a registered employee at a partner company, with immediate revocation and download restrictions.
 - **Permission-Aware RAG:** Chat retrieval filters documents based on the requesting user's explicit permissions *before* running hybrid retrieval (BM25 + dense cosine similarity), ensuring the AI never leaks unauthorized information.
 - **Multi-Turn Persistent Chat:** Interactive threaded conversations with recent turns supplied to the LLM, thumbs up/down user feedback, and live source citations.
-- **Audit Readiness:** Every sign-in, upload, download, share, revocation, member modification, and AI prompt is logged in an immutable audit trail with IP tracking and CSV export.
+- **Audit Readiness:** Every sign-in, upload, download, share, revocation, member modification, and AI prompt is recorded in an append-only (at the API layer) audit trail with IP tracking and CSV export.
 
 ---
 
@@ -44,8 +44,8 @@ OpenVault is built around **employer-controlled private access**:
 - Tiered subscription plans (Free, Starter, Business, Enterprise) priced in **USD** with server-side quota enforcement on seats, documents, storage, and monthly AI asks.
 - Cross-tenant platform administration for root operators with an active tenant switcher.
 
-### Zero-Trust Document Management
-- Supported formats: **PDF (`.pdf`)**, **Word (`.docx`)**, **PowerPoint (`.pptx`)**, **Markdown (`.md`)**, **Plain Text (`.txt`, `.csv`)**, and scanned PDFs/images via optional OCR.
+### Least-Privilege Document Management
+- Supported formats: **PDF (`.pdf`)**, **Word (`.docx`)**, **PowerPoint (`.pptx`)**, **Markdown (`.md`)**, **Plain Text (`.txt`, `.csv`)**, and scanned PDFs/images via OCR (tesseract + poppler are installed in the API image).
 - Three-tier access scoping (`company`, `department`, `restricted`).
 - **Flexible Storage Backend:** Supports Amazon S3 object storage (with presigned direct browser uploads for files > 4 MB on serverless deployments) and local filesystem storage.
 - **Adaptive Indexing:** Runs inline on serverless functions (Vercel) or in background threads on long-running servers, with retry capability (`POST /api/documents/<id>/reindex`).
