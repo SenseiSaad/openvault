@@ -195,15 +195,19 @@ def test_llm_status_and_test_endpoints(company_admin, monkeypatch):
 # -------------------------------------------------------------- attendance
 def test_attendance_scan_flow(company_admin):
     company, admin, client = company_admin
-    first = client.post("/api/attendance/scan", format="json")
+    # Scans require the signed QR token the backend minted for this company.
+    qr = client.get("/api/attendance/qr").json()
+    assert "?scan=1&t=" in qr["target"]
+    token = qr["target"].split("&t=", 1)[1]
+    first = client.post("/api/attendance/scan", {"token": token}, format="json")
     assert first.status_code == 201
-    again = client.post("/api/attendance/scan", format="json")
+    again = client.post("/api/attendance/scan", {"token": token}, format="json")
     assert again.status_code == 409
     me = client.get("/api/attendance/me").json()
     assert me["marked_today"] is True
 
-    qr = client.get("/api/attendance/qr").json()
-    assert qr["target"].endswith("/workspace/attendance?scan=1")
+    qr2 = client.get("/api/attendance/qr").json()
+    assert "?scan=1&t=" in qr2["target"]
 
 
 def test_attendance_evaluation_unit(make_company, make_user):

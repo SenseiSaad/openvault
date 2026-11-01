@@ -289,6 +289,10 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
 # ── Attendance / strike policy (Feature 5) ──
 ATTENDANCE_MONTHLY_ABSENCE_LIMIT = int(os.getenv("ATTENDANCE_MONTHLY_ABSENCE_LIMIT", "3"))
 ATTENDANCE_MAX_STRIKES = int(os.getenv("ATTENDANCE_MAX_STRIKES", "3"))
+# Require a fresh signed QR token for attendance scans (default on). Turn off
+# only for kiosk-style deployments where the office terminal is trusted.
+ATTENDANCE_QR_REQUIRED = os.getenv("ATTENDANCE_QR_REQUIRED", "true").lower() in ("1", "true", "yes")
+ATTENDANCE_QR_TOKEN_TTL = int(os.getenv("ATTENDANCE_QR_TOKEN_TTL", "600"))  # seconds
 
 # ── Security headers (HTTPS deployments) ──
 SECURE_CONTENT_TYPE_NOSNIFF = True

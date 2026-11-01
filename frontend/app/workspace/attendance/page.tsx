@@ -51,6 +51,7 @@ export default function AttendancePage() {
   const [scanMsg, setScanMsg] = useState('')
   const [scanError, setScanError] = useState('')
   const autoRan = useRef(false)
+  const qrTokenRef = useRef<string | null>(null)
 
   const load = useCallback(() => {
     setLoading(true)
@@ -64,12 +65,12 @@ export default function AttendancePage() {
       .finally(() => setLoading(false))
   }, [])
 
-  const scan = useCallback(async () => {
+  const scan = useCallback(async (qrToken?: string | null) => {
     setScanning(true)
     setScanError('')
     setScanMsg('')
     try {
-      await attendanceApi.scan()
+      await attendanceApi.scan(qrToken ?? undefined)
       setScanMsg('You are marked present for today.')
       const me = await attendanceApi.me()
       setData(me)
@@ -84,12 +85,15 @@ export default function AttendancePage() {
     load()
   }, [load])
 
-  // Honor the QR deep-link: /workspace/attendance?scan=1 auto-marks once.
+  // Honor the QR deep-link: /workspace/attendance?scan=1&t=<signed-token>
+  // auto-marks once, forwarding the QR's signed token to the backend.
   useEffect(() => {
     if (autoRan.current || typeof window === 'undefined') return
-    if (new URLSearchParams(window.location.search).get('scan') === '1') {
+    const params = new URLSearchParams(window.location.search)
+    qrTokenRef.current = params.get('t')
+    if (params.get('scan') === '1') {
       autoRan.current = true
-      scan()
+      scan(qrTokenRef.current)
     }
   }, [scan])
 
@@ -155,7 +159,7 @@ export default function AttendancePage() {
               </div>
               <button
                 type="button"
-                onClick={scan}
+                onClick={() => scan(qrTokenRef.current)}
                 disabled={scanning || markedToday || frozen}
                 className="inline-flex items-center justify-center gap-2 rounded-full bg-[#1d1d1b] px-5 py-3 text-sm font-medium text-white transition hover:bg-[#3c3b37] disabled:cursor-not-allowed disabled:opacity-50"
               >

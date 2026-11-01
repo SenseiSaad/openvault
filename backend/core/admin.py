@@ -1,8 +1,9 @@
 from django.contrib import admin
 
 from .models import (
-    Announcement, AskLog, AuditLog, ChatConversation, ChatMessage, Company, Department,
-    Chunk, Document, DocumentAccess, DocumentShare, DocumentVersion, LLMConfig, Plan, User,
+    Announcement, AskLog, AuditLog, AttendanceExemption, ChatConversation,
+    ChatMessage, Company, Department, Chunk, Document, DocumentAccess,
+    DocumentShare, DocumentVersion, Holiday, LLMConfig, Plan, User,
 )
 
 admin.site.site_header = "OpenVault administration"
@@ -110,3 +111,15 @@ class AnnouncementAdmin(admin.ModelAdmin):
 @admin.register(LLMConfig)
 class LLMConfigAdmin(admin.ModelAdmin):
     list_display = ("company", "provider", "chat_model", "updated_at")
+
+
+@admin.register(Holiday)
+class HolidayAdmin(admin.ModelAdmin):
+    list_display = ("date", "name", "company", "created_at")
+    list_filter = ("company",)
+
+
+@admin.register(AttendanceExemption)
+class AttendanceExemptionAdmin(admin.ModelAdmin):
+    list_display = ("user", "start_date", "end_date", "reason", "created_by")
+    search_fields = ("user__email",)

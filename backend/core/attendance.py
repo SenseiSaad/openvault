@@ -18,7 +18,7 @@ from datetime import date as _date
 from django.conf import settings
 from django.utils import timezone
 
-from .models import AttendanceRecord, User, UserStrike
+from .models import AttendanceExemption, AttendanceRecord, Holiday, User, UserStrike
 
 
 def month_bounds(year: int, month: int) -> tuple[_date, _date]:
@@ -38,14 +38,41 @@ def _business_days(start: _date, end: _date) -> list[_date]:
     return days
 
 
+def _holiday_dates(company_id: int | None, first: _date, end: _date) -> set[_date]:
+    """Company holidays plus platform-wide ones (company=NULL) in range."""
+    from django.db.models import Q
+    q = Holiday.objects.filter(date__gte=first, date__lte=end)
+    if company_id is not None:
+        q = q.filter(Q(company_id=company_id) | Q(company__isnull=True))
+    else:
+        q = q.filter(company__isnull=True)
+    return set(q.values_list("date", flat=True))
+
+
+def _exemption_days(user, first: _date, end: _date) -> set[_date]:
+    """Business days covered by an approved absence window for this user."""
+    days: set[_date] = set()
+    for exc in AttendanceExemption.objects.filter(
+            user=user, start_date__lte=end, end_date__gte=first):
+        overlap_start = max(exc.start_date, first)
+        overlap_end = min(exc.end_date, end)
+        days.update(_business_days(overlap_start, overlap_end))
+    return days
+
+
 def absences_in_month(user, year: int, month: int) -> int:
-    """Number of business days in the month (up to today) with no Present scan."""
+    """Number of business days in the month (up to today) with no Present scan,
+    excluding declared holidays and approved leave windows."""
     first, last = month_bounds(year, month)
     today = timezone.localdate()
     end = min(last, today)
     if end < first:
         return 0  # month is entirely in the future
     expected = set(_business_days(first, end))
+    if not expected:
+        return 0
+    expected -= _holiday_dates(user.company_id, first, end)
+    expected -= _exemption_days(user, first, end)
     if not expected:
         return 0
     present = set(

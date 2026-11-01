@@ -1821,10 +1821,29 @@ def workflow_form_download(request, user_id, name):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def attendance_scan(request):
-    """Mark today's attendance for the signed-in user (the QR scan target)."""
+    """Mark today's attendance for the signed-in user (the QR scan target).
+
+    The QR encodes a signed, short-lived token (see core.qr_tokens): the scan
+    only counts when the token is fresh, untampered, and belongs to the
+    scanner's own company — a leaked URL cannot check anyone in remotely.
+    Set ATTENDANCE_QR_REQUIRED=false to allow self-serve scans without a QR
+    (kiosk-style deployments)."""
+    from . import qr_tokens
     user = request.user
     if not getattr(user, "company_id", None):
         return Response({"detail": "Your account is not linked to a company."}, status=400)
+
+    token = str((request.data or {}).get("token")
+                or request.query_params.get("token") or "").strip()
+    if getattr(settings, "ATTENDANCE_QR_REQUIRED", True):
+        if not token:
+            return Response({"detail": "Scan the office QR code to mark attendance."},
+                            status=400)
+        if not qr_tokens.verify(token, user.company_id):
+            return Response(
+                {"detail": "This QR code is invalid or expired. Ask your admin for "
+                           "the current code."},
+                status=403)
 
     today = timezone.localdate()
     existing = AttendanceRecord.objects.filter(user=user, date=today).first()
@@ -1862,9 +1881,17 @@ def attendance_me(request):
 @permission_classes([IsAuthenticated])
 def attendance_qr(request):
     """Return the attendance check-in target plus an inline SVG QR when the
-    optional `qrcode` library is installed."""
+    optional `qrcode` library is installed.
+
+    The target embeds a signed token bound to the caller's company and a short
+    TTL, so a photographed QR dies within minutes and never works for another
+    company."""
+    from . import qr_tokens
+    user = request.user
+    if not getattr(user, "company_id", None):
+        return Response({"detail": "Your account is not linked to a company."}, status=400)
     base = settings.PUBLIC_BASE_URL or f"{request.scheme}://{request.get_host()}"
-    target = f"{base}/workspace/attendance?scan=1"
+    target = f"{base}/workspace/attendance?scan=1&t={qr_tokens.issue(user.company_id)}"
     payload = {"target": target, "svg": None, "qr_available": False}
     try:
         import qrcode  # optional dependency
@@ -1878,6 +1905,103 @@ def attendance_qr(request):
     except Exception:
         pass
     return Response(payload)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAdmin])
+def admin_holidays(request):
+    """Company holiday calendar (plus platform-wide entries shown read-only):
+    days that never count as absences."""
+    from .models import Holiday
+    company = request.user.company
+    if company is None:
+        return Response({"detail": "No company context."}, status=400)
+    if request.method == "GET":
+        rows = Holiday.objects.filter(company__in=[company, None]).order_by("date")[:200]
+        return Response([{"id": h.id, "date": h.date.isoformat(), "name": h.name,
+                          "platform_wide": h.company_id is None} for h in rows])
+    raw_date = str((request.data or {}).get("date") or "").strip()
+    try:
+        holiday_date = _parse_iso_date(raw_date)
+    except ValueError:
+        return Response({"detail": "date must be YYYY-MM-DD."}, status=400)
+    if not holiday_date:
+        return Response({"detail": "date is required (YYYY-MM-DD)."}, status=400)
+    holiday, created = Holiday.objects.get_or_create(
+        company=company, date=holiday_date,
+        defaults={"name": str((request.data or {}).get("name") or "")[:120]},
+    )
+    if not created:
+        return Response({"detail": "That date is already a holiday."}, status=400)
+    audit(request, "holiday_add", holiday_date.isoformat())
+    return Response({"id": holiday.id, "date": holiday.date.isoformat(),
+                     "name": holiday.name, "platform_wide": False}, status=201)
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAdmin])
+def admin_holiday_detail(request, pk):
+    from .models import Holiday
+    try:
+        holiday = Holiday.objects.get(pk=pk, company=request.user.company)
+    except Holiday.DoesNotExist:
+        raise Http404
+    holiday.delete()
+    return Response(status=204)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAdmin])
+def admin_exemptions(request):
+    """Approved absence windows (leave/travel) — excluded from strike math."""
+    from .models import AttendanceExemption
+    company = request.user.company
+    if company is None:
+        return Response({"detail": "No company context."}, status=400)
+    if request.method == "GET":
+        rows = (AttendanceExemption.objects.filter(user__company=company)
+                .select_related("user")[:200])
+        return Response([{"id": e.id, "user_id": e.user_id, "email": e.user.email,
+                          "start_date": e.start_date.isoformat(),
+                          "end_date": e.end_date.isoformat(), "reason": e.reason}
+                         for e in rows])
+    d = request.data or {}
+    try:
+        start = _parse_iso_date(str(d.get("start_date") or ""))
+        end = _parse_iso_date(str(d.get("end_date") or ""))
+    except ValueError:
+        return Response({"detail": "dates must be YYYY-MM-DD."}, status=400)
+    if not start or not end or end < start:
+        return Response({"detail": "start_date and end_date (YYYY-MM-DD) are required."},
+                        status=400)
+    try:
+        target = User.objects.get(pk=int(d.get("user_id")), company=company)
+    except (User.DoesNotExist, TypeError, ValueError):
+        return Response({"detail": "Member not found in this company."}, status=400)
+    exc = AttendanceExemption.objects.create(
+        user=target, start_date=start, end_date=end,
+        reason=str(d.get("reason") or "")[:200], created_by=request.user)
+    audit(request, "attendance_exemption", f"{target.email} {start}..{end}")
+    return Response({"id": exc.id}, status=201)
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAdmin])
+def admin_exemption_detail(request, pk):
+    from .models import AttendanceExemption
+    try:
+        exc = AttendanceExemption.objects.get(pk=pk, user__company=request.user.company)
+    except AttendanceExemption.DoesNotExist:
+        raise Http404
+    exc.delete()
+    return Response(status=204)
+
+
+def _parse_iso_date(raw: str):
+    from datetime import date as _date
+    if not raw:
+        return None
+    return _date.fromisoformat(raw)
 
 
 @api_view(["POST"])
