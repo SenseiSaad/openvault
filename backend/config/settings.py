@@ -308,6 +308,9 @@ if SESSION_COOKIE_SECURE:
 # Docker/HTTP runs either leave it unset or set ALLOW_INSECURE_HTTP=true.
 IS_PRODUCTION = os.getenv("ENVIRONMENT", "").strip().lower() in ("production", "prod")
 if not DEBUG and IS_PRODUCTION:
+    if os.getenv("LLM_PROVIDER", "").strip().lower() == "fake":
+        raise ValueError("LLM_PROVIDER=fake is a load-test/demo provider and is "
+                         "refused in production.")
     if not SESSION_COOKIE_SECURE and os.getenv("ALLOW_INSECURE_HTTP", "false").lower() not in ("1", "true", "yes"):
         raise ValueError(
             "Refusing to start in production with insecure cookies. "
