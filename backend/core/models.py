@@ -493,7 +493,10 @@ class LLMConfig(models.Model):
     """
     PROVIDERS = [("ollama", "ollama"), ("openai", "openai"),
                  ("anthropic", "anthropic"), ("gemini", "gemini"),
-                 ("bedrock", "bedrock")]
+                 ("bedrock", "bedrock"),
+                 # Load-test/demo provider: settable via platform env only,
+                 # never through the tenant-facing API (serializer blocks it).
+                 ("fake", "fake")]
 
     company = models.ForeignKey(
         Company, on_delete=models.CASCADE, related_name="llm_configs",

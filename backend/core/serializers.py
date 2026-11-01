@@ -210,6 +210,7 @@ class LLMConfigSerializer(serializers.ModelSerializer):
 
     base_url is a tenant-supplied outbound endpoint, so it is validated as a
     public https URL here (SSRF defence) AND again at fetch time in providers.
+    The 'fake' load-test provider is platform-env only and cannot be saved.
     """
     api_key = serializers.CharField(
         required=False, allow_blank=True, write_only=True, style={"input_type": "password"}
@@ -218,6 +219,8 @@ class LLMConfigSerializer(serializers.ModelSerializer):
     is_company_override = serializers.SerializerMethodField()
     key_source = serializers.SerializerMethodField()
     platform_key_in_use = serializers.SerializerMethodField()
+    provider = serializers.ChoiceField(
+        choices=[p for p in LLMConfig.PROVIDERS if p[0] != "fake"])
 
     def validate_base_url(self, value):
         raw = str(value or "").strip()
