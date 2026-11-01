@@ -536,12 +536,39 @@ class BedrockProvider(BaseProvider):
                 yield tok
 
 
+class FakeProvider(BaseProvider):
+    """Deterministic no-network chat provider for load tests and demos.
+
+    Active ONLY when LLM_PROVIDER=fake; production boot refuses that value
+    (see settings). Streams ~120 tokens with a small initial delay so k6 can
+    measure the pipeline's TTFB and streaming behaviour without paying a real
+    model bill.
+    """
+    label = "fake"
+    chat_model = "fake-1"
+    embed_model_name = ""
+    api_key = ""
+
+    def available(self):
+        return True
+
+    def stream_chat(self, messages, temperature=0.2, max_tokens=512):
+        import time as _time
+        _time.sleep(0.15)  # simulated model latency before the first token
+        word = "The configured policy answer streams token by token for load testing. "
+        for _ in range(20):
+            for tok in word.split(" "):
+                yield tok + " "
+                _time.sleep(0.005)
+
+
 # ------------------------------------------------------- pick the live provider
 DEFAULT_MODELS = {
     "ollama": "qwen2.5:1.5b",
     "openai": "gpt-4o-mini",
     "anthropic": "claude-3-5-haiku-latest",
     "gemini": "gemini-2.5-flash",
+    "fake": "fake-1",
     # India geographic inference profile — NOT the global one.
     "bedrock": "in.anthropic.claude-haiku-4-5-20251001-v1:0",
 }
@@ -676,8 +703,8 @@ def get_chat_provider(mode: str = None, provider_override: str = None, company=N
     elif mode == "online" and target_provider not in ("bedrock", "ollama"):
         target_provider = "bedrock"
     if not target_provider:
-        target_provider = c["provider"] if c["provider"] in ("bedrock", "ollama") else "bedrock"
-    if target_provider not in ("bedrock", "ollama", "gemini", "openai", "anthropic"):
+        target_provider = c["provider"] if c["provider"] in ("bedrock", "ollama", "fake") else "bedrock"
+    if target_provider not in ("bedrock", "ollama", "gemini", "openai", "anthropic", "fake"):
         target_provider = "bedrock"
 
     if target_provider == "gemini":
@@ -693,6 +720,8 @@ def get_chat_provider(mode: str = None, provider_override: str = None, company=N
         key = c["api_key"] if c["provider"] == "anthropic" else _env_key("anthropic")
         model = c["model"] if c["provider"] == "anthropic" else _env_model("anthropic")
         prov = AnthropicProvider(key, model)
+    elif target_provider == "fake":
+        prov = FakeProvider()
     elif target_provider == "bedrock":
         # Blank key = boto3 default credential chain (IAM role on EC2).
         key = c["api_key"] if c["provider"] == "bedrock" else _env_key("bedrock")
