@@ -10,9 +10,9 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # System deps: libpq for PostgreSQL, curl for the container healthcheck.
-# Optional OCR (pytesseract/pdf2image) needs tesseract+poppler; not installed here.
+# OCR: tesseract + poppler back the pytesseract/pdf2image extraction path.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 curl gosu \
+    libpq5 curl gosu tesseract-ocr poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt .

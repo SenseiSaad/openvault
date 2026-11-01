@@ -31,7 +31,6 @@ from django.conf import settings
 from . import rag
 from . import providers
 from . import moderation
-from . import billing
 from . import storage
 from . import attendance as attendance_svc
 from .auth import (
