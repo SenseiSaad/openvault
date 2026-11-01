@@ -36,10 +36,10 @@ _RAW_PATTERNS: dict[str, list[str]] = {
         r"\b\d{3}-\d{2}-\d{4}\b",
         r"\b(?:\d[ -]?){16}\b",
         # Pakistani identifiers: CNIC (XXXXX-XXXXXXX-X) and PK-format IBAN
-        # (PK + 2 check digits + 22 chars) — the formats this product's users
-        # are actually likely to paste.
+        # (PK + 2 check digits + 4-letter bank code + 16 account chars = 24
+        # total) — the formats this product's users are actually likely to paste.
         r"\b\d{5}-\d{7}-\d\b",
-        r"\bPK\d{2}[A-Z0-9]{4}[A-Z0-9]{18}\b",
+        r"\bPK\d{2}[A-Z]{4}[A-Z0-9]{16}\b",
     ],
     "policy_bypass": [
         r"\b(bypass|circumvent|get around|override)\b.{0,25}\b(policy|policies|rule|rules|security|control)\b",

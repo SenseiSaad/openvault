@@ -13,6 +13,7 @@ class StubChatProvider:
     temperature = 0.2
     max_tokens = 512
     embed_model_name = ""
+    api_key = ""
 
     def __init__(self, capture=None):
         self._capture = capture if capture is not None else []
