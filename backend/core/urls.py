@@ -49,6 +49,10 @@ urlpatterns = [
     path("attendance/scan", views.attendance_scan),
     path("attendance/me", views.attendance_me),
     path("attendance/qr", views.attendance_qr),
+    path("admin/attendance/holidays", views.admin_holidays),
+    path("admin/attendance/holidays/<int:pk>", views.admin_holiday_detail),
+    path("admin/attendance/exemptions", views.admin_exemptions),
+    path("admin/attendance/exemptions/<int:pk>", views.admin_exemption_detail),
     # company admin
     path("admin/users", views.users),
     path("admin/users/<int:pk>", views.user_detail),

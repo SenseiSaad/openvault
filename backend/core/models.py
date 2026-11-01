@@ -576,3 +576,47 @@ class UserStrike(models.Model):
 
     def __str__(self):
         return f"{self.user}: {self.strikes} strike(s), {self.absent_count} absence(s)"
+
+
+class Holiday(models.Model):
+    """A non-working day that must never count as an absence.
+
+    company=NULL means a platform-wide holiday (e.g. national days); otherwise
+    the holiday belongs to one company's calendar (Eid dates differ per
+    tenant's region/policy).
+    """
+    company = models.ForeignKey(
+        Company, on_delete=models.CASCADE, related_name="holidays",
+        null=True, blank=True)
+    date = models.DateField()
+    name = models.CharField(max_length=120, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["date"]
+        unique_together = ("company", "date")
+
+    def __str__(self):
+        return f"{self.date} {self.name or 'Holiday'}"
+
+
+class AttendanceExemption(models.Model):
+    """An approved absence window (leave, business travel, WFH exception).
+
+    Business days inside [start_date, end_date] are not counted as absences by
+    the monthly evaluation, so approved leave can no longer generate strikes.
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="attendance_exemptions")
+    start_date = models.DateField()
+    end_date = models.DateField()
+    reason = models.CharField(max_length=200, blank=True, default="")
+    created_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, related_name="exemptions_granted",
+        null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-start_date"]
+
+    def __str__(self):
+        return f"{self.user}: {self.start_date}..{self.end_date} {self.reason}"

@@ -679,7 +679,10 @@ export interface AttendanceQr {
 export const attendanceApi = {
   me: (): Promise<AttendanceMe> => api.get('/attendance/me'),
   // 201 with the new record, or throws "Attendance already marked for today." (409).
-  scan: (): Promise<AttendanceRecord> => api.post('/attendance/scan'),
+  // The office QR embeds a signed short-lived token (?t=...); scans send it
+  // so a photographed/broadcast QR cannot check people in remotely.
+  scan: (qrToken?: string): Promise<AttendanceRecord> =>
+    api.post('/attendance/scan', qrToken ? { token: qrToken } : undefined),
   qr: (): Promise<AttendanceQr> => api.get('/attendance/qr'),
 }
 
