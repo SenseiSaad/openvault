@@ -77,6 +77,21 @@ services:
       timeout: 3s
       retries: 10
 
+  # One-shot deploy step: schema migrations + plan seeds + platform-admin
+  # bootstrap, BEFORE the web/worker services start. Keeps migrations out of
+  # the request-serving container so api can scale beyond one replica.
+  migrate:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: "no"
+    logging: *default-logging
+    depends_on:
+      db:
+        condition: service_healthy
+    environment: *api-env
+    command: ["sh", "-c", "python manage.py migrate --noinput && python manage.py seed_plans && python manage.py bootstrap_platform_admin"]
+
   api:
     build:
       context: .
@@ -88,6 +103,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment: *api-env
     volumes:
       - ov_data:/app/data
@@ -108,6 +125,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     environment: *api-env
     command: ["sh", "-c", "celery -A config worker --loglevel=info --concurrency=2 -Q default & celery -A config beat --loglevel=info & wait"]
     volumes:
