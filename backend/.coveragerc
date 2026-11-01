@@ -1,0 +1,10 @@
+[run]
+omit =
+    core/migrations/*
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
+    raise NotImplementedError
+show_missing = False

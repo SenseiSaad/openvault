@@ -60,8 +60,8 @@ jobs:
           CSRF_TRUSTED_ORIGINS: https://example.com
       - name: Migration drift check
         run: python manage.py makemigrations --check --dry-run
-      - name: Run test suite
-        run: python -m pytest
+      - name: Test suite with coverage
+        run: python -m pytest --cov=core --cov-report=term
 
   frontend:
     name: OpenVault web (typecheck + tests + build)
