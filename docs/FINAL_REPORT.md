@@ -182,9 +182,12 @@ Full detail: [`docs/DEPLOY.md`](DEPLOY.md).
    ```bash
    cd infra/bootstrap && terraform init && terraform plan && terraform apply
    ```
-2. **Create the new subdomain zone first**, then delegate:
+2. **Prepare production variables before the targeted zone apply**, then
+   create the new subdomain zone and delegate:
    ```bash
    cd infra/envs/prod
+   cp terraform.tfvars.example terraform.tfvars
+   $EDITOR terraform.tfvars
    terraform init
    terraform apply -target=module.dns_tls.aws_route53_zone.this
    terraform output name_servers
@@ -192,8 +195,6 @@ Full detail: [`docs/DEPLOY.md`](DEPLOY.md).
    ```
 3. **Full first apply** (local admin; roles do not exist yet):
    ```bash
-   cp terraform.tfvars.example terraform.tfvars
-   $EDITOR terraform.tfvars
    terraform plan -out=tfplan
    terraform apply tfplan
    ```
