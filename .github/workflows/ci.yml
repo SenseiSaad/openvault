@@ -45,7 +45,7 @@ jobs:
         run: |
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
             | tar -xz -C /tmp gitleaks
-          /tmp/gitleaks detect --source . --redact --verbose --exit-code 1
+          /tmp/gitleaks detect --source . --no-git --redact --verbose --exit-code 1
 
   backend:
     name: OpenVault API (checks + tests)

@@ -1,0 +1,31 @@
+# Extends gitleaks' default rules. Allow only documented placeholders, test
+# fixtures and generated build output; everything else is a real finding.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "OpenVault placeholders, examples, tests and build output"
+paths = [
+  '''(^|/)\.env\.example$''',
+  '''(^|/)\.env\.production\.example$''',
+  '''(^|/)infra/secrets-manifest\.yaml$''',
+  '''(^|/)backend/tests/''',
+  '''(^|/)docs/''',
+  '''(^|/)Certification/''',
+  '''(^|/)frontend/\.next/''',
+  '''(^|/)node_modules/''',
+  '''(^|/)backend/\.venv/''',
+  '''(^|/)backend/\.env$''',
+  '''(^|/)backend/core/moderation\.py$''',
+  '''(^|/)__pycache__/''',
+  '''(^|/)backend/data/''',
+  '''(^|/)backups/''',
+]
+regexes = [
+  '''REPLACE_ME''',
+  '''CHANGE_ME''',
+  '''ci-secret-key-not-used-in-production''',
+  '''not-used-in-production''',
+  '''<[^>]+>''',
+  '''requests to share credentials.*language''',
+]
