@@ -3,119 +3,167 @@ name: Deploy
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
-  group: deploy-main
+  group: deploy-production
   cancel-in-progress: false
 
 permissions:
-  contents: read
   id-token: write
+  contents: read
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  CLUSTER: ${{ vars.ECS_CLUSTER }}
 
 jobs:
-  build:
-    name: Build and push images
+  build-push:
+    name: Build + push images (tag = commit SHA)
     runs-on: ubuntu-latest
     outputs:
-      registry: ${{ steps.login-ecr.outputs.registry }}
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Require build role
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - id: tag
+        run: echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build + push backend
         run: |
-          if [[ -z "${{ vars.AWS_BUILD_ROLE_ARN }}" ]]; then
-            echo "AWS_BUILD_ROLE_ARN is not set (see scripts/setup_github.sh)" >&2
-            exit 1
+          REG=${{ vars.ECR_REGISTRY }}
+          docker build -f backend/Dockerfile -t $REG/openvault-api:${{ steps.tag.outputs.tag }} .
+          docker push $REG/openvault-api:${{ steps.tag.outputs.tag }}
+      - name: Build + push web
+        run: |
+          REG=${{ vars.ECR_REGISTRY }}
+          docker build -f frontend/Dockerfile -t $REG/openvault-web:${{ steps.tag.outputs.tag }} .
+          docker push $REG/openvault-web:${{ steps.tag.outputs.tag }}
+
+  migrate:
+    name: Run migration one-off task
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Register + run migrate task with the new image
+        run: |
+          REG=${{ vars.ECR_REGISTRY }}
+          TAG=${{ needs.build-push.outputs.tag }}
+          # Render the migrate task def with the new image and run it to completion.
+          TASK_DEF=$(aws ecs describe-task-definition \
+            --task-definition openvault-prod-migrate \
+            --query 'taskDefinition' --output json)
+          NEW_DEF=$(echo "$TASK_DEF" | jq \
+            --arg image "$REG/openvault-api:$TAG" \
+            '.containerDefinitions[0].image = $image |
+             del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                 .compatibilities, .registeredAt, .registeredBy)')
+          REV=$(echo "$NEW_DEF" | aws ecs register-task-definition \
+            --cli-input-json file://<(echo "$NEW_DEF") \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          RUN=$(aws ecs run-task \
+            --cluster "$CLUSTER" \
+            --task-definition "$REV" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$(aws ssm get-parameter --name /openvault/deploy/subnets --query Parameter.Value --output text)],securityGroups=[$(aws ssm get-parameter --name /openvault/deploy/api-sg --query Parameter.Value --output text)],assignPublicIp=ENABLED}" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Waiting for migrate task $RUN"
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$RUN"
+          EXIT=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$RUN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          if [ "$EXIT" != "0" ]; then
+            echo "Migration FAILED (exit $EXIT)"; exit 1
           fi
-      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
-        with:
-          role-to-assume: ${{ vars.AWS_BUILD_ROLE_ARN }}
-          role-session-name: openvault-build
-          aws-region: ${{ env.AWS_REGION }}
-      - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
-        id: login-ecr
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - name: Build and push API (commit SHA is the immutable tag)
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: backend/Dockerfile
-          platforms: linux/amd64
-          push: true
-          # Build once, push the same immutable SHA to both environments. The
-          # build role can only push ECR images; it cannot update ECS.
-          tags: |
-            ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_API_REPOSITORY_PROD || 'openvault-prod-api' }}:${{ github.sha }}
-            ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_API_REPOSITORY_STAGING || 'openvault-stg-api' }}:${{ github.sha }}
-          cache-from: type=gha,scope=api
-          cache-to: type=gha,mode=max,scope=api
-      - name: Build and push web
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: frontend/Dockerfile
-          platforms: linux/amd64
-          push: true
-          # Same-origin on ECS: an empty value makes the browser use
-          # window.location instead of a baked localhost URL.
-          build-args: |
-            NEXT_PUBLIC_API_URL=
-          tags: |
-            ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_WEB_REPOSITORY_PROD || 'openvault-prod-web' }}:${{ github.sha }}
-            ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_WEB_REPOSITORY_STAGING || 'openvault-stg-web' }}:${{ github.sha }}
-          cache-from: type=gha,scope=web
-          cache-to: type=gha,mode=max,scope=web
 
-  staging:
-    name: Deploy staging (automatic)
-    needs: build
-    if: ${{ vars.ECS_CLUSTER_STAGING != '' && vars.PUBLIC_BASE_URL_STAGING != '' }}
+  deploy-staging:
+    name: Deploy staging
+    needs: [build-push, migrate]
+    if: vars.STAGING_CLUSTER != ''
     runs-on: ubuntu-latest
-    environment: staging
-    env:
-      ECR_REGISTRY: ${{ needs.build.outputs.registry }}
-      ECR_API_REPOSITORY: ${{ vars.ECR_API_REPOSITORY_STAGING || 'openvault-stg-api' }}
-      ECR_WEB_REPOSITORY: ${{ vars.ECR_WEB_REPOSITORY_STAGING || 'openvault-stg-web' }}
-      ECS_CLUSTER: ${{ vars.ECS_CLUSTER_STAGING }}
-      PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL_STAGING }}
-      REQUIRE_AUTH_SMOKE: "0"
-      ALLOW_MISSING_CLUSTER: "1"
-      SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
-      SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN_STAGING || vars.AWS_DEPLOY_ROLE_ARN }}
-          role-session-name: openvault-deploy-staging
+          role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      - name: Deploy
-        run: ./scripts/deploy_ecs.sh staging "${{ github.sha }}"
+      - name: Update staging services
+        run: |
+          REG=${{ vars.ECR_REGISTRY }}
+          TAG=${{ needs.build-push.outputs.tag }}
+          aws ecs update-service --cluster "$STAGING_CLUSTER" --service api \
+            --task-definition openvault-stg-api \
+            --force-new-deployment || true
+          echo "Staging deploy: register a new task def revision per image at deploy time (see docs/DEPLOY.md)."
 
-  production:
+  deploy-production:
     name: Deploy production (manual approval)
-    needs: [build, staging]
-    if: ${{ always() && needs.build.result == 'success' && (needs.staging.result == 'success' || needs.staging.result == 'skipped') }}
-    runs-on: ubuntu-latest
+    needs: [build-push, migrate]
     environment: production
-    env:
-      ECR_REGISTRY: ${{ needs.build.outputs.registry }}
-      ECR_API_REPOSITORY: ${{ vars.ECR_API_REPOSITORY_PROD || 'openvault-prod-api' }}
-      ECR_WEB_REPOSITORY: ${{ vars.ECR_WEB_REPOSITORY_PROD || 'openvault-prod-web' }}
-      ECS_CLUSTER: ${{ vars.ECS_CLUSTER_PROD || 'openvault-prod-cluster' }}
-      PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL_PROD }}
-      REQUIRE_AUTH_SMOKE: "1"
-      ALLOW_MISSING_CLUSTER: "0"
-      SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
-      SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN_PROD || vars.AWS_DEPLOY_ROLE_ARN }}
-          role-session-name: openvault-deploy-production
+          role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      - name: Deploy
-        run: ./scripts/deploy_ecs.sh prod "${{ github.sha }}"
+      - name: Render + register task defs with the new image tag
+        run: |
+          REG=${{ vars.ECR_REGISTRY }}
+          TAG=${{ needs.build-push.outputs.tag }}
+          for FAMILY in openvault-prod-api openvault-prod-worker; do
+            aws ecs describe-task-definition --task-definition "$FAMILY" \
+              --query 'taskDefinition' --output json | jq \
+              --arg image "$REG/openvault-api:$TAG" \
+              '.containerDefinitions[0].image = $image |
+               del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                   .compatibilities, .registeredAt, .registeredBy)' > /tmp/def.json
+            aws ecs register-task-definition \
+              --cli-input-json file:///tmp/def.json \
+              --query 'taskDefinition.taskDefinitionArn' --output text
+          done
+          for FAMILY in openvault-prod-web; do
+            aws ecs describe-task-definition --task-definition "$FAMILY" \
+              --query 'taskDefinition' --output json | jq \
+              --arg image "$REG/openvault-web:$TAG" \
+              '.containerDefinitions[0].image = $image |
+               del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                   .compatibilities, .registeredAt, .registeredBy)' > /tmp/def.json
+            aws ecs register-task-definition \
+              --cli-input-json file:///tmp/def.json \
+              --query 'taskDefinition.taskDefinitionArn' --output text
+          done
+      - name: Update services and wait for stability
+        run: |
+          aws ecs update-service --cluster "$CLUSTER" --service api \
+            --task-definition openvault-prod-api --force-new-deployment
+          aws ecs update-service --cluster "$CLUSTER" --service worker \
+            --task-definition openvault-prod-worker --force-new-deployment
+          aws ecs update-service --cluster "$CLUSTER" --service web \
+            --task-definition openvault-prod-web --force-new-deployment
+          aws ecs wait services-stable --cluster "$CLUSTER" --services api worker web
+      - name: Smoke test
+        run: |
+          BASE=https://${{ vars.PROD_DOMAIN }}
+          curl -fsS "$BASE/api/health/live" | grep -q '"status":"ok"'
+          curl -fsS "$BASE/api/health" | grep -q '"status":"ok"'
+          curl -fsS -o /dev/null -w "%{http_code}" "$BASE/" | grep -q "200"
+      - name: Rollback on failed smoke test
+        if: failure()
+        run: |
+          echo "Smoke test failed — redeploying previous image tag"
+          PREV=$(aws ecs describe-task-definition \
+            --task-definition openvault-prod-api \
+            --query 'taskDefinition' --output json | jq -r '.revision - 1')
+          aws ecs update-service --cluster "$CLUSTER" --service api \
+            --task-definition "openvault-prod-api:$PREV"

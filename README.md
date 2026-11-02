@@ -6,6 +6,24 @@ OpenVault is an enterprise document repository and retrieval-augmented generatio
 
 ---
 
+## Quickstart (any OS — clone and run)
+
+```bash
+git clone <repo> && cd openvault
+docker compose up -d          # API :8000 + web :3000 (SQLite, zero config)
+./run.sh                      # or bare-metal dev mode
+```
+
+Chat with your documents needs an LLM — two no-config options:
+* **Local:** install [Ollama](https://ollama.com), then `ollama pull qwen2.5:1.5b`
+  (986 MB — the smallest model that grounds answers decently) and set
+  `LLM_PROVIDER=ollama`.
+* **Online:** set `GEMINI_API_KEY` (cheapest cloud option) or `BEDROCK_*` for AWS.
+
+Production path (ECS/RDS/Bedrock): see `docs/DEPLOY.md` and `infra/`.
+
+---
+
 ## Table of Contents
 
 1. [Executive Summary](#executive-summary)

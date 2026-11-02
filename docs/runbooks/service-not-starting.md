@@ -1,48 +1,35 @@
-# Runbook — ECS service not starting
+# Runbook — ECS service not starting / failing health checks
 
-**Symptom:** `openvault-prod-ecs-<svc>-below-desired` or ALB unhealthy-targets
-alarm; a deployment is stuck; tasks stop immediately.
+**Symptom:** `aws ecs wait services-stable` times out; tasks cycle
+`PROVISIONING -> PENDING -> STOPPED`; ALB target group shows unhealthy.
 
-## 1. Find the stopped task
+## 1. Read the stopped-task reason (90% of cases)
 
 ```bash
-aws ecs list-tasks --cluster openvault-prod-cluster --service-name api --desired-status STOPPED
-aws ecs describe-tasks --cluster openvault-prod-cluster --tasks <task-arn> \
-  --query 'tasks[0].{stoppedReason:stoppedReason,containers:containers[].{name:name,exit:exitCode,reason:reason}}'
+aws ecs describe-tasks --cluster openvault-prod --tasks <task-arn> \
+  --query 'tasks[0].[lastStatus,stopCode,stoppedReason,containers[0].[name,exitCode,reason]]'
 ```
 
-Common causes:
-
-| Cause | Evidence | Fix |
+| stopCode / reason | Cause | Fix |
 |---|---|---|
-| Image/tag missing | `CannotPullContainerError` | Confirm ECR image tag SHA exists; roll back to previous tag. |
-| SSM secret missing | `ResourceInitializationError` / secret not found | Push the SSM parameter (`scripts/push_env_to_ssm.sh`) and ensure the execution role can read it. |
-| Migration not run | API exits with `relation does not exist` | Run the deploy (one-off `migrate` task) before updating services. |
-| Health check failing | ALB target unhealthy, task running | Check `/openvault/prod/api`; `/api/health` needs DB + S3. |
-| CPU/memory too small | OOMKilled / task stopped | Raise task size; check memory metric. |
-| Security group | task cannot reach RDS/Redis/S3 | Re-apply Terraform; SGs are managed. |
+| `EssentialContainerExited` exit 1, logs show `SECRET_KEY required` | Missing SSM parameter | Push via `scripts/push_env_to_ssm.sh` |
+| TaskRole error in logs | SSM parameter exists but task role can't read it | Check role policy path `/openvault/<env>/*` |
+| `CannotPullContainer` | Image tag doesn't exist in ECR | Verify the tag pushed by CI (`deploy.yml`) |
+| `ResourceInitializationError: unable to pull secrets` | Execution role can't read SSM | Check execution role SSM policy |
+| Health check fails in ALB but container is running | DB unreachable / storage probe failing | See `database-down.md`; verify the RDS security group allows the task SG on 5432 |
 
 ## 2. Logs
 
 ```bash
-aws logs tail /openvault/prod/api --follow
-aws logs tail /openvault/prod/migrate --since 30m
+aws logs tail /openvault/prod/api --since 15m --follow
 ```
 
-The migrate task is one-off; its logs are the first place to look after a
-failed deploy.
+## 3. Break-glass exec (audited via CloudTrail)
 
-## 3. Recover
+```bash
+aws ecs execute-command --cluster openvault-prod --task <arn> \
+  --container api --interactive --command "/bin/sh"
+```
 
-* If the task definition is bad: deploy the previous SHA via the **Rollback**
-  workflow (it skips migrations).
-* If a secret is missing: push it, then force a new deployment
-  (`aws ecs update-service --force-new-deployment`).
-* If the cluster/service is missing: run the **Terraform apply** workflow for
-  that environment, then the **Deploy** workflow.
-
-## 4. Verify
-
-* `aws ecs wait services-stable`.
-* `/api/health` 200; `scripts/smoke_test.sh` passes.
-* The ECS alarm returns to OK and the ALB target group shows healthy targets.
+Requires ECS Exec enabled (it is, in the task definition) and your IAM user
+having `ecs:ExecuteCommand`.

@@ -1,115 +1,60 @@
 #!/usr/bin/env bash
-# One-time GitHub configuration for the OIDC deploy pipeline.
+# One-time GitHub repo setup for the OpenVault delivery pipeline.
+# Requires: gh CLI authenticated, repo pushed to GitHub.
 #
-# Requires the `gh` CLI authenticated with admin rights on the repo:
-#   gh auth login
-#   ./scripts/setup_github.sh
-#
-# Creates: staging + production environments (production requires a reviewer),
-# main branch protection, and a v* tag ruleset. It never writes AWS secrets.
-# Re-running is safe; GitHub updates the existing settings.
+#   ./scripts/setup_github.sh <owner/repo>
 set -euo pipefail
+REPO="${1:?usage: setup_github.sh <owner/repo>}"
 
-REPO="${REPO:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}"
-USER_ID="${USER_ID:-$(gh api user -q .id)}"
-echo "[github] repo=$REPO user_id=$USER_ID"
+echo "== Environments =="
+gh api "repos/$REPO/environments/staging" -X PUT >/dev/null 2>&1 || true
+# Production requires manual approval (required reviewer = you).
+gh api "repos/$REPO/environments/production" -X PUT \
+  -F required_reviewers='[{"type":"User","id":'"$(gh api user --jq .id)"'}]' \
+  -F deployment_branch_policy='{"protected_branches":true,"custom_branch_policies":false}' >/dev/null
+# Terraform apply environments (separate from app deploys)
+gh api "repos/$REPO/environments/terraform-staging" -X PUT >/dev/null
+gh api "repos/$REPO/environments/terraform-prod" -X PUT \
+  -F required_reviewers='[{"type":"User","id":'"$(gh api user --jq .id)"'}]' \
+  -F deployment_branch_policy='{"protected_branches":true,"custom_branch_policies":false}' >/dev/null
 
-# ---------------------------------------------------------------- environments
-gh api --method PUT "repos/$REPO/environments/staging" \
-  --input - >/dev/null <<JSON
-{"wait_timer":0,"reviewers":[],"deployment_branch_policy":{"protected_branches":true,"custom_branch_policies":false}}
-JSON
-
-gh api --method PUT "repos/$REPO/environments/production" \
-  --input - >/dev/null <<JSON
-{"wait_timer":0,"reviewers":[{"type":"User","id":$USER_ID}],"deployment_branch_policy":{"protected_branches":true,"custom_branch_policies":false}}
-JSON
-echo "[github] environments ready: staging, production (self-review required)"
-
-# ------------------------------------------------------------ branch protection
-# The names below match the CI job names. If GitHub shows a different context
-# (for example a matrix suffix), adjust the list in the repository UI.
-gh api --method PUT "repos/$REPO/branches/main/protection" \
-  --input - >/dev/null <<'JSON'
+echo "== Branch protection on main (require PR + checks, no required review) =="
+MAIN_CHECKS='["lint","test","security","frontend","images","terraform"]'
+gh api "repos/$REPO/branches/main/protection" -X PUT --input - <<BODY
 {
-  "required_status_checks": {
-    "strict": true,
-    "contexts": [
-      "Security scan (bandit + pip-audit + gitleaks)",
-      "OpenVault API (checks + tests)",
-      "OpenVault web (typecheck + tests + build)",
-      "Container build + Trivy image scan",
-      "Terraform fmt/validate/tflint/checkov"
-    ]
-  },
+  "required_status_checks": {"strict": true, "contexts": $MAIN_CHECKS},
   "enforce_admins": false,
-  "required_pull_request_reviews": {
-    "dismiss_stale_reviews": true,
-    "require_code_owner_reviews": false,
-    "required_approving_review_count": 0
-  },
+  "required_pull_request_reviews": {"required_approving_review_count": 0},
   "restrictions": null,
   "allow_force_pushes": false,
-  "allow_deletions": false,
-  "required_conversation_resolution": true,
-  "lock_branch": false
+  "allow_deletions": false
 }
-JSON
-echo "[github] main branch protected (PR + green CI; no force push)"
+BODY
 
-# --------------------------------------------------------------- version tags
-# Repository rulesets are the current API; fall back to the legacy tag
-# protection endpoint on older GitHub Enterprise installations. Update an
-# existing ruleset instead of failing on a re-run.
-RULESET_JSON=$(cat <<'JSON'
+echo "== Tag protection (v*) via ruleset =="
+# Classic tag protection is not in the branch-protection API; use rulesets.
+RULESET=$(cat <<JSON
 {
-  "name": "Protect release tags",
+  "name": "protect-release-tags",
   "target": "tag",
   "enforcement": "active",
   "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}},
-  "rules": [{"type": "deletion"}, {"type": "update"}, {"type": "non_fast_forward"}]
+  "rules": [{"type": "deletion"}, {"type": "non_fast_forward"}],
+  "bypass_actors": []
 }
 JSON
 )
-RULESET_ID="$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name == "Protect release tags") | .id' 2>/dev/null || true)"
-if [[ -n "$RULESET_ID" ]]; then
-  gh api --method PUT "repos/$REPO/rulesets/$RULESET_ID" --input - >/dev/null <<<"$RULESET_JSON"
-  echo "[github] v* tag ruleset updated (id $RULESET_ID)"
-elif gh api --method POST "repos/$REPO/rulesets" --input - >/dev/null 2>&1 <<<"$RULESET_JSON"; then
-  echo "[github] v* tag ruleset created"
-elif gh api --method POST "repos/$REPO/tags/protection" -f pattern='v*' >/dev/null 2>&1; then
-  echo "[github] legacy v* tag protection created"
-else
-  echo "[github] WARN: could not create tag protection; protect v* manually" >&2
-fi
+gh api "repos/$REPO/rulesets" -X POST --input - <<<"$RULESET" >/dev/null
 
-cat <<'EOF'
-
-Next, set these repository variables (Settings -> Secrets and variables -> Actions
--> Variables). Values are examples; replace the role ARNs and domains.
-
-  AWS_REGION=ap-south-1
-  AWS_BUILD_ROLE_ARN=arn:aws:iam::<account>:role/openvault-prod-github-build
-  AWS_DEPLOY_ROLE_ARN=arn:aws:iam::<account>:role/openvault-prod-github-deploy
-  AWS_DEPLOY_ROLE_ARN_STAGING=arn:aws:iam::<account>:role/openvault-stg-github-deploy
-  AWS_TERRAFORM_PLAN_ROLE_ARN=arn:aws:iam::<account>:role/openvault-prod-github-terraform-plan
-  AWS_TERRAFORM_APPLY_ROLE_ARN=arn:aws:iam::<account>:role/openvault-prod-github-terraform-apply
-  AWS_TERRAFORM_APPLY_ROLE_ARN_STAGING=arn:aws:iam::<account>:role/openvault-stg-github-terraform-apply
-  DOMAIN_PROD=<new-subdomain>.example.com
-  DOMAIN_STAGING=<new-staging-subdomain>.example.com
-  ALERT_EMAIL=<you@example.com>
-  PUBLIC_BASE_URL_PROD=https://<new-subdomain>.example.com
-  PUBLIC_BASE_URL_STAGING=https://<new-staging-subdomain>.example.com
-  ECS_CLUSTER_STAGING=openvault-stg-cluster
-  ECR_REGISTRY=<account>.dkr.ecr.ap-south-1.amazonaws.com
-  BEDROCK_MODEL_ARNS=["arn:aws:bedrock:ap-south-1:<account>:inference-profile/in.anthropic.claude-haiku-4-5-20251001-v1:0"]
-  DMARC_RECORD=v=DMARC1; p=none; rua=mailto:postmaster@<new-subdomain>.example.com
-  OIDC_ALLOWED_SUBJECTS=["repo:<owner>/<repo>:ref:refs/heads/main","repo:<owner>/<repo>:pull_request","repo:<owner>/<repo>:environment:staging","repo:<owner>/<repo>:environment:production"]
-
-Environment secrets (staging and production separately):
-
-  SMOKE_TEST_EMAIL=<dedicated smoke-test user>
-  SMOKE_TEST_PASSWORD=<password>
-
-Never add AWS access keys. The workflows use OIDC only.
-EOF
+echo "== Done =="
+cat <<'NOTES'
+Manual steps (web UI):
+1. Settings -> Environments -> production: confirm you are the required reviewer.
+2. Settings -> Secrets and variables -> Actions -> Variables tab, add:
+   AWS_REGION, ECS_CLUSTER, ECR_REGISTRY, DEPLOY_ROLE_ARN,
+   TERRAFORM_PLAN_ROLE_ARN, TERRAFORM_APPLY_ROLE_ARN,
+   PROD_DOMAIN, STAGING_DOMAIN, STAGING_CLUSTER, TF_STATE_BUCKET, TF_LOCK_TABLE,
+   BEDROCK_MODEL_ARNS (comma-separated), TF_VAR_DOMAIN.
+3. Settings -> Secrets and variables -> Actions -> Secrets tab (ONLY if a value
+   must stay masked in logs; prefer OIDC + SSM over repo secrets).
+NOTES

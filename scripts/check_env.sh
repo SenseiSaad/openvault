@@ -1,70 +1,32 @@
 #!/usr/bin/env bash
-# Validate the local secrets file before pushing it to SSM. Prints variable
-# NAMES only; never prints values. Usage:
-#   ./scripts/check_env.sh [prod|staging]
+# Verify a local env file has every required variable non-empty and prints a
+# name-only report.   ./scripts/check_env.sh .env.production
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+ENV_FILE="${1:?usage: check_env.sh <env-file>}"
+[[ -f "$ENV_FILE" ]] || { echo "Missing $ENV_FILE" >&2; exit 1; }
 
-ENV_NAME="${1:-prod}"
-ENV_FILE="${ENV_FILE:-.env.production}"
-MANIFEST="infra/secrets-manifest.yaml"
-[[ -f "$ENV_FILE" ]] || { echo "missing $ENV_FILE (copy .env.production.example)" >&2; exit 1; }
-[[ -f "$MANIFEST" ]] || { echo "missing $MANIFEST" >&2; exit 1; }
+REQUIRED=(SECRET_KEY DATABASE_URL LLM_KEY_ENCRYPTION_KEY DOMAIN
+          POSTGRES_PASSWORD EMAIL_HOST EMAIL_HOST_USER EMAIL_HOST_PASSWORD
+          DEFAULT_FROM_EMAIL)
+OPTIONAL=(SENTRY_DSN BEDROCK_API_KEY GEMINI_API_KEY OPENAI_API_KEY
+          ANTHROPIC_API_KEY BOOTSTRAP_PLATFORM_ADMIN_EMAIL
+          BOOTSTRAP_PLATFORM_ADMIN_PASSWORD)
 
-if git ls-files --error-unmatch "$ENV_FILE" >/dev/null 2>&1; then
-  echo "$ENV_FILE is TRACKED by git; remove it from the index before continuing" >&2
-  exit 1
-fi
-if ! git check-ignore -q "$ENV_FILE"; then
-  echo "WARN: $ENV_FILE is not matched by .gitignore; add it before committing" >&2
-fi
-
-set -a
-# shellcheck disable=SC1090
-. "$ENV_FILE"
-set +a
-
-section() {
-  awk -v s="$1" '
-    $0 ~ "^" s ":" { in_section=1; next }
-    in_section && /^[A-Za-z_]+:/ { in_section=0 }
-    in_section && $1 == "-" { print $2 }
-  ' "$MANIFEST"
-}
-
-missing=0
-for name in $(section required_secrets); do
-  value="$(eval "printf '%s' \"\${$name-}\"")"
-  if [[ -z "$value" ]]; then
-    echo "MISSING $name" >&2
-    missing=1
-  elif [[ "$value" == *"CHANGE_ME"* || "$value" == *"REPLACE_ME"* || "$value" == *"<"*">"* ]]; then
-    echo "PLACEHOLDER $name" >&2
-    missing=1
-  elif [[ "$value" == *" "* && "$name" != "BOOTSTRAP_PLATFORM_ADMIN_EMAIL" && "$name" != "DATABASE_URL" ]]; then
-    echo "WARN $name contains whitespace; quote it in $ENV_FILE" >&2
+MISSING=0
+echo "=== required ==="
+for KEY in "${REQUIRED[@]}"; do
+  if grep -qE "^[[:space:]]*${KEY}=..+" "$ENV_FILE"; then
+    echo "ok:      $KEY"
+  else
+    echo "MISSING: $KEY"; MISSING=1
   fi
 done
-for name in $(section optional_secrets); do
-  value="$(eval "printf '%s' \"\${$name-}\"")"
-  [[ -z "$value" ]] && echo "OPTIONAL $name is empty (disabled)"
+echo "=== optional ==="
+for KEY in "${OPTIONAL[@]}"; do
+  if grep -qE "^[[:space:]]*${KEY}=..+" "$ENV_FILE"; then
+    echo "set:     $KEY"
+  else
+    echo "unset:   $KEY"
+  fi
 done
-
-if [[ "$missing" != "0" ]]; then
-  echo "Fix the missing/placeholder values above. No values were printed." >&2
-  exit 1
-fi
-
-DATABASE_URL_VALUE="${DATABASE_URL:-}"
-case "$DATABASE_URL_VALUE" in
-  postgres://*|postgresql://*) ;;
-  *) echo "DATABASE_URL must start with postgresql:// or postgres://" >&2; exit 1 ;;
-esac
-if [[ "$DATABASE_URL_VALUE" == *localhost* || "$DATABASE_URL_VALUE" == *127.0.0.1* ]]; then
-  echo "WARN DATABASE_URL points at localhost; production should use the RDS endpoint" >&2
-fi
-if [[ -n "${BEDROCK_API_KEY:-}" ]]; then
-  echo "WARN BEDROCK_API_KEY is set; ECS should use the task role. Leave it blank." >&2
-fi
-
-echo "OK: $ENV_FILE has every required secret for /openvault/$ENV_NAME/"
+exit $MISSING

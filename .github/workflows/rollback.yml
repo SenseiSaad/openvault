@@ -3,64 +3,63 @@ name: Rollback
 on:
   workflow_dispatch:
     inputs:
-      environment:
-        description: "Target environment"
-        required: true
-        type: choice
-        options: [staging, production]
       image_tag:
-        description: "Existing ECR tag to redeploy (usually a previous commit SHA)"
+        description: "Image tag (commit SHA) to roll back to"
         required: true
         type: string
 
 concurrency:
-  group: rollback-${{ inputs.environment }}
+  group: deploy-production
   cancel-in-progress: false
 
 permissions:
-  contents: read
   id-token: write
+  contents: read
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  CLUSTER: ${{ vars.ECS_CLUSTER }}
 
 jobs:
   rollback:
-    name: Roll back ${{ inputs.environment }}
+    name: Roll production back to an earlier image
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment }}
-    env:
-      ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
-      PUBLIC_BASE_URL: ${{ inputs.environment == 'production' && vars.PUBLIC_BASE_URL_PROD || vars.PUBLIC_BASE_URL_STAGING }}
-      REQUIRE_AUTH_SMOKE: ${{ inputs.environment == 'production' && '1' || '0' }}
-      ALLOW_MISSING_CLUSTER: "0"
-      SKIP_MIGRATE: "1"
-      SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
-      SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ inputs.environment == 'production' && vars.AWS_DEPLOY_ROLE_ARN_PROD || vars.AWS_DEPLOY_ROLE_ARN_STAGING }}
-          role-session-name: openvault-rollback-${{ inputs.environment }}
+          role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      - name: Resolve target
+      - name: Point all services at the old tag
         run: |
-          if [[ "${{ inputs.environment }}" == "production" ]]; then
-            echo "DEPLOY_ENV=prod" >> "$GITHUB_ENV"
-            echo "PREFIX=openvault-prod" >> "$GITHUB_ENV"
-          else
-            echo "DEPLOY_ENV=staging" >> "$GITHUB_ENV"
-            echo "PREFIX=openvault-stg" >> "$GITHUB_ENV"
-          fi
-      - name: Resolve ECR registry
-        if: ${{ env.ECR_REGISTRY == '' }}
+          REG=${{ vars.ECR_REGISTRY }}
+          TAG=${{ inputs.image_tag }}
+          for FAMILY in openvault-prod-api openvault-prod-worker; do
+            aws ecs describe-task-definition --task-definition "$FAMILY" \
+              --query 'taskDefinition' --output json | jq \
+              --arg image "$REG/openvault-api:$TAG" \
+              '.containerDefinitions[0].image = $image |
+               del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                   .compatibilities, .registeredAt, .registeredBy)' > /tmp/def.json
+            aws ecs register-task-definition --cli-input-json file:///tmp/def.json \
+              --query 'taskDefinition.taskDefinitionArn' --output text
+          done
+          aws ecs describe-task-definition --task-definition openvault-prod-web \
+            --query 'taskDefinition' --output json | jq \
+            --arg image "$REG/openvault-web:$TAG" \
+            '.containerDefinitions[0].image = $image |
+             del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                 .compatibilities, .registeredAt, .registeredBy)' > /tmp/def.json
+          aws ecs register-task-definition --cli-input-json file:///tmp/def.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text
+      - name: Deploy + wait for stability
         run: |
-          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
-          echo "ECR_REGISTRY=${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> "$GITHUB_ENV"
-      - name: Redeploy immutable tag (no migrations)
-        run: |
-          ECR_API_REPOSITORY="${PREFIX}-api" \
-          ECR_WEB_REPOSITORY="${PREFIX}-web" \
-          ECS_CLUSTER="${PREFIX}-cluster" \
-          ./scripts/deploy_ecs.sh "$DEPLOY_ENV" "${{ inputs.image_tag }}"
+          aws ecs update-service --cluster "$CLUSTER" --service api \
+            --task-definition openvault-prod-api --force-new-deployment
+          aws ecs update-service --cluster "$CLUSTER" --service worker \
+            --task-definition openvault-prod-worker --force-new-deployment
+          aws ecs update-service --cluster "$CLUSTER" --service web \
+            --task-definition openvault-prod-web --force-new-deployment
+          aws ecs wait services-stable --cluster "$CLUSTER" --services api worker web
+      - name: Smoke test
+        run: curl -fsS "https://${{ vars.PROD_DOMAIN }}/api/health/live"

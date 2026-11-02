@@ -1,60 +1,59 @@
 #!/usr/bin/env bash
-# Push the required/optional secrets from .env.production to SSM SecureString.
-# Values are never echoed. Usage:
-#   ./scripts/push_env_to_ssm.sh prod
-#   AWS_REGION=ap-south-1 ./scripts/push_env_to_ssm.sh staging
-#   DRY_RUN=1 ./scripts/push_env_to_ssm.sh prod
+# Push local .env values to SSM Parameter Store for the ECS task definitions.
+#   ./scripts/push_env_to_ssm.sh <env> [--dry-run]
+#   e.g. ./scripts/push_env_to_ssm.sh prod
+# Reads .env.<env> in the repo root (gitignored). Secrets -> SecureString,
+# plain config -> String. Prints parameter NAMES only, never values.
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-ENV_NAME="${1:-prod}"
-ENV_FILE="${ENV_FILE:-.env.production}"
-MANIFEST="infra/secrets-manifest.yaml"
+ENV="${1:?usage: push_env_to_ssm.sh <staging|prod> [--dry-run]}"
+DRY_RUN=false
+[[ "${2:-}" == "--dry-run" ]] && DRY_RUN=true
+ENV_FILE=".env.${ENV}"
+
+[[ -f "$ENV_FILE" ]] || { echo "Missing $ENV_FILE (copy .env.production.example)" >&2; exit 1; }
+command -v aws >/dev/null || { echo "aws CLI required" >&2; exit 1; }
+
 AWS_REGION="${AWS_REGION:-ap-south-1}"
-DRY_RUN="${DRY_RUN:-0}"
+SECRET_NAMES=(SECRET_KEY DATABASE_URL LLM_KEY_ENCRYPTION_KEY EMAIL_HOST_USER
+              EMAIL_HOST_PASSWORD SENTRY_DSN
+              BOOTSTRAP_PLATFORM_ADMIN_EMAIL BOOTSTRAP_PLATFORM_ADMIN_PASSWORD)
+REQUIRED=(SECRET_KEY DATABASE_URL LLM_KEY_ENCRYPTION_KEY)
 
-[[ -f "$ENV_FILE" ]] || { echo "missing $ENV_FILE" >&2; exit 1; }
-[[ -f "$MANIFEST" ]] || { echo "missing $MANIFEST" >&2; exit 1; }
-
-set -a
-# shellcheck disable=SC1090
-. "$ENV_FILE"
-set +a
-
-section() {
-  awk -v s="$1" '
-    $0 ~ "^" s ":" { in_section=1; next }
-    in_section && /^[A-Za-z_]+:/ { in_section=0 }
-    in_section && $1 == "-" { print $2 }
-  ' "$MANIFEST"
+get_value() {  # get_value KEY FILE — last non-comment assignment, quotes stripped
+  awk -F= -v k="$1" '
+    /^[[:space:]]*#/ { next }
+    $0 ~ "^[[:space:]]*" k "[[:space:]]*=" {
+      sub(/^[^=]*=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, "");
+      gsub(/^"|"$/, ""); gsub(/^'"'"'|'"'"'$/, ""); print; found=1; exit
+    }
+    END { if (!found) exit 1 }' "$2"
 }
 
-push_one() {
-  local name="$1"
-  local value
-  value="$(eval "printf '%s' \"\${$name-}\"")"
-  if [[ -z "$value" ]]; then
-    echo "[ssm] skip $name (empty)"
-    return 0
+echo "Pushing to /openvault/$ENV/ (dry-run: $DRY_RUN)"
+FAILED=0
+for KEY in "${SECRET_NAMES[@]}"; do
+  VALUE=$(get_value "$KEY" "$ENV_FILE" || true)
+  NAME="/openvault/$ENV/$KEY"
+  if [[ -z "$VALUE" ]]; then
+    if [[ " ${REQUIRED[*]} " == *" $KEY "* ]]; then
+      echo "MISSING (required): $KEY"; FAILED=1
+    else
+      echo "skip (not set): $KEY"
+    fi
+    continue
   fi
-  local path="/openvault/${ENV_NAME}/${name}"
-  if [[ "$DRY_RUN" == "1" ]]; then
-    echo "[ssm] DRY-RUN would put $path (SecureString)"
-    return 0
+  if $DRY_RUN; then
+    echo "would put (SecureString): $NAME"
+  else
+    aws ssm put-parameter --name "$NAME" --type SecureString \
+      --value "$VALUE" --overwrite --region "$AWS_REGION" \
+      --output none && echo "put (SecureString): $NAME"
   fi
-  aws ssm put-parameter \
-    --name "$path" \
-    --value "$value" \
-    --type SecureString \
-    --overwrite \
-    --region "$AWS_REGION" \
-    --no-cli-pager >/dev/null
-  echo "[ssm] put $path (SecureString)"
-}
-
-echo "[ssm] env=$ENV_NAME file=$ENV_FILE region=$AWS_REGION"
-for name in $(section required_secrets) $(section optional_secrets); do
-  push_one "$name"
 done
-echo "[ssm] done. Values were not printed."
-echo "[ssm] next: run the Terraform apply, then the deploy workflow."
+
+if [[ $FAILED -ne 0 ]]; then
+  echo "ERROR: required secrets missing from $ENV_FILE — nothing partial was uploaded." >&2
+  exit 1
+fi
+echo "Done. Names only — values were never printed."
