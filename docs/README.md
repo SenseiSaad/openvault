@@ -19,6 +19,7 @@
 | [`runbooks/disk-full.md`](runbooks/disk-full.md) | Fargate/S3/RDS/CloudWatch storage pressure. |
 | [`runbooks/accidental-deletion.md`](runbooks/accidental-deletion.md) | S3 versions + database row recovery. |
 | [`loadtest-results.md`](loadtest-results.md) | Local k6 numbers and how to run a staging test safely. |
+| [`FINAL_REPORT.md`](FINAL_REPORT.md) | Section 8 handoff: what is verified, what is not, costs, inputs, risks, commands. |
 
 ## Legacy live deployment (do not modify)
 
