@@ -60,6 +60,20 @@ resource "aws_cloudwatch_log_metric_filter" "llm_input_tokens" {
   }
 }
 
+resource "aws_cloudwatch_log_metric_filter" "llm_total_tokens" {
+  name           = "${var.name_prefix}-llm-total-tokens"
+  log_group_name = var.api_log_group_name
+  pattern        = "{ $.event = \"llm_usage\" }"
+
+  metric_transformation {
+    name          = "LLMTotalTokens"
+    namespace     = "OpenVault/App"
+    value         = "$.total_tokens"
+    default_value = "0"
+    unit          = "Count"
+  }
+}
+
 resource "aws_cloudwatch_log_metric_filter" "llm_errors" {
   name           = "${var.name_prefix}-llm-errors"
   log_group_name = var.api_log_group_name
@@ -75,14 +89,14 @@ resource "aws_cloudwatch_log_metric_filter" "llm_errors" {
 
 resource "aws_cloudwatch_metric_alarm" "llm_tokens_daily" {
   alarm_name          = "${var.name_prefix}-bedrock-tokens-daily"
-  alarm_description   = "Daily Bedrock token spend guard (throttle cost runaway; see docs/COST.md)"
+  alarm_description   = "Daily Bedrock token spend guard (input + output; see docs/COST.md). Fires once per day at this threshold."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
-  metric_name         = "LLMOutputTokens"
+  metric_name         = "LLMTotalTokens"
   namespace           = "OpenVault/App"
   period              = 86400
   statistic           = "Sum"
-  threshold           = var.daily_output_token_budget
+  threshold           = var.daily_total_token_budget
   treat_missing_data  = "notBreaching"
 
   alarm_actions = local.alarm_actions
@@ -234,21 +248,24 @@ resource "aws_cloudwatch_metric_alarm" "rds_connections" {
 }
 
 # --------------------------------------------------------------- budgets
+# One monthly COST budget with absolute notifications, so the owner gets a
+# warning at every requested dollar threshold ($20/$35/$50/$100 in prod)
+# instead of only at percentages of a single limit.
 resource "aws_budgets_budget" "total" {
-  count = var.budget_monthly_limit_usd > 0 ? 1 : 0
+  count = length(var.budget_alarm_thresholds) > 0 ? 1 : 0
 
   name         = "${var.name_prefix}-monthly-total"
   budget_type  = "COST"
   time_unit    = "MONTHLY"
-  limit_amount = tostring(var.budget_monthly_limit_usd)
+  limit_amount = tostring(max(var.budget_alarm_thresholds...))
   limit_unit   = "USD"
 
   dynamic "notification" {
-    for_each = { "50" = 50, "80" = 80, "100" = 100 }
+    for_each = toset(var.budget_alarm_thresholds)
     content {
       comparison_operator        = "GREATER_THAN"
       threshold                  = notification.value
-      threshold_type             = "PERCENTAGE"
+      threshold_type             = "ABSOLUTE_VALUE"
       notification_type          = "ACTUAL"
       subscriber_email_addresses = var.alert_email != "" ? [var.alert_email] : []
     }

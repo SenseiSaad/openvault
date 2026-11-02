@@ -167,7 +167,8 @@ module "observability" {
   cluster_name             = module.ecs.cluster_name
   service_desired_counts   = { api = 1, web = 1, worker = 1 }
   db_instance_identifier   = "${local.name_prefix}-postgres"
-  budget_monthly_limit_usd = var.budget_monthly_limit_usd
+  daily_total_token_budget = var.daily_total_token_budget
+  budget_alarm_thresholds  = var.budget_alarm_thresholds
   tags                     = local.tags
 }
 

@@ -34,16 +34,21 @@ variable "db_instance_identifier" {
   type        = string
 }
 
-variable "daily_output_token_budget" {
-  description = "Daily sum of output tokens that fires the cost alarm."
+variable "daily_total_token_budget" {
+  description = "Daily sum of input + output Bedrock tokens that fires the cost alarm. Tune from actual usage; 3M is a launch guard, not an invoice."
   type        = number
-  default     = 2000000
+  default     = 3000000
 }
 
-variable "budget_monthly_limit_usd" {
-  description = "Monthly AWS budget in USD (0 disables the budget)."
-  type        = number
-  default     = 50
+variable "budget_alarm_thresholds" {
+  description = "Absolute monthly USD spend thresholds for AWS Budgets. Prod uses 20/35/50/100. Empty disables budgets."
+  type        = list(number)
+  default     = [20, 35, 50, 100]
+
+  validation {
+    condition     = alltrue([for t in var.budget_alarm_thresholds : t > 0])
+    error_message = "Budget thresholds must be positive USD amounts."
+  }
 }
 
 variable "tags" {

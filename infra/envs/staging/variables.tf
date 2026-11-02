@@ -50,10 +50,16 @@ variable "alert_email" {
   default     = ""
 }
 
-variable "budget_monthly_limit_usd" {
-  description = "Monthly staging budget (USD)."
+variable "daily_total_token_budget" {
+  description = "Daily input+output token guard for Bedrock cost (docs/COST.md)."
   type        = number
-  default     = 15
+  default     = 500000
+}
+
+variable "budget_alarm_thresholds" {
+  description = "Absolute monthly AWS spend alarms in USD."
+  type        = list(number)
+  default     = [10, 15]
 }
 
 variable "dmarc_record" {

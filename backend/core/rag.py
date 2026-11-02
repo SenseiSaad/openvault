@@ -738,6 +738,19 @@ def stream_answer(user, question: str, mode: str | None = None, provider_overrid
 
         _log_ask(user, question, mode, provider_used, len(chunks), False,
                  bool(moderation_flags), started)
+        try:
+            logging.getLogger("openvault.llm_usage").error(
+                "llm provider unavailable",
+                extra={
+                    "event": "llm_error",
+                    "company_id": getattr(getattr(user, "company", None), "id", None),
+                    "provider": provider_used,
+                    "model": getattr(chat, "chat_model", "") or "",
+                    "error_type": "unavailable",
+                },
+            )
+        except Exception:
+            pass
         if conversation is not None:
             ChatMessage.objects.create(conversation=conversation, role="user", content=question)
         yield json.dumps({
@@ -773,6 +786,19 @@ def stream_answer(user, question: str, mode: str | None = None, provider_overrid
     except Exception as e:
         _log_ask(user, question, mode, provider_used, len(chunks), False,
                  bool(moderation_flags), started)
+        try:
+            logging.getLogger("openvault.llm_usage").error(
+                "llm provider error",
+                extra={
+                    "event": "llm_error",
+                    "company_id": getattr(getattr(user, "company", None), "id", None),
+                    "provider": provider_used,
+                    "model": getattr(chat, "chat_model", "") or "",
+                    "error_type": type(e).__name__,
+                },
+            )
+        except Exception:
+            pass
         yield json.dumps({"type": "error", "message": f"Model error: {e}"}) + "\n"
         return
 
@@ -821,12 +847,13 @@ def stream_answer(user, question: str, mode: str | None = None, provider_overrid
     _log_ask(user, question, mode, provider_used, len(chunks), True,
              bool(moderation_flags), started)
 
+    usage = getattr(chat, "last_usage", {}) or {}
     log_llm_usage(
         company=getattr(user, "company", None),
         model=getattr(chat, "chat_model", "") or "",
         provider=provider_used,
-        input_tokens=None,
-        output_tokens=None,
+        input_tokens=usage.get("input_tokens"),
+        output_tokens=usage.get("output_tokens"),
     )
 
     yield json.dumps({"type": "done"}) + "\n"
@@ -854,9 +881,9 @@ def log_llm_usage(company, model: str, provider: str,
 
     Emitted as one JSON object per line so CloudWatch metric filters can
     aggregate it ({ $.event = "llm_usage" } over the API log group). Token
-    counts are best-effort: most streaming providers (Ollama, Gemini, the
-    Bedrock Converse stream) do not return per-chunk usage, so unset values are
-    logged as 0 and undercount real usage — treat the metric as a trend signal,
+    counts are best-effort: Bedrock's Converse stream returns exact usage in
+    the final metadata event; the other streaming providers vary, so unset
+    values are logged as 0 and undercount. Treat the metric as a trend signal,
     not an invoice. Never logs prompt or document content.
     """
     logger = logging.getLogger("openvault.llm_usage")
@@ -868,6 +895,7 @@ def log_llm_usage(company, model: str, provider: str,
             "provider": provider or "",
             "input_tokens": input_tokens or 0,
             "output_tokens": output_tokens or 0,
+            "total_tokens": (input_tokens or 0) + (output_tokens or 0),
         })
     except Exception:
         pass

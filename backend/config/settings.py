@@ -347,6 +347,19 @@ class JsonLogFormatter(logging.Formatter):
         rid = getattr(record, "request_id", "")
         if rid:
             payload["request_id"] = rid
+        # Structured `extra=` fields used by cost/usage logging. Keep this
+        # allow-list narrow: arbitrary extras could accidentally log secrets.
+        for key in (
+            "event",
+            "company_id",
+            "model",
+            "provider",
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+        ):
+            if hasattr(record, key):
+                payload[key] = getattr(record, key)
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
         return _json.dumps(payload, ensure_ascii=False)

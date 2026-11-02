@@ -94,6 +94,11 @@ class BaseProvider:
     chat_model = ""
     temperature = 0.2
     max_tokens = 512
+    # Populated by stream_chat() when the provider reports token usage. The
+    # shape is {"input_tokens": int|None, "output_tokens": int|None}; callers
+    # log it for per-company cost metering. Streaming APIs are inconsistent,
+    # so this is best-effort and may stay empty.
+    last_usage = {}
     # Name of the embedding model this provider writes with, stored per
     # document so mixed-model corpora are detectable (see check_embeddings).
     embed_model_name = ""
@@ -139,6 +144,7 @@ class OllamaProvider(BaseProvider):
             return None
 
     def stream_chat(self, messages, temperature=0.2, max_tokens=512):
+        self.last_usage = {}
         payload = {"model": self.chat_model, "messages": messages, "stream": True,
                    "options": {"temperature": temperature, "num_predict": max_tokens}}
         with _open(f"{self.base}/api/chat", payload, timeout=_STREAM_TIMEOUT) as r:
@@ -151,6 +157,10 @@ class OllamaProvider(BaseProvider):
                 if tok:
                     yield tok
                 if data.get("done"):
+                    self.last_usage = {
+                        "input_tokens": data.get("prompt_eval_count"),
+                        "output_tokens": data.get("eval_count"),
+                    }
                     break
 class OpenAIProvider(BaseProvider):
     """OpenAI OR any OpenAI-compatible server (set base_url to point at it)."""
@@ -186,6 +196,7 @@ class OpenAIProvider(BaseProvider):
             return None
 
     def stream_chat(self, messages, temperature=0.2, max_tokens=512):
+        self.last_usage = {}
         payload = {"model": self.chat_model, "messages": messages, "stream": True,
                    "temperature": temperature, "max_tokens": max_tokens}
         with _open(f"{self.base}/chat/completions", payload,
@@ -197,6 +208,12 @@ class OpenAIProvider(BaseProvider):
                     data = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                usage = data.get("usage") or {}
+                if usage:
+                    self.last_usage = {
+                        "input_tokens": usage.get("prompt_tokens"),
+                        "output_tokens": usage.get("completion_tokens"),
+                    }
                 tok = data.get("choices", [{}])[0].get("delta", {}).get("content") or ""
                 if tok:
                     yield tok
@@ -217,6 +234,7 @@ class AnthropicProvider(BaseProvider):
         return bool(self.api_key)
 
     def stream_chat(self, messages, temperature=0.2, max_tokens=512):
+        self.last_usage = {}
         system, rest = _split_system(messages)
         payload = {"model": self.chat_model, "max_tokens": max_tokens,
                    "temperature": temperature, "system": system,
@@ -228,10 +246,22 @@ class AnthropicProvider(BaseProvider):
                     data = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if data.get("type") == "content_block_delta":
+                if data.get("type") == "message_start":
+                    usage = data.get("message", {}).get("usage") or {}
+                    self.last_usage = {
+                        "input_tokens": usage.get("input_tokens"),
+                        "output_tokens": self.last_usage.get("output_tokens"),
+                    }
+                elif data.get("type") == "content_block_delta":
                     tok = data.get("delta", {}).get("text", "")
                     if tok:
                         yield tok
+                elif data.get("type") == "message_delta":
+                    usage = data.get("usage") or {}
+                    self.last_usage = {
+                        "input_tokens": self.last_usage.get("input_tokens"),
+                        "output_tokens": usage.get("output_tokens"),
+                    }
                 elif data.get("type") == "message_stop":
                     break
 
@@ -288,6 +318,7 @@ class GeminiProvider(BaseProvider):
             return None
 
     def stream_chat(self, messages, temperature=0.2, max_tokens=512):
+        self.last_usage = {}
         system, rest = _split_system(messages)
         # Merge consecutive messages with the same role so Gemini does not error on turns
         merged_rest = []
@@ -338,6 +369,12 @@ class GeminiProvider(BaseProvider):
                             if data.get("error"):
                                 err_msg = data["error"].get("message", "Unknown Gemini error")
                                 raise RuntimeError(f"Gemini API error: {err_msg}")
+                            usage = data.get("usageMetadata") or {}
+                            if usage:
+                                self.last_usage = {
+                                    "input_tokens": usage.get("promptTokenCount"),
+                                    "output_tokens": usage.get("candidatesTokenCount"),
+                                }
                             for cand in data.get("candidates", []):
                                 for part in cand.get("content", {}).get("parts", []):
                                     if part.get("text"):
@@ -514,6 +551,7 @@ class BedrockProvider(BaseProvider):
             return None
 
     def stream_chat(self, messages, temperature=0.2, max_tokens=512):
+        self.last_usage = {}
         system, rest = _split_system(messages)
         convo = [{"role": m["role"], "content": [{"text": m.get("content", "")}]}
                  for m in rest]
@@ -531,6 +569,13 @@ class BedrockProvider(BaseProvider):
             payload["system"] = [{"text": system}]
         resp = self._client().converse_stream(**payload)
         for event in resp.get("stream", []):
+            # Converse stream sends a final metadata event with exact usage.
+            usage = event.get("metadata", {}).get("usage")
+            if usage:
+                self.last_usage = {
+                    "input_tokens": usage.get("inputTokens"),
+                    "output_tokens": usage.get("outputTokens"),
+                }
             tok = event.get("contentBlockDelta", {}).get("delta", {}).get("text", "")
             if tok:
                 yield tok
@@ -554,10 +599,12 @@ class FakeProvider(BaseProvider):
 
     def stream_chat(self, messages, temperature=0.2, max_tokens=512):
         import time as _time
+        self.last_usage = {"input_tokens": 0, "output_tokens": 0}
         _time.sleep(0.15)  # simulated model latency before the first token
         word = "The configured policy answer streams token by token for load testing."
         for _ in range(20):
             for tok in word.split():
+                self.last_usage["output_tokens"] += 1
                 yield tok + " "
                 _time.sleep(0.005)
 

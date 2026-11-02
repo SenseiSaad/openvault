@@ -104,7 +104,7 @@ resource "aws_launch_template" "this" {
     dnf install -y docker
     systemctl enable --now docker
     docker run -d --name ollama --restart unless-stopped \
-      -p 127.0.0.1:11434:11434 \
+      -p 11434:11434 \
       -v /opt/ollama:/root/.ollama \
       ollama/ollama:latest
     USERDATA

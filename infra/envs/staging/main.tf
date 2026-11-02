@@ -46,17 +46,19 @@ module "data" {
   source = "../../modules/data"
 
   name_prefix                 = local.name_prefix
-  account_suffix              = "prod"
+  # Staging must be cheap and destroyable on demand: smallest RDS, no
+  # deletion protection, final snapshot skipped, buckets force-destroyable.
+  account_suffix              = "staging"
   private_subnet_ids          = module.network.private_subnet_ids
   rds_sg_id                   = module.network.security_groups.rds
   redis_sg_id                 = module.network.security_groups.redis
-  db_instance_class           = "db.t4g.medium"
-  db_allocated_storage_gb     = 25
-  db_max_allocated_storage_gb = 200
+  db_instance_class           = "db.t4g.micro"
+  db_allocated_storage_gb     = 20
+  db_max_allocated_storage_gb = 50
   db_multi_az                 = false
-  db_backup_retention_days    = 14
-  db_deletion_protection      = true
-  db_skip_final_snapshot      = false
+  db_backup_retention_days    = 1
+  db_deletion_protection      = false
+  db_skip_final_snapshot      = true
   cors_allowed_origins        = ["https://${local.domain}"]
   access_logs_bucket_id       = module.network.access_logs_bucket_id
   backup_retention_days       = 90
@@ -102,10 +104,10 @@ module "ecs" {
 
   api_desired_count    = 1
   api_min_capacity     = 1
-  api_max_capacity     = 3
+  api_max_capacity     = 1
   worker_desired_count = 1
   web_desired_count    = 1
-  log_retention_days   = 90
+  log_retention_days   = 14
   container_insights   = false
 
   documents_bucket_arn = module.data.documents_bucket_arn
@@ -168,7 +170,8 @@ module "observability" {
   cluster_name             = module.ecs.cluster_name
   service_desired_counts   = { api = 1, web = 1, worker = 1 }
   db_instance_identifier   = "${local.name_prefix}-postgres"
-  budget_monthly_limit_usd = var.budget_monthly_limit_usd
+  daily_total_token_budget = var.daily_total_token_budget
+  budget_alarm_thresholds  = var.budget_alarm_thresholds
   tags                     = local.tags
 }
 

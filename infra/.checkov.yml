@@ -17,10 +17,12 @@ skip-check:
   - CKV_AWS_144   # S3 cross-region replication
   - CKV_AWS_260   # replication group Multi-AZ (single node by design at this stage)
   - CKV_AWS_161   # RDS Multi-AZ (variable-gated; enabled when real traffic exists)
+  - CKV_AWS_293   # staging RDS deletion protection is intentionally OFF so staging can be destroyed
   - CKV_AWS_157   # RDS tiered storage
   - CKV_AWS_129   # RDS logging (CloudWatch export; app logs cover launch stage)
   - CKV_AWS_353   # RDS Performance Insights (cost; enable with real traffic)
   # Log/audit niceties deferred with the same review checkpoint
+  - CKV_AWS_18    # access-logs/state buckets cannot usefully log to themselves; inline skip not honored by this version
   - CKV_AWS_50    # x-ray
   - CKV_AWS_288   # ASG eager scaling signals
   - CKV2_AWS_61   # S3 lifecycle for abort-incomplete (present on main buckets; template quirk)
