@@ -429,7 +429,15 @@ class _StaticBedrockToken:
         if kwargs.get("signing_name") not in (None, "bedrock"):
             return None
         from botocore.tokens import FrozenAuthToken
-        return FrozenAuthToken(self._token)
+
+        class _Frozen:
+            def get_frozen_token(_self):
+                return FrozenAuthToken(self._token)
+
+        # botocore's TokenSigner calls get_frozen_token() on the object
+        # returned by the provider chain; returning FrozenAuthToken directly
+        # works on some versions but fails on the pinned botocore.
+        return _Frozen()
 
 
 class BedrockProvider(BaseProvider):
@@ -489,14 +497,24 @@ class BedrockProvider(BaseProvider):
             # never leaks into another tenant's client.
             session = boto3.Session(region_name=self.region)
             token_provider = session._session.get_component("token_provider")
-            token_provider.insert_before("env", _StaticBedrockToken(self.api_key))
-            return session.client(
-                "bedrock-runtime",
-                config=Config(
-                    retries={"max_attempts": 3, "mode": "standard"},
+            # botocore exposes TokenProviderChain._providers, but the older
+            # insert_before() helper was removed in newer releases. Prepend
+            # the tenant-scoped token so it wins over the env/SSO providers.
+            providers = getattr(token_provider, "_providers", None)
+            if providers is None:
+                raise RuntimeError("botocore token provider chain is unavailable")
+            providers.insert(0, _StaticBedrockToken(self.api_key))
+            retry_config = {"max_attempts": 3, "mode": "standard"}
+            try:
+                # Newer botocore selects the bearer auth scheme explicitly.
+                config = Config(
+                    retries=retry_config,
                     auth_scheme_preference="httpBearerAuth",
-                ),
-            )
+                )
+            except TypeError:
+                # botocore <=1.35 only exposes the legacy signature name.
+                config = Config(retries=retry_config, signature_version="bearer")
+            return session.client("bedrock-runtime", config=config)
         # Blank key -> boto3 default credential chain (IAM role on EC2/ECS).
         return boto3.client(
             "bedrock-runtime", region_name=self.region,
