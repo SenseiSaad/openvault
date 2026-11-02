@@ -5,6 +5,7 @@ from . import views
 urlpatterns = [
     # ops
     path("health", views.health),
+    path("health/live", views.health_live),
     # auth (cookie-based; header still accepted)
     path("auth/register", views.register_company),
     path("auth/login", views.login),

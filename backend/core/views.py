@@ -125,6 +125,15 @@ def health(request):
     return JsonResponse(payload, status=200 if (db_ok and storage_ok) else 503)
 
 
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def health_live(request):
+    """Cheap liveness probe: no database or storage calls, just proves the
+    process is alive and answering requests. Used when a fast failover is
+    preferred over detailed readiness (the ALB checks /api/health)."""
+    return JsonResponse({"status": "ok", "time": timezone.now().isoformat()})
+
+
 def audit(request, action, detail=""):
     """Write one audit-trail row for the caller's company."""
     user = request.user if getattr(request, "user", None) and request.user.is_authenticated else None

@@ -821,6 +821,14 @@ def stream_answer(user, question: str, mode: str | None = None, provider_overrid
     _log_ask(user, question, mode, provider_used, len(chunks), True,
              bool(moderation_flags), started)
 
+    log_llm_usage(
+        company=getattr(user, "company", None),
+        model=getattr(chat, "chat_model", "") or "",
+        provider=provider_used,
+        input_tokens=None,
+        output_tokens=None,
+    )
+
     yield json.dumps({"type": "done"}) + "\n"
 
 
@@ -836,5 +844,30 @@ def _log_ask(user, question, mode, provider, chunks_found, answered, flagged, st
             chunks_found=chunks_found, answered=answered, flagged=flagged,
             latency_ms=int((time.time() - started) * 1000),
         )
+    except Exception:
+        pass
+
+
+def log_llm_usage(company, model: str, provider: str,
+                  input_tokens: int | None, output_tokens: int | None):
+    """Best-effort structured LLM-usage line for per-company cost metering.
+
+    Emitted as one JSON object per line so CloudWatch metric filters can
+    aggregate it ({ $.event = "llm_usage" } over the API log group). Token
+    counts are best-effort: most streaming providers (Ollama, Gemini, the
+    Bedrock Converse stream) do not return per-chunk usage, so unset values are
+    logged as 0 and undercount real usage — treat the metric as a trend signal,
+    not an invoice. Never logs prompt or document content.
+    """
+    logger = logging.getLogger("openvault.llm_usage")
+    try:
+        logger.info("llm usage", extra={
+            "event": "llm_usage",
+            "company_id": company.id if company else None,
+            "model": model or "",
+            "provider": provider or "",
+            "input_tokens": input_tokens or 0,
+            "output_tokens": output_tokens or 0,
+        })
     except Exception:
         pass
