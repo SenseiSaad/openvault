@@ -59,10 +59,9 @@ echo "[github] main branch protected (PR + green CI; no force push)"
 
 # --------------------------------------------------------------- version tags
 # Repository rulesets are the current API; fall back to the legacy tag
-# protection endpoint on older GitHub Enterprise installations.
-gh api --method POST "repos/$REPO/rulesets" --input - >/dev/null <<'JSON' || \
-  gh api --method POST "repos/$REPO/tags/protection" -f pattern='v*' >/dev/null || \
-  echo "[github] WARN: could not create tag protection; protect v* manually"
+# protection endpoint on older GitHub Enterprise installations. Update an
+# existing ruleset instead of failing on a re-run.
+RULESET_JSON=$(cat <<'JSON'
 {
   "name": "Protect release tags",
   "target": "tag",
@@ -71,7 +70,18 @@ gh api --method POST "repos/$REPO/rulesets" --input - >/dev/null <<'JSON' || \
   "rules": [{"type": "deletion"}, {"type": "update"}, {"type": "non_fast_forward"}]
 }
 JSON
-echo "[github] v* tag ruleset requested"
+)
+RULESET_ID="$(gh api "repos/$REPO/rulesets" --jq '.[] | select(.name == "Protect release tags") | .id' 2>/dev/null || true)"
+if [[ -n "$RULESET_ID" ]]; then
+  gh api --method PUT "repos/$REPO/rulesets/$RULESET_ID" --input - >/dev/null <<<"$RULESET_JSON"
+  echo "[github] v* tag ruleset updated (id $RULESET_ID)"
+elif gh api --method POST "repos/$REPO/rulesets" --input - >/dev/null 2>&1 <<<"$RULESET_JSON"; then
+  echo "[github] v* tag ruleset created"
+elif gh api --method POST "repos/$REPO/tags/protection" -f pattern='v*' >/dev/null 2>&1; then
+  echo "[github] legacy v* tag protection created"
+else
+  echo "[github] WARN: could not create tag protection; protect v* manually" >&2
+fi
 
 cat <<'EOF'
 
