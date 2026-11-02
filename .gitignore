@@ -50,3 +50,7 @@ Thumbs.db
 
 # Backup archives (may contain customer data)
 backups/
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
