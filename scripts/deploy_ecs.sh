@@ -165,10 +165,27 @@ aws ecs update-service --cluster "$ECS_CLUSTER" --service "$WEB_SERVICE" \
 echo "[deploy] waiting for services to stabilize (circuit breaker will roll back a bad task)"
 aws ecs wait services-stable --cluster "$ECS_CLUSTER" \
   --services "$API_SERVICE" "$WORKER_SERVICE" "$WEB_SERVICE" --region "$AWS_REGION"
-ROLLBACK_NEEDED=0
-trap - ERR
+
+# services-stable can be true after the circuit breaker restored the OLD task
+# definition. Verify we are actually on the revisions we just registered.
+check_taskdef() {
+  local service="$1" expected="$2" current
+  current="$(prev_task "$service")"
+  if [[ "$current" != "$expected" ]]; then
+    echo "[deploy] $service is on $current, expected $expected (circuit breaker rollback?)" >&2
+    return 1
+  fi
+}
+check_taskdef "$API_SERVICE" "$API_ARN"
+check_taskdef "$WORKER_SERVICE" "$WORKER_ARN"
+check_taskdef "$WEB_SERVICE" "$WEB_ARN"
 
 echo "[deploy] smoke test"
 BASE_URL="$PUBLIC_BASE_URL" REQUIRE_AUTH_SMOKE="$REQUIRE_AUTH_SMOKE" \
   "$(cd "$(dirname "$0")" && pwd)/smoke_test.sh"
+
+# Only now is the update considered successful. If the smoke test failed, the
+# ERR trap above restores the previous task definitions.
+ROLLBACK_NEEDED=0
+trap - ERR
 echo "[deploy] done: $IMAGE_TAG"

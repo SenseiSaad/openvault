@@ -14,8 +14,12 @@ aws elbv2 describe-target-health --target-group-arn <api-tg-arn>
 
 ECS deployment circuit breaker is enabled with rollback. A task that fails ALB
 health checks is replaced automatically; if the whole deployment fails, ECS
-rolls back to the previous task definition. Verify the deployment status before
-doing anything manual.
+rolls back to the previous task definition. The deploy script verifies that
+all three services are still on the newly registered revisions after
+`services-stable`; it keeps its rollback trap active through the smoke test. If
+the circuit breaker restored the old revision or the smoke test fails, the
+script restores the captured prior task definitions. Verify deployment status
+before doing anything manual.
 
 ## 2. Roll back through GitHub (preferred)
 
