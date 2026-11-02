@@ -12,7 +12,7 @@ WORKDIR /app
 # System deps: libpq for PostgreSQL, curl for the container healthcheck.
 # OCR: tesseract + poppler back the pytesseract/pdf2image extraction path.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 curl gosu tesseract-ocr poppler-utils \
+    libpq5 postgresql-client awscli curl gosu tesseract-ocr poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt .
@@ -20,6 +20,10 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --retries 8 --timeout 120 -r requirements.txt
 
 COPY backend/ .
+# Nightly ECS backup task invokes this path; the script needs pg_dump + awscli
+# (installed above). Restore is included for a break-glass one-off task.
+COPY scripts/backup.sh scripts/restore.sh /app/scripts/
+RUN chmod +x /app/scripts/backup.sh /app/scripts/restore.sh
 COPY backend/docker-entrypoint.sh /usr/local/bin/docker-entrypoint
 
 # Data (uploaded documents) + media (generated forms) + static are volumes in compose.

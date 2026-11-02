@@ -45,7 +45,7 @@ module "network" {
 module "data" {
   source = "../../modules/data"
 
-  name_prefix                 = local.name_prefix
+  name_prefix = local.name_prefix
   # Staging must be cheap and destroyable on demand: smallest RDS, no
   # deletion protection, final snapshot skipped, buckets force-destroyable.
   account_suffix              = "staging"

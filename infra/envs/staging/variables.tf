@@ -41,10 +41,14 @@ variable "app_secrets" {
   description = "Map of env-var name -> SSM parameter NAME under /openvault/staging/."
   type        = map(string)
   default = {
-    SECRET_KEY             = "openvault/staging/SECRET_KEY"
-    DATABASE_URL           = "openvault/staging/DATABASE_URL"
-    LLM_KEY_ENCRYPTION_KEY = "openvault/staging/LLM_KEY_ENCRYPTION_KEY"
-    SENTRY_DSN             = "openvault/staging/SENTRY_DSN"
+    SECRET_KEY                        = "openvault/staging/SECRET_KEY"
+    DATABASE_URL                      = "openvault/staging/DATABASE_URL"
+    LLM_KEY_ENCRYPTION_KEY            = "openvault/staging/LLM_KEY_ENCRYPTION_KEY"
+    EMAIL_HOST_USER                   = "openvault/staging/EMAIL_HOST_USER"
+    EMAIL_HOST_PASSWORD               = "openvault/staging/EMAIL_HOST_PASSWORD"
+    SENTRY_DSN                        = "openvault/staging/SENTRY_DSN"
+    BOOTSTRAP_PLATFORM_ADMIN_EMAIL    = "openvault/staging/BOOTSTRAP_PLATFORM_ADMIN_EMAIL"
+    BOOTSTRAP_PLATFORM_ADMIN_PASSWORD = "openvault/staging/BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"
   }
 }
 
@@ -69,7 +73,7 @@ variable "budget_alarm_thresholds" {
 variable "dmarc_record" {
   description = "DMARC TXT record value."
   type        = string
-  default     = "v=DMARC1; p=none; rua=mailto:postmaster@openvault.pk"
+  default     = "v=DMARC1; p=none"
 }
 
 variable "enable_model_host" {

@@ -1,27 +1,38 @@
-# Alert rules
+# Alert rules (CloudWatch → SNS email)
 
-The minimum alert set for launch. Where the check lives: uptime monitors
-(Better Stack / UptimeRobot free tier), Sentry (email on new issue), and the
-app host's cron + logs. Each rule names the runbook to open.
+Terraform creates these in `infra/modules/observability`. Confirm the SNS email
+subscription after the first apply; an unconfirmed subscription receives
+nothing. Each rule names the runbook to open.
 
-| # | Alert | Trigger | Severity | Action / runbook |
-|---|---|---|---|---|
-| 1 | **Site down** | `GET https://<host>/api/health` fails (non-200) from an external monitor, 2 checks in a row (1 min) | Critical | `database-down.md` if `"db": false`; `disk-full.md` if `"storage": false`; `bad-deploy-rollback.md` right after a deploy |
-| 2 | **Backup failed** | `scripts/backup.sh` cron exit ≠ 0, or no new object in `s3://…/backups/postgres/` in the last 26h | Critical | Do NOT wait — an untested/missing backup means every later incident is unrecoverable. Check pg_dump stderr, disk, AWS credentials. See `restore.md` |
-| 3 | **Error spike** | Sentry: new issue in production release, or 5xx rate >1% over 5 min (count `ERROR` level JSON logs) | High | If it started with a deploy → `bad-deploy-rollback.md`; otherwise triage the Sentry stack trace |
-| 4 | **Slow answers** | Ask time-to-first-token p95 > 5s for 15 min (measure from AskLog `latency_ms` or Sentry performance) | High | `ai-provider-down.md`; check provider status page and recent corpus growth |
-| 5 | **Stuck documents** | `indexing_status='pending'` with `updated_at` older than 30 min (Celery beat `requeue_stuck_documents` requeues them and logs a warning; alert on the log line or on requeue count > 0 sustained 2 runs) | Medium | Worker down → `docker compose ps worker` + restart; then `manage.py requeue_stuck_documents` |
-| 6 | **Disk > 80%** | `df` on the app host (cron one-liner emailing at the threshold) | Medium | `disk-full.md` before it becomes #1 |
-| 7 | **Embeddings degrading** | `manage.py check_embeddings` exits non-zero (cron nightly) | High | `ai-provider-down.md` §3 (silent keyword-only mode) |
-| 8 | **Budget alarm** | AWS Budgets at $20/$35/$50, or provider billing alert | Medium | Check for runaway ask volume (a leaked key or F-05-style abuse); Bedrock/Gemini consoles show per-model spend |
+| Alarm | Trigger | Severity | Runbook |
+|---|---|---|---|
+| `openvault-prod-alb-5xx` | target 5xx > 10 in 5 min | Critical | `bad-deploy-rollback.md`, then `database-down.md` |
+| `openvault-prod-alb-unhealthy-targets` | any unhealthy api/web target for 2×30s | Critical | `service-not-starting.md` |
+| `openvault-prod-ecs-<svc>-below-desired` | no CPU datapoints (no running task) for 10 min | Critical | `service-not-starting.md` |
+| `openvault-prod-bedrock-errors` | ≥5 `llm_error` JSON lines in 5 min | High | `ai-provider-down.md` |
+| `openvault-prod-bedrock-tokens-daily` | input+output tokens > daily budget | Medium | Check for runaway asks/leaked credentials; `docs/COST.md` |
+| `openvault-prod-rds-cpu` | RDS CPU >80% for 10 min | High | `database-down.md` |
+| `openvault-prod-rds-storage` | free storage <5 GB | High | `database-down.md`; increase gp3 / archive old data |
+| `openvault-prod-rds-connections` | connections >120 | High | `database-down.md` |
+| AWS Budgets | actual spend > $20/$35/$50/$100 (prod), $10/$15 (staging) | Medium | Check Billing/Cost Explorer; `docs/COST.md` |
 
 ## Wiring notes
 
-* The monitor must hit `/api/health` from OUTSIDE the network (that is the
-  whole point) — status `degraded` returns 503, which is the signal.
-* Sentry: set an alert rule "New issue in production" → email; that is rule 3.
-* AskLog-based checks (4, 5) are one SQL query each; a small cron script on
-  the app host is enough at this scale — Prometheus is not justified yet.
-* Test every alert by firing it on purpose after wiring (kill the db container
-  for a minute, remove the backup env var once, etc.). An alert you have never
-  seen fire is a rumor, not a rule.
+* **Uptime monitor:** point an external monitor at
+  `https://<new-subdomain>/api/health` (2 failures = page). `/api/health/live`
+  is the cheap liveness probe; use it for a container/host check.
+* **Backup freshness:** CloudWatch cannot see “no object” directly. Add a
+  synthetic check or a small Lambda/EventBridge rule that fails if
+  `s3://<backups>/backups/postgres/` has no object in 26h. The backup ECS task
+  itself only alarms on task failure if you add a failed-task alarm — do that
+  before launch.
+* **SES:** enable SES bounce/complaint notifications to an SNS topic and watch
+  the reputation dashboard. A bounce spike can pause sending; open
+  `ai-provider-down.md` only for AI, not email — use the SES console for
+  suppression list and verified identities.
+* **Certificate expiry:** ACM auto-renews validated certificates, but the
+  Route 53 validation record must stay in place. Add an external TLS-expiry
+  check (30/14/7 days) for the public hostname.
+* **Test every alert once.** Kill a task, stop the DB briefly, or publish a
+  synthetic `llm_error` line in staging and confirm the email arrives. An alert
+  you have never seen fire is a rumor.

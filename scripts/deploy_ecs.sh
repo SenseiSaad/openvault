@@ -32,6 +32,7 @@ WEB_TASK_FAMILY="${WEB_TASK_FAMILY:-${PREFIX}-web}"
 WORKER_TASK_FAMILY="${WORKER_TASK_FAMILY:-${PREFIX}-worker}"
 MIGRATE_TASK_FAMILY="${MIGRATE_TASK_FAMILY:-${PREFIX}-migrate}"
 BACKUP_TASK_FAMILY="${BACKUP_TASK_FAMILY:-${PREFIX}-backup}"
+BACKUP_RULE="${BACKUP_RULE:-${PREFIX}-nightly-db-backup}"
 ECR_API_REPOSITORY="${ECR_API_REPOSITORY:-${PREFIX}-api}"
 ECR_WEB_REPOSITORY="${ECR_WEB_REPOSITORY:-${PREFIX}-web}"
 ALLOW_MISSING_CLUSTER="${ALLOW_MISSING_CLUSTER:-0}"
@@ -89,6 +90,25 @@ MIGRATE_ARN="$(register_task "$MIGRATE_TASK_FAMILY" "$API_IMAGE" "$TMP/migrate.j
 BACKUP_ARN="$(register_task "$BACKUP_TASK_FAMILY" "$API_IMAGE" "$TMP/backup.json")"
 echo "[deploy] api=$API_ARN"
 echo "[deploy] web=$WEB_ARN"
+
+# The nightly EventBridge target pins a task-definition revision. Point it at
+# the revision just registered so backups keep running the current image.
+if aws events describe-rule --name "$BACKUP_RULE" --region "$AWS_REGION" >/dev/null 2>&1; then
+  aws events list-targets-by-rule --rule "$BACKUP_RULE" --region "$AWS_REGION" \
+    --query 'Targets[0]' --output json > "$TMP/backup-target.json"
+  python3 - "$TMP/backup-target.json" "$BACKUP_ARN" "$TMP/backup-target-new.json" <<'PY'
+import json, sys
+src, arn, out = sys.argv[1:4]
+target = json.load(open(src))
+target.setdefault("EcsParameters", {})["TaskDefinitionArn"] = arn
+json.dump({"Targets": [target]}, open(out, "w"))
+PY
+  aws events put-targets --rule "$BACKUP_RULE" --region "$AWS_REGION" \
+    --cli-input-json "file://$TMP/backup-target-new.json" >/dev/null
+  echo "[deploy] nightly backup target -> $BACKUP_ARN"
+else
+  echo "[deploy] no $BACKUP_RULE (nightly backup disabled)"
+fi
 
 if [[ "$SKIP_MIGRATE" == "1" ]]; then
   echo "[deploy] SKIP_MIGRATE=1 (rollback): not running migrations"

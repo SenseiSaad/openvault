@@ -1,52 +1,64 @@
-# Runbook — Bad deploy rollback
+# Runbook — Bad deploy / rollback
 
-**Symptom:** error rate spike after a deploy, migrations that fail, or a
-feature regression reported within minutes of a release.
+**Symptom:** 5xx spike, unhealthy targets, failed task startup, or a regression
+within minutes of a deploy.
 
-## 1. Decide rollback vs forward-fix
-
-Rollback if users are blocked and the fix is not a one-liner. Forward-fix if
-the damage is cosmetic and a corrected image is <30 minutes away.
-
-## 2. Roll back the image (the part that usually fixes it)
-
-The compose stack tags every built image. On the app host:
+## 1. Confirm it is the deploy
 
 ```bash
-docker image ls | grep openvault          # find the previous image id
-# pin the previous image in docker-compose.prod.yml (image: <id>) or:
-git checkout <previous-release-tag>
-docker compose -f docker-compose.prod.yml build api worker web
-docker compose -f docker-compose.prod.yml up -d
+aws ecs describe-services --cluster openvault-prod-cluster \
+  --services api web worker \
+  --query 'services[].{name:serviceName,desired:desiredCount,running:runningCount,deployments:deployments[].{status:status,rollout:rolloutState,taskDef:taskDefinition}}'
+aws elbv2 describe-target-health --target-group-arn <api-tg-arn>
 ```
 
-The 2×4 gunicorn api comes back in seconds; the worker resumes indexing.
+ECS deployment circuit breaker is enabled with rollback. A task that fails ALB
+health checks is replaced automatically; if the whole deployment fails, ECS
+rolls back to the previous task definition. Verify the deployment status before
+doing anything manual.
 
-## 3. Roll back the database schema (the careful part)
+## 2. Roll back through GitHub (preferred)
 
-Migrations run as a separate deploy step (`docker compose run --rm api python
-manage.py migrate`), NOT at container start — so a rolled-back image may be
-NEWER than the schema (fine) or the schema may be newer than the image
-(needs a reverse migration).
+Actions → **Rollback** → Run workflow:
+
+* environment: `production` (requires the protected-environment approval)
+* image_tag: the previous commit SHA (images are immutable and retained 30 deep)
+
+The workflow redeploys the existing ECR image with `SKIP_MIGRATE=1`, updates
+api/worker/web, waits for stability, and runs the smoke test. It does **not**
+reverse database migrations.
+
+## 3. Roll back from the CLI (break-glass)
 
 ```bash
-docker compose -f docker-compose.prod.yml run --rm api python manage.py showmigrations core | tail
-# only if the last migration has a real reverse:
-docker compose -f docker-compose.prod.yml run --rm api python manage.py migrate core <previous_migration_name>
+aws ecs update-service --cluster openvault-prod-cluster --service api \
+  --task-definition openvault-prod-api:<previous-revision>
+aws ecs update-service --cluster openvault-prod-cluster --service worker \
+  --task-definition openvault-prod-worker:<previous-revision>
+aws ecs update-service --cluster openvault-prod-cluster --service web \
+  --task-definition openvault-prod-web:<previous-revision>
+aws ecs wait services-stable --cluster openvault-prod-cluster --services api worker web
 ```
 
-Never hand-reverse a data migration. If the schema change is destructive and
-unreversible, restore last night's DB instead (`restore.md`) and accept the
-RPO.
+Or use the same deploy script with the old tag after configuring ECR/ECS env:
+`./scripts/deploy_ecs.sh prod <old-sha>` (set `SKIP_MIGRATE=1`).
 
-## 4. Verify
+## 4. Database schema
 
-* `/api/health` 200; Sentry error rate back to baseline within 10 minutes.
-* One real login + upload + ask.
+Migrations run in the one-off `migrate` task **before** service updates. They
+are forward-only in practice; a rolled-back image can be older than the schema.
+Rules:
 
-## 5. Prevention habits
+* Additive migrations (new nullable columns/tables) are safe for one release.
+* Never rename/drop a column in the same release that stops writing it.
+* Do not hand-reverse a data migration. If the schema change is destructive and
+  the old image cannot run, restore the database per `restore.md` and accept
+  the RPO.
 
-* Every deploy: `manage.py check` + test suite in CI (already enforced).
-* Migrations always forward-compatible for one release (add columns, don't
-  rename in place).
-* Keep the previous release tag handy — this runbook assumes you can name it.
+## 5. Verify
+
+* `aws ecs wait services-stable` returns.
+* `curl -fsS https://<host>/api/health` → 200 with `db` and `storage` true.
+* Run `BASE_URL=... REQUIRE_AUTH_SMOKE=1 ./scripts/smoke_test.sh`.
+* Check CloudWatch `/openvault/prod/api` for new tracebacks and the
+  `openvault-prod-llm-errors` alarm is OK.

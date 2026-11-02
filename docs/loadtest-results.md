@@ -39,3 +39,49 @@ k6 run -e BASE=http://127.0.0.1:8001 loadtests/ask.js
 * The plan-quota gate was validated incidentally: a run against the Free plan
   402'd every ask after the 50-ask monthly limit — enforcement works under
   load.
+
+---
+
+## What this does and does not prove (updated 2026-11-02)
+
+The numbers above are from a **local Docker host** with gunicorn and SQLite.
+They are useful for comparing our own retrieval/streaming code, but they are
+**not** an ECS/RDS/ElastiCache benchmark. Do not quote them as AWS capacity.
+The AWS launch shape is one API task at **0.5 vCPU / 1 GB** (2 gunicorn
+workers × 4 threads) with RDS `db.t4g.medium` and one Redis node.
+
+### Run the same test against staging (optional, avoid Bedrock spend)
+
+1. Seed a load-test tenant once, from an API task:
+   ```bash
+   aws ecs execute-command --cluster openvault-stg-cluster \
+     --task <api-task-arn> --container api --interactive \
+     --command "python manage.py seed_loadtest"
+   ```
+2. **Do not run `ask.js` against a real Bedrock model** unless you accept the
+   token bill. For a pipeline-only run, temporarily set `LLM_PROVIDER=fake`
+   in the staging Terraform `app_environment`, apply, and deploy; restore
+   `bedrock` afterwards. The fake provider is for load tests only.
+3. From a machine with internet access:
+   ```bash
+   BASE=https://<staging-host> USER=load@openvault.test PASS='<seed password>' \
+     k6 run loadtests/ask.js
+   BASE=https://<staging-host> USER=load@openvault.test PASS='<seed password>' \
+     k6 run loadtests/browse.js
+   ```
+4. Record p95 TTFB, p95 full-stream, error rate, and whether the API ECS
+   service scaled (target: CPU >60% for 3 minutes). If it did not scale, check
+   the `api_min_capacity`/`api_max_capacity` target and the ALB request count.
+
+### Launch interpretation
+
+* At 5–15 concurrent streamed answers, the local result was 0% errors and
+  p95 full-stream ~11.5 s with a simulated stream. A real model adds its own
+  first-token latency.
+* The API autoscaling policy is CPU target 60%, min 1 / max 3 in prod. That is
+  a starting point, not a capacity plan; watch `ECS CPUUtilization` for two
+  weeks and adjust. Worker is fixed at 1 with `--concurrency=2`; queue length
+  is the signal to change it, not CPU.
+* If `/api/ask` p95 exceeds 30 s (the k6 threshold) with a real model, check
+  Bedrock latency first (`ai-provider-down.md`), then API CPU, then retrieval
+  (`AskLog.latency_ms`).
