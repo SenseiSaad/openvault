@@ -1,0 +1,81 @@
+name: Terraform plan
+
+on:
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform-plan.yml"
+
+concurrency:
+  group: terraform-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  plan:
+    name: Plan ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: staging
+            dir: staging
+          - name: production
+            dir: prod
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_VAR_domain: ${{ matrix.dir == 'prod' && vars.DOMAIN_PROD || vars.DOMAIN_STAGING }}
+      TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
+      TF_VAR_bedrock_model_arns: ${{ vars.BEDROCK_MODEL_ARNS }}
+      TF_VAR_oidc_allowed_subjects: ${{ vars.OIDC_ALLOWED_SUBJECTS }}
+      TF_VAR_initial_image_tag: ${{ vars.INITIAL_IMAGE_TAG || 'bootstrap' }}
+    defaults:
+      run:
+        working-directory: infra/envs/${{ matrix.dir }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: "1.9.8"
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_PLAN_ROLE_ARN }}
+          role-session-name: openvault-plan-${{ matrix.name }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-south-1' }}
+      - name: Init
+        run: terraform init -input=false -no-color
+      - name: Plan (read-only; no state lock)
+        run: |
+          set -euo pipefail
+          terraform plan -lock=false -input=false -no-color -out=tfplan
+          terraform show -no-color tfplan > plan.txt
+      - name: Post plan to PR
+        if: always()
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        env:
+          PLAN_NAME: ${{ matrix.name }}
+          PLAN_DIR: ${{ matrix.dir }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = `infra/envs/${process.env.PLAN_DIR}/plan.txt`;
+            let body = `### Terraform plan — ${process.env.PLAN_NAME}\n\n`;
+            if (fs.existsSync(path)) {
+              const text = fs.readFileSync(path, 'utf8');
+              body += '```\n' + text.slice(0, 60000) + '\n```';
+              if (text.length > 60000) body += '\n_(truncated; see the job log for the full plan)_';
+            } else {
+              body += '_Plan did not produce output. Check the job log._';
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });

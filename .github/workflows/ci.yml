@@ -9,24 +9,43 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  NODE_VERSION: "22"
+  PNPM_VERSION: "12.3.4"
+  GITLEAKS_VERSION: "8.24.3"
+
 jobs:
   security:
-    name: Security scan (bandit + pip-audit)
+    name: Security scan (bandit + pip-audit + gitleaks)
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          python-version: "3.12"
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
       - name: Bandit (static analysis)
         run: bandit -r core config -ll
       - name: pip-audit (known CVEs)
         run: pip-audit -r requirements.txt --strict
+      - name: gitleaks (full history)
+        working-directory: .
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp gitleaks
+          /tmp/gitleaks detect --source . --redact --verbose --exit-code 1
 
   backend:
     name: OpenVault API (checks + tests)
@@ -38,10 +57,10 @@ jobs:
       SECRET_KEY: ci-secret-key-not-used-in-production
       DEBUG: "true"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: backend/requirements-dev.txt
       - name: Install dependencies
@@ -60,8 +79,8 @@ jobs:
           CSRF_TRUSTED_ORIGINS: https://example.com
       - name: Migration drift check
         run: python manage.py makemigrations --check --dry-run
-      - name: Test suite with coverage
-        run: python -m pytest --cov=core --cov-report=term
+      - name: Test suite with coverage gate
+        run: python -m pytest --cov=core --cov-report=term --cov-fail-under=70
 
   frontend:
     name: OpenVault web (typecheck + tests + build)
@@ -70,13 +89,13 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
-          version: 12.3.4
-      - uses: actions/setup-node@v4
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: "22"
+          node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
       - name: Install dependencies
@@ -89,4 +108,88 @@ jobs:
         run: pnpm build
         env:
           DOCKER_STANDALONE: "true"
-          NEXT_PUBLIC_API_URL: http://localhost:8000
+          # Same-origin on ECS: leave this empty so the browser derives the
+          # API origin from window.location. A non-empty localhost value would
+          # be baked into the client bundle and break every request.
+          NEXT_PUBLIC_API_URL: ""
+
+  docker:
+    name: Container build + Trivy image scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build API image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          load: true
+          tags: openvault-api:ci
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+      - name: Build web image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: frontend/Dockerfile
+          load: true
+          tags: openvault-web:ci
+          build-args: |
+            NEXT_PUBLIC_API_URL=
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+      - name: Scan API image (fail on HIGH/CRITICAL with a fix)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: openvault-api:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+      - name: Scan web image (fail on HIGH/CRITICAL with a fix)
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          image-ref: openvault-web:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+
+  terraform:
+    name: Terraform fmt/validate/tflint/checkov
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: "1.9.8"
+      - uses: terraform-linters/setup-tflint@90f302c255ef959cbfb4bd10581afecdb7ece3e6 # v4
+      - name: Format check
+        run: terraform fmt -check -recursive
+      - name: Validate every root/module
+        run: |
+          set -euo pipefail
+          for dir in $(find infra -name '*.tf' -printf '%h\n' | sort -u); do
+            echo "==> validate $dir"
+            (cd "$dir" && terraform init -backend=false -input=false -no-color >/dev/null && terraform validate -no-color)
+          done
+      - name: TFLint
+        run: |
+          set -euo pipefail
+          for dir in $(find infra -name '*.tf' -printf '%h\n' | sort -u); do
+            echo "==> tflint $dir"
+            (cd "$dir" && tflint --init >/dev/null && tflint)
+          done
+      - name: Checkov
+        uses: bridgecrewio/checkov-action@c10e2438743528f9e4549758fad8b7a62052541d # v12
+        with:
+          directory: infra
+          config_file: infra/.checkov.yml
+          framework: terraform
+          output_format: cli
+          soft_fail: false
+          quiet: true
+          compact: true

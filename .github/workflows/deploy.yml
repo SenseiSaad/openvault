@@ -1,0 +1,109 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-south-1' }}
+
+jobs:
+  build:
+    name: Build and push images
+    runs-on: ubuntu-latest
+    outputs:
+      registry: ${{ steps.login-ecr.outputs.registry }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: openvault-build
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
+        id: login-ecr
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build and push API (commit SHA is the immutable tag)
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_API_REPOSITORY || 'openvault-prod-api' }}:${{ github.sha }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+      - name: Build and push web
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: frontend/Dockerfile
+          platforms: linux/amd64
+          push: true
+          # Same-origin on ECS: an empty value makes the browser use
+          # window.location instead of a baked localhost URL.
+          build-args: |
+            NEXT_PUBLIC_API_URL=
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ vars.ECR_WEB_REPOSITORY || 'openvault-prod-web' }}:${{ github.sha }}
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+
+  staging:
+    name: Deploy staging (automatic)
+    needs: build
+    if: ${{ vars.ECS_CLUSTER_STAGING != '' && vars.PUBLIC_BASE_URL_STAGING != '' }}
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      ECR_REGISTRY: ${{ needs.build.outputs.registry }}
+      ECR_API_REPOSITORY: ${{ vars.ECR_API_REPOSITORY_STAGING || 'openvault-stg-api' }}
+      ECR_WEB_REPOSITORY: ${{ vars.ECR_WEB_REPOSITORY_STAGING || 'openvault-stg-web' }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER_STAGING }}
+      PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL_STAGING }}
+      REQUIRE_AUTH_SMOKE: "0"
+      ALLOW_MISSING_CLUSTER: "1"
+      SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
+      SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN_STAGING || vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: openvault-deploy-staging
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Deploy
+        run: ./scripts/deploy_ecs.sh staging "${{ github.sha }}"
+
+  production:
+    name: Deploy production (manual approval)
+    needs: [build, staging]
+    if: ${{ always() && needs.build.result == 'success' && (needs.staging.result == 'success' || needs.staging.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      ECR_REGISTRY: ${{ needs.build.outputs.registry }}
+      ECR_API_REPOSITORY: ${{ vars.ECR_API_REPOSITORY_PROD || 'openvault-prod-api' }}
+      ECR_WEB_REPOSITORY: ${{ vars.ECR_WEB_REPOSITORY_PROD || 'openvault-prod-web' }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER_PROD || 'openvault-prod-cluster' }}
+      PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL_PROD }}
+      REQUIRE_AUTH_SMOKE: "1"
+      ALLOW_MISSING_CLUSTER: "0"
+      SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
+      SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN_PROD || vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: openvault-deploy-production
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Deploy
+        run: ./scripts/deploy_ecs.sh prod "${{ github.sha }}"

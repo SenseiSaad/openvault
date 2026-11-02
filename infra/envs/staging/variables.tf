@@ -18,7 +18,11 @@ variable "domain" {
 variable "oidc_allowed_subjects" {
   description = "OIDC subject patterns allowed to assume AWS roles."
   type        = list(string)
-  default     = ["repo:REPLACE_ME/openvault:ref:refs/heads/main"]
+  default = [
+    "repo:REPLACE_ME/openvault:ref:refs/heads/main",
+    "repo:REPLACE_ME/openvault:pull_request",
+    "repo:REPLACE_ME/openvault:environment:staging",
+  ]
 }
 
 variable "bedrock_model_arns" {

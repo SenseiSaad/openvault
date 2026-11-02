@@ -61,10 +61,16 @@ resource "aws_iam_role" "deploy" {
 
 data "aws_iam_policy_document" "deploy_permissions" {
   statement {
+    sid       = "ECRLogin"
+    effect    = "Allow"
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+
+  statement {
     sid    = "ECRPush"
     effect = "Allow"
     actions = [
-      "ecr:GetAuthorizationToken",
       "ecr:BatchCheckLayerAvailability",
       "ecr:CompleteLayerUpload",
       "ecr:InitiateLayerUpload",
@@ -142,7 +148,17 @@ resource "aws_iam_role_policy" "terraform_plan_read" {
     Version = "2012-10-17"
     Statement = [{
       Effect   = "Allow"
-      Action   = ["ecr:Describe*", "ecs:Describe*", "rds:Describe*", "s3:List*", "s3:Get*", "iam:Get*", "iam:List*", "ssm:Describe*", "ssm:Get*", "elasticache:Describe*", "route53:Get*", "route53:List*", "bedrock:Get*", "bedrock:List*", "dynamodb:Describe*", "budgets:ViewBudget", "sts:GetCallerIdentity", "cloudwatch:Describe*", "sns:Get*"]
+      Action = [
+        "ec2:Describe*", "elasticloadbalancing:Describe*", "acm:Describe*",
+        "acm:List*", "application-autoscaling:Describe*", "logs:Describe*",
+        "logs:ListTags*", "events:Describe*", "events:List*", "kms:Describe*",
+        "kms:List*", "ecr:Describe*", "ecs:Describe*", "rds:Describe*",
+        "s3:List*", "s3:Get*", "iam:Get*", "iam:List*", "ssm:Describe*",
+        "ssm:Get*", "elasticache:Describe*", "route53:Get*", "route53:List*",
+        "bedrock:Get*", "bedrock:List*", "dynamodb:Describe*",
+        "budgets:ViewBudget", "sts:GetCallerIdentity", "cloudwatch:Describe*",
+        "cloudwatch:List*", "sns:Get*", "sns:List*",
+      ]
       Resource = "*"
     }]
   })
@@ -162,4 +178,85 @@ resource "aws_iam_role" "terraform_apply" {
 resource "aws_iam_role_policy_attachment" "terraform_apply" {
   role       = aws_iam_role.terraform_apply.name
   policy_arn = "arn:aws:iam::aws:policy/PowerUserAccess"
+}
+
+# Terraform owns IAM roles/policies (task roles, GitHub OIDC provider), which
+# PowerUserAccess deliberately excludes. This custom policy grants only the
+# project-prefixed IAM objects plus the GitHub OIDC provider — not account-wide
+# IAM. The apply role is still behind the protected GitHub environment.
+resource "aws_iam_policy" "terraform_apply_iam" {
+  name        = "${var.name_prefix}-github-terraform-apply-iam"
+  description = "Create/refresh OpenVault IAM roles, policies, instance profiles and the GitHub OIDC provider."
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "ProjectIamObjects"
+        Effect = "Allow"
+        Action = [
+          "iam:CreateRole", "iam:DeleteRole", "iam:GetRole", "iam:UpdateRole",
+          "iam:UpdateAssumeRolePolicy", "iam:TagRole", "iam:UntagRole",
+          "iam:ListRolePolicies", "iam:ListAttachedRolePolicies",
+          "iam:ListInstanceProfilesForRole", "iam:PutRolePolicy",
+          "iam:GetRolePolicy", "iam:DeleteRolePolicy", "iam:AttachRolePolicy",
+          "iam:DetachRolePolicy",
+          "iam:CreatePolicy", "iam:DeletePolicy", "iam:GetPolicy",
+          "iam:GetPolicyVersion", "iam:CreatePolicyVersion",
+          "iam:DeletePolicyVersion", "iam:ListPolicyVersions",
+          "iam:TagPolicy", "iam:UntagPolicy",
+          "iam:CreateInstanceProfile", "iam:DeleteInstanceProfile",
+          "iam:GetInstanceProfile", "iam:AddRoleToInstanceProfile",
+          "iam:RemoveRoleFromInstanceProfile", "iam:TagInstanceProfile",
+          "iam:UntagInstanceProfile",
+          "iam:CreateOpenIDConnectProvider", "iam:DeleteOpenIDConnectProvider",
+          "iam:GetOpenIDConnectProvider",
+          "iam:UpdateOpenIDConnectProviderThumbprint",
+          "iam:TagOpenIDConnectProvider", "iam:UntagOpenIDConnectProvider",
+        ]
+        Resource = [
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.name_prefix}-*",
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${var.name_prefix}-*",
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${var.name_prefix}-*",
+          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com",
+        ]
+      },
+      {
+        Sid      = "ListOidcProviders"
+        Effect   = "Allow"
+        Action   = ["iam:ListOpenIDConnectProviders", "iam:ListOpenIDConnectProviderTags"]
+        Resource = "*"
+      },
+      {
+        Sid      = "ProjectPassRole"
+        Effect   = "Allow"
+        Action   = ["iam:PassRole"]
+        Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.name_prefix}-*"
+      },
+      {
+        Sid    = "ServiceLinkedRoles"
+        Effect = "Allow"
+        Action = ["iam:CreateServiceLinkedRole", "iam:DeleteServiceLinkedRole"]
+        Resource = "*"
+        Condition = {
+          StringLike = {
+            "iam:AWSServiceName" = [
+              "ecs.amazonaws.com",
+              "autoscaling.amazonaws.com",
+              "elasticloadbalancing.amazonaws.com",
+              "rds.amazonaws.com",
+              "elasticache.amazonaws.com",
+            ]
+          }
+        }
+      },
+    ]
+  })
+
+  tags = local.common_tags
+}
+
+resource "aws_iam_role_policy_attachment" "terraform_apply_iam" {
+  role       = aws_iam_role.terraform_apply.name
+  policy_arn = aws_iam_policy.terraform_apply_iam.arn
 }

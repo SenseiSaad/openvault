@@ -25,6 +25,7 @@ variable "oidc_allowed_subjects" {
   type        = list(string)
   default = [
     "repo:REPLACE_ME/openvault:ref:refs/heads/main",
+    "repo:REPLACE_ME/openvault:pull_request",
     "repo:REPLACE_ME/openvault:ref:refs/tags/v*",
     "repo:REPLACE_ME/openvault:environment:production",
     "repo:REPLACE_ME/openvault:environment:staging",

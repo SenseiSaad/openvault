@@ -1,0 +1,52 @@
+name: Terraform apply
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment (production requires approval)"
+        required: true
+        type: choice
+        options: [staging, production]
+
+concurrency:
+  group: terraform-apply-${{ inputs.environment }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  apply:
+    name: Apply ${{ inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_DIR: ${{ inputs.environment == 'production' && 'prod' || 'staging' }}
+      TF_VAR_domain: ${{ inputs.environment == 'production' && vars.DOMAIN_PROD || vars.DOMAIN_STAGING }}
+      TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
+      TF_VAR_bedrock_model_arns: ${{ vars.BEDROCK_MODEL_ARNS }}
+      TF_VAR_oidc_allowed_subjects: ${{ vars.OIDC_ALLOWED_SUBJECTS }}
+      TF_VAR_initial_image_tag: ${{ vars.INITIAL_IMAGE_TAG || 'bootstrap' }}
+    defaults:
+      run:
+        working-directory: infra/envs/${{ env.TF_DIR }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: "1.9.8"
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_APPLY_ROLE_ARN }}
+          role-session-name: openvault-apply-${{ inputs.environment }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-south-1' }}
+      - name: Init
+        run: terraform init -input=false -no-color
+      - name: Plan saved output
+        run: terraform plan -input=false -no-color -lock-timeout=5m -out=tfplan
+      - name: Apply saved plan
+        run: terraform apply -input=false -no-color -lock-timeout=5m tfplan
