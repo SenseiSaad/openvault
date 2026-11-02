@@ -1,92 +1,51 @@
-# Production checklist
+# Production checklist (new AWS stack)
 
-Single canonical deployment: **AWS EC2 (ap-south-1) + `docker-compose.prod.yml`**
-(Caddy TLS · gunicorn api · Celery worker · PostgreSQL · Redis), documents in
-S3. Copy `.env.production.example` → `.env.production`, fill EVERY value below,
-then run `sudo ./deploy/deploy.sh`. No secret values belong in this file or in
-git.
+This is a short index. The full procedure is [`DEPLOY.md`](DEPLOY.md); the
+architecture is [`ARCHITECTURE.md`](ARCHITECTURE.md). The old EC2/Compose
+checklist is superseded for the `infra/` stack; the live site is unchanged.
 
-## 1. Required secrets (no defaults — generate before first deploy)
+## Before the first apply
 
-| Variable | What it is | How to generate |
-|---|---|---|
-| `DOMAIN` | Public hostname Caddy serves TLS for | your DNS A record |
-| `SECRET_KEY` | Django signing key (JWT cookies, admin sessions) | `python -c "import secrets; print(secrets.token_urlsafe(50))"` — **back it up**; rotation invalidates sessions |
-| `LLM_KEY_ENCRYPTION_KEY` | Fernet key for tenant LLM API keys at rest | same generator — **back it up separately**; losing it loses stored BYO keys |
-| `POSTGRES_PASSWORD` | Database password | same generator |
-| `BOOTSTRAP_PLATFORM_ADMIN_EMAIL` / `_PASSWORD` | First root admin (no company, all-tenant) | strong password; **enroll TOTP on first login — the API forces it** |
-| `BEDROCK_API_KEY` (or none) | Bedrock bearer token — omit entirely on EC2 and let the IAM instance role authenticate (preferred) | IAM role, not a key |
+- [ ] AWS account and region `ap-south-1` confirmed; billing alarms enabled.
+- [ ] A **new** subdomain chosen (e.g. `v2.example.com`), parent DNS access.
+- [ ] Bedrock Claude Haiku 4.5 model access + `in.` inference-profile ARN;
+      Titan embedding model ARN; `EMBED_DIM` checked.
+- [ ] SES domain identity verified and **production access** requested; SMTP
+      user credentials created.
+- [ ] Alert email ready to confirm the SNS subscription.
+- [ ] `terraform.tfvars` filled from the example (never committed).
+- [ ] State bucket name is globally unique; backend config updated if not.
 
-## 2. AI provider
+## First apply and secrets
 
-| Variable | Notes |
-|---|---|
-| `LLM_PROVIDER` | `bedrock` (default, India inference profile) or `gemini` for lower cost on Free/Starter. `fake` is refused at production boot. |
-| `BEDROCK_REGION` / `BEDROCK_MODEL` / `BEDROCK_EMBED_MODEL` | `ap-south-1` / `in.anthropic.claude-haiku-4-5-…` / `amazon.titan-embed-text-v2:0` |
-| `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY` | only if that provider is the platform default or tenants BYO via UI (encrypted at rest) |
-| `EMBED_PROVIDER`, `EMBED_DIM` | must match the chat provider's embedder; **changing either requires `manage.py reindex_embeddings`** |
+- [ ] `infra/bootstrap` applied; state bucket + lock table exist.
+- [ ] Zone created/delegated, `dig NS` shows Route 53, ACM validated.
+- [ ] Full prod/staging apply succeeds; ECS services may be unhealthy until an
+      image exists.
+- [ ] RDS endpoint + managed password assembled into `DATABASE_URL`
+      (`sslmode=require`).
+- [ ] `scripts/check_env.sh` passes; `scripts/push_env_to_ssm.sh` pushes
+      `/openvault/<env>/*` SecureStrings.
+- [ ] Bootstrap `bootstrap` image pushed; first deploy runs migrations and
+      services become healthy.
+- [ ] `check_bedrock` succeeds from an API task.
+- [ ] SNS email subscription confirmed; budget recipients confirmed.
 
-## 3. Database / cache / queue
+## Delivery and operations
 
-| Variable | Notes |
-|---|---|
-| `POSTGRES_DB/USER/PASSWORD/HOST` | compose defaults to the `db` service; for RDS set `DATABASE_URL` instead |
-| `CACHE_URL` | `redis://redis:6379/1` (rate limits + counters) |
-| `CELERY_BROKER_URL` | `redis://redis:6379/0` (indexing + beat jobs) — the `worker` service must be running |
-
-## 4. Email (SES via SMTP)
-
-| Variable | Notes |
-|---|---|
-| `EMAIL_BACKEND` | `django.core.mail.backends.smtp.EmailBackend` |
-| `EMAIL_HOST` / `EMAIL_PORT` | `email-smtp.ap-south-1.amazonaws.com` / `587` |
-| `EMAIL_USE_TLS` or `EMAIL_USE_SSL` | TLS for 587, SSL for 465 — exactly one true |
-| `EMAIL_HOST_USER` / `EMAIL_HOST_PASSWORD` | SES SMTP credentials (IAM, not root keys) |
-| `DEFAULT_FROM_EMAIL` | an identity VERIFIED in SES (`no-reply@yourdomain`) |
-| `REQUIRE_EMAIL_VERIFICATION` | `true` once SMTP works |
-
-SES setup: verify the domain (SPF/DKIM records), request **production access**
-(sandbox blocks real recipients), monitor bounce/complaint rates.
-
-## 5. Storage (S3)
-
-| Variable | Notes |
-|---|---|
-| `AWS_STORAGE_BUCKET_NAME` | enables S3 document storage + presigned uploads |
-| `AWS_S3_REGION_NAME` | `ap-south-1` |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | only needed OFF AWS; on EC2 prefer the instance role (leave blank) |
-| Bucket settings | Block Public Access ON, default encryption SSE-S3, versioning ON (deletion recovery), lifecycle: expire `forms/` after 90d |
-
-## 6. Networking / headers
-
-| Variable | Notes |
-|---|---|
-| `TRUSTED_PROXY_COUNT` | `1` (Caddy on this host). Set to the real proxy count — wrong value breaks rate-limit identity and audit IPs |
-| `ALLOWED_HOSTS` | explicit hostnames only; production boot refuses `*` |
-| `CORS_ALLOWED_ORIGINS` / `CSRF_TRUSTED_ORIGINS` | exact frontend origin(s), https |
-| `PUBLIC_BASE_URL` | used in emailed links and QR targets — must be the real https origin |
-| `COOKIE_SECURE` | `true`; boot refuses insecure cookies with `ENVIRONMENT=production` unless `ALLOW_INSECURE_HTTP=true` (dev only) |
-
-## 7. Observability / operations
-
-| Variable | Notes |
-|---|---|
-| `SENTRY_DSN` | Sentry project DSN (errors + perf traces) |
-| `LOG_FORMAT=json`, `LOG_LEVEL=INFO` | structured logs with request IDs |
-| Backup cron | `30 3 * * *` → `scripts/backup.sh` with `DATABASE_URL` + `BACKUP_S3_BUCKET`; alert on failure (`docs/runbooks/alerts.md` rule 2) |
-| `check_embeddings` cron | nightly; non-zero exit = embedding degradation |
-| Budgets | AWS Budgets alarms at $20/$35/$50 |
-
-## 8. First-deploy order
-
-1. DNS A record → EC2 public IP; security group: 80/443 in, SSH from your IP.
-2. `cp .env.production.example .env.production`; fill sections 1–7.
-3. `sudo ./deploy/deploy.sh` (build → migrate one-shot → up → health verify).
-4. `docker compose -f docker-compose.prod.yml exec api python manage.py
-   create_platform_admin "$BOOTSTRAP_PLATFORM_ADMIN_EMAIL"` (or rely on the
-   bootstrap in the migrate step), log in, **complete TOTP enrollment**.
-5. Verify: `/api/health` `{"status":"ok","db":true,"storage":true}`; register a
-   test company; upload a PDF; ask one question; check Sentry receives a test
-   event; confirm tonight's backup cron will fire.
-6. Monthly: restore drill per `docs/runbooks/restore.md` (update the table
-   there with the date + duration).
+- [ ] `scripts/setup_github.sh` created staging/production environments
+      (production requires review), protected `main`, protected `v*` tags.
+- [ ] Repository variables set (`AWS_BUILD_ROLE_ARN`, deploy/plan/apply roles,
+      domains, ECR, Bedrock ARNs, OIDC subjects).
+- [ ] Environment secrets `SMOKE_TEST_EMAIL`/`SMOKE_TEST_PASSWORD` set.
+- [ ] CI green: backend tests/coverage, frontend tests/build, Docker + Trivy,
+      gitleaks, Terraform checks.
+- [ ] Staging deploy green; production deploy approved and smoke-tested.
+- [ ] Rollback drill performed at least once (staging is enough).
+- [ ] Nightly backup task succeeds and a new object appears in S3.
+- [ ] At least one real restore drill timed; record RTO in
+      `runbooks/restore.md`.
+- [ ] Every alarm tested once; external uptime/TLS checks configured.
+- [ ] Bedrock token/cost alarms tested with a synthetic low threshold.
+- [ ] Rotate/revoke the historical `backend/.env` secret found in old commits;
+      decide whether to purge history before selling/making public again.

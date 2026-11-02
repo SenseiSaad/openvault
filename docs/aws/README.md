@@ -1,5 +1,11 @@
 # OpenVault AWS services and AWS-native alternative
 
+> **LEGACY / LIVE SITE.** This file describes the old Amplify + Render live
+> deployment. The new `infra/` stack is documented in
+> [`docs/ARCHITECTURE.md`](../ARCHITECTURE.md) and
+> [`docs/DEPLOY.md`](../DEPLOY.md). Do not use the instructions below to deploy
+> the new stack, and do not modify the live site while testing it.
+
 > **Current deployment choice:** AWS Amplify serves the statically exported
 > frontend; Render hosts the Django API, PostgreSQL, and persistent document
 > disk in Oregon (US West); Amazon Bedrock provides the default model inference
@@ -244,4 +250,3 @@ Calculator](https://calculator.aws/) and the current [Fargate](https://aws.amazo
 ## Related docs
 
 - [Bedrock keys, IAM, and model setup](./bedrock.md)
-- [AWS Activate application draft](./activate-application.md)

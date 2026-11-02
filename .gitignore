@@ -54,6 +54,8 @@ backups/
 # Terraform
 .terraform/
 infra/modules/**/.terraform.lock.hcl
+*.tfvars
+!*.tfvars.example
 *.tfstate
 *.tfstate.*
 *.tfplan

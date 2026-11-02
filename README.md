@@ -177,6 +177,18 @@ cd ..
 
 ---
 
+## New AWS production infrastructure (`infra/` branch)
+
+The new stack is **ECS Fargate + RDS PostgreSQL/pgvector + ElastiCache + S3** in
+`ap-south-1`, behind one ALB on a **new subdomain**. It does not modify the live
+Amplify/Render site. See:
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- [`docs/DEPLOY.md`](docs/DEPLOY.md)
+- [`docs/COST.md`](docs/COST.md)
+- [`docs/runbooks/`](docs/runbooks/)
+- [`docs/INTERVIEW_NOTES.md`](docs/INTERVIEW_NOTES.md)
+
 ## Deploying to Vercel (Frontend + Backend)
 
 OpenVault is configured so both `backend/` and `frontend/` can be deployed directly to Vercel from this GitHub repository while keeping PostgreSQL on Render (and AWS Amplify active for the frontend until you cut over).
@@ -189,7 +201,7 @@ OpenVault is configured so both `backend/` and `frontend/` can be deployed direc
 ### 2. Deploy the Backend to Vercel
 1. In the Vercel Dashboard, click **Add New → Project** and import this GitHub repository.
 2. Set **Root Directory** to `backend`.
-3. Paste the backend environment variables from [`.env.vercel.example`](.env.vercel.example) into **Settings → Environment Variables**:
+3. Paste the backend environment variables from [`.env.vercel.example`](docs/retired/env.vercel.example) into **Settings → Environment Variables**:
    - `DATABASE_URL`, `SECRET_KEY`, `LLM_KEY_ENCRYPTION_KEY` (reuse your existing Render keys so sessions and encrypted LLM keys remain valid).
    - `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, `PUBLIC_BASE_URL`.
    - `AWS_STORAGE_BUCKET_NAME`, `AWS_S3_REGION_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (for persistent document storage on S3).
