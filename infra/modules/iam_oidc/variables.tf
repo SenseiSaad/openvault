@@ -3,8 +3,28 @@ variable "name_prefix" {
   type        = string
 }
 
+variable "create_oidc_provider" {
+  description = "Create the account-global GitHub OIDC provider (only one environment should)."
+  type        = bool
+  default     = true
+}
+
+variable "oidc_provider_arn" {
+  description = "Existing account-global GitHub OIDC provider ARN when create_oidc_provider=false."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = var.create_oidc_provider || can(regex(
+      "^arn:aws:iam::[0-9]{12}:oidc-provider/token.actions.githubusercontent.com$",
+      var.oidc_provider_arn,
+    ))
+    error_message = "oidc_provider_arn must identify the shared GitHub provider when create_oidc_provider is false."
+  }
+}
+
 variable "allowed_subjects" {
-  description = "Full OIDC subject patterns allowed to assume these roles. Example: ['repo:me/openvault:ref:refs/heads/main', 'repo:me/openvault:ref:refs/tags/v*', 'repo:me/openvault:environment:production']"
+  description = "Subject patterns from which this module filters role-specific GitHub OIDC trust (main, pull_request, environment subjects)."
   type        = list(string)
 }
 

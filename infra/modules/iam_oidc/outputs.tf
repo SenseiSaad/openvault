@@ -17,3 +17,8 @@ output "build_role_arn" {
   description = "Push-only role assumed by the deploy workflow build job."
   value       = aws_iam_role.build.arn
 }
+
+output "oidc_provider_arn" {
+  description = "The account-global GitHub OIDC provider shared by environments."
+  value       = local.github_oidc_provider_arn
+}

@@ -48,6 +48,11 @@ output "build_role_arn" {
   value       = module.iam_oidc.build_role_arn
 }
 
+output "oidc_provider_arn" {
+  description = "Account-global GitHub OIDC provider shared by prod and staging."
+  value       = module.iam_oidc.oidc_provider_arn
+}
+
 output "deploy_role_arn" {
   description = "OIDC role for the deploy workflow."
   value       = module.iam_oidc.deploy_role_arn

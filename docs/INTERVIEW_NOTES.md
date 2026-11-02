@@ -72,9 +72,9 @@ access or the ARN is wrong.
 OIDC, no static keys. Four roles: build (ECR push only), deploy (ECS/update,
 logs, SSM read, retarget nightly backup), plan (read-only), apply (PowerUser +
 project-scoped IAM). The apply role sits behind a required-reviewer `production`
-environment. The trust policy is restricted to this repository and specific
-subjects (`main`, `pull_request`, `environment:staging`,
-`environment:production`, tags). The build job pushes the same immutable SHA to
+environment. Each role trusts only its own context: build=`main`,
+plan=`pull_request`, deploy/apply=the matching `environment:` subject. The
+trust policy is restricted to this repository. The build job pushes the same immutable SHA to
 both environment repositories.
 
 ## What happens when a deploy is bad?

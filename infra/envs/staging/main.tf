@@ -178,9 +178,11 @@ module "observability" {
 module "iam_oidc" {
   source = "../../modules/iam_oidc"
 
-  name_prefix      = local.name_prefix
-  allowed_subjects = var.oidc_allowed_subjects
-  tags             = local.tags
+  name_prefix          = local.name_prefix
+  allowed_subjects     = var.oidc_allowed_subjects
+  create_oidc_provider = false
+  oidc_provider_arn    = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com"
+  tags                 = local.tags
 }
 
 module "model_host" {

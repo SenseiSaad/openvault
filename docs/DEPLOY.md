@@ -69,8 +69,10 @@ subdomain is delegated. Either:
 * or run the full apply and paste the NS records while ACM validation is
   waiting (the apply will pause; do not cancel it).
 
-Do the same for staging with a separate subdomain. Staging is intentionally
-cheap/destroyable; see `infra/envs/staging/main.tf`.
+Apply **production first**: it owns the account-global GitHub OIDC provider.
+Then do the same for staging with a separate subdomain; staging references the
+existing provider and does not try to create a duplicate. Staging is
+intentionally cheap/destroyable; see `infra/envs/staging/main.tf`.
 
 If the first apply creates ECS services before any image exists, the services
 will be unhealthy but the apply still succeeds. Push the bootstrap image
@@ -163,7 +165,7 @@ PUBLIC_BASE_URL="https://v2.example.com" \
    Variables). Required names:
    `AWS_REGION`, `AWS_BUILD_ROLE_ARN`, `AWS_DEPLOY_ROLE_ARN`,
    `AWS_DEPLOY_ROLE_ARN_STAGING`, `AWS_TERRAFORM_PLAN_ROLE_ARN`,
-   `AWS_TERRAFORM_APPLY_ROLE_ARN`, `DOMAIN_PROD`, `DOMAIN_STAGING`,
+   `AWS_TERRAFORM_APPLY_ROLE_ARN`, `AWS_TERRAFORM_APPLY_ROLE_ARN_STAGING`, `DOMAIN_PROD`, `DOMAIN_STAGING`,
    `ALERT_EMAIL`, `PUBLIC_BASE_URL_PROD`, `PUBLIC_BASE_URL_STAGING`,
    `ECS_CLUSTER_STAGING`, `ECR_REGISTRY`, `BEDROCK_MODEL_ARNS`,
    `OIDC_ALLOWED_SUBJECTS`, `DMARC_RECORD` (optional).
@@ -178,6 +180,7 @@ PUBLIC_BASE_URL="https://v2.example.com" \
    terraform -chdir=infra/envs/prod output deploy_role_arn
    terraform -chdir=infra/envs/prod output terraform_plan_role_arn
    terraform -chdir=infra/envs/prod output terraform_apply_role_arn
+   terraform -chdir=infra/envs/staging output terraform_apply_role_arn
    ```
 
 The build role can push only ECR images. The deploy role can update ECS, read

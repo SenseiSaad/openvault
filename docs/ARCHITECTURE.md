@@ -121,9 +121,11 @@ expose a public port; only the ALB talks to `web`.
 ## 6. Security model
 
 * **No static AWS keys in GitHub.** OIDC trust is restricted to the repository
-  and specific subjects. Four roles: `github-build` (ECR push only),
-  `github-deploy` (ECS update + ECR + logs + backup target), `github-terraform-plan`
-  (read-only), `github-terraform-apply` (PowerUser + project-scoped IAM, behind a
+  and each role trusts only its own context: build = `main`, plan =
+  `pull_request`, deploy/apply = the matching `environment:` subject. Four
+  roles: `github-build` (ECR push only), `github-deploy` (ECS update + ECR +
+  logs + backup target), `github-terraform-plan` (read-only), and
+  `github-terraform-apply` (PowerUser + project-scoped IAM, behind a
   required-reviewer environment).
 * **Bedrock:** the ECS task role is the only credential. The IAM policy allows
   `bedrock:InvokeModel` and `InvokeModelWithResponseStream` only on the

@@ -1,5 +1,6 @@
-# GitHub OIDC: no static AWS keys anywhere. Two roles with distinct blast
-# radius, trust limited to ONE repo and specific refs/environments.
+# GitHub OIDC: no static AWS keys anywhere. Four roles with distinct blast
+# radius. Each role trusts only the ref/environment it actually runs from:
+# build = main, deploy/apply = this environment, plan = pull_request.
 terraform {
   required_version = ">= 1.9.0"
   required_providers {
@@ -17,43 +18,61 @@ locals {
     "6938fd4d98bab03faadb97b34396831e3780aea1",
     "1c58a8aefa6054556c9ea8c9a25fe42c1e0a0f2c",
   ]
+
+  # Filter ONE user-supplied subject list per role. This prevents a
+  # pull_request token (or a staging environment token) from assuming the
+  # production apply role, even though all subjects live in one variable.
+  env_subject_suffix       = var.name_prefix == "openvault-prod" ? ":environment:production" : ":environment:staging"
+  build_subjects           = [for s in var.allowed_subjects : s if endswith(s, ":ref:refs/heads/main")]
+  deploy_subjects          = [for s in var.allowed_subjects : s if endswith(s, local.env_subject_suffix)]
+  plan_subjects            = [for s in var.allowed_subjects : s if endswith(s, ":pull_request")]
+  apply_subjects           = [for s in var.allowed_subjects : s if endswith(s, local.env_subject_suffix)]
+  github_oidc_provider_arn = var.create_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : var.oidc_provider_arn
+  managed_oidc_provider    = var.create_oidc_provider ? [local.github_oidc_provider_arn] : []
+
+  oidc_trust = {
+    for role, subjects in {
+      build  = local.build_subjects
+      deploy = local.deploy_subjects
+      plan   = local.plan_subjects
+      apply  = local.apply_subjects
+      } : role => jsonencode({
+        Version = "2012-10-17"
+        Statement = [{
+          Effect    = "Allow"
+          Action    = "sts:AssumeRoleWithWebIdentity"
+          Principal = { Federated = local.github_oidc_provider_arn }
+          Condition = {
+            StringEquals = {
+              "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+            }
+            StringLike = {
+              "token.actions.githubusercontent.com:sub" = subjects
+            }
+          }
+        }]
+    })
+  }
 }
 
 resource "aws_iam_openid_connect_provider" "github" {
+  count           = var.create_oidc_provider ? 1 : 0
   url             = "https://token.actions.githubusercontent.com"
   client_id_list  = ["sts.amazonaws.com"]
   thumbprint_list = local.thumbprints
+
+  lifecycle {
+    prevent_destroy = true
+  }
 
   tags = local.common_tags
 }
 
 data "aws_caller_identity" "current" {}
 
-data "aws_iam_policy_document" "deploy_trust" {
-  statement {
-    actions = ["sts:AssumeRoleWithWebIdentity"]
-    principals {
-      type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "token.actions.githubusercontent.com:aud"
-      values   = ["sts.amazonaws.com"]
-    }
-
-    condition {
-      test     = "StringLike"
-      variable = "token.actions.githubusercontent.com:sub"
-      values   = var.allowed_subjects
-    }
-  }
-}
-
 resource "aws_iam_role" "deploy" {
   name                 = "${var.name_prefix}-github-deploy"
-  assume_role_policy   = data.aws_iam_policy_document.deploy_trust.json
+  assume_role_policy   = local.oidc_trust["deploy"]
   max_session_duration = 3600
 
   tags = local.common_tags
@@ -148,7 +167,7 @@ resource "aws_iam_role_policy" "deploy" {
 # It has no ECS, SSM, or Terraform permissions.
 resource "aws_iam_role" "build" {
   name                 = "${var.name_prefix}-github-build"
-  assume_role_policy   = data.aws_iam_policy_document.deploy_trust.json
+  assume_role_policy   = local.oidc_trust["build"]
   max_session_duration = 3600
 
   tags = local.common_tags
@@ -186,7 +205,7 @@ resource "aws_iam_role_policy" "build" {
 
 resource "aws_iam_role" "terraform_plan" {
   name               = "${var.name_prefix}-github-terraform-plan"
-  assume_role_policy = data.aws_iam_policy_document.deploy_trust.json
+  assume_role_policy = local.oidc_trust["plan"]
 
   tags = local.common_tags
 }
@@ -217,7 +236,7 @@ resource "aws_iam_role_policy" "terraform_plan_read" {
 
 resource "aws_iam_role" "terraform_apply" {
   name               = "${var.name_prefix}-github-terraform-apply"
-  assume_role_policy = data.aws_iam_policy_document.deploy_trust.json
+  assume_role_policy = local.oidc_trust["apply"]
 
   tags = local.common_tags
 }
@@ -265,12 +284,14 @@ resource "aws_iam_policy" "terraform_apply_iam" {
           "iam:UpdateOpenIDConnectProviderThumbprint",
           "iam:TagOpenIDConnectProvider", "iam:UntagOpenIDConnectProvider",
         ]
-        Resource = [
-          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.name_prefix}-*",
-          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${var.name_prefix}-*",
-          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${var.name_prefix}-*",
-          "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com",
-        ]
+        Resource = concat(
+          [
+            "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.name_prefix}-*",
+            "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${var.name_prefix}-*",
+            "arn:aws:iam::${data.aws_caller_identity.current.account_id}:instance-profile/${var.name_prefix}-*",
+          ],
+          local.managed_oidc_provider,
+        )
       },
       {
         Sid      = "ListOidcProviders"

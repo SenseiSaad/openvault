@@ -94,6 +94,7 @@ Next, set these repository variables (Settings -> Secrets and variables -> Actio
   AWS_DEPLOY_ROLE_ARN_STAGING=arn:aws:iam::<account>:role/openvault-stg-github-deploy
   AWS_TERRAFORM_PLAN_ROLE_ARN=arn:aws:iam::<account>:role/openvault-prod-github-terraform-plan
   AWS_TERRAFORM_APPLY_ROLE_ARN=arn:aws:iam::<account>:role/openvault-prod-github-terraform-apply
+  AWS_TERRAFORM_APPLY_ROLE_ARN_STAGING=arn:aws:iam::<account>:role/openvault-stg-github-terraform-apply
   DOMAIN_PROD=<new-subdomain>.example.com
   DOMAIN_STAGING=<new-staging-subdomain>.example.com
   ALERT_EMAIL=<you@example.com>
