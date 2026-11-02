@@ -35,6 +35,7 @@ jobs:
       TF_VAR_bedrock_model_arns: ${{ vars.BEDROCK_MODEL_ARNS }}
       TF_VAR_oidc_allowed_subjects: ${{ vars.OIDC_ALLOWED_SUBJECTS }}
       TF_VAR_initial_image_tag: ${{ vars.INITIAL_IMAGE_TAG || 'bootstrap' }}
+      TF_VAR_dmarc_record: ${{ vars.DMARC_RECORD || 'v=DMARC1; p=none' }}
     defaults:
       run:
         working-directory: infra/envs/${{ matrix.dir }}

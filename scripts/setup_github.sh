@@ -79,6 +79,7 @@ Next, set these repository variables (Settings -> Secrets and variables -> Actio
 -> Variables). Values are examples; replace the role ARNs and domains.
 
   AWS_REGION=ap-south-1
+  AWS_BUILD_ROLE_ARN=arn:aws:iam::<account>:role/openvault-prod-github-build
   AWS_DEPLOY_ROLE_ARN=arn:aws:iam::<account>:role/openvault-prod-github-deploy
   AWS_DEPLOY_ROLE_ARN_STAGING=arn:aws:iam::<account>:role/openvault-stg-github-deploy
   AWS_TERRAFORM_PLAN_ROLE_ARN=arn:aws:iam::<account>:role/openvault-prod-github-terraform-plan
@@ -91,6 +92,7 @@ Next, set these repository variables (Settings -> Secrets and variables -> Actio
   ECS_CLUSTER_STAGING=openvault-stg-cluster
   ECR_REGISTRY=<account>.dkr.ecr.ap-south-1.amazonaws.com
   BEDROCK_MODEL_ARNS=["arn:aws:bedrock:ap-south-1:<account>:inference-profile/in.anthropic.claude-haiku-4-5-20251001-v1:0"]
+  DMARC_RECORD=v=DMARC1; p=none; rua=mailto:postmaster@<new-subdomain>.example.com
   OIDC_ALLOWED_SUBJECTS=["repo:<owner>/<repo>:ref:refs/heads/main","repo:<owner>/<repo>:pull_request","repo:<owner>/<repo>:environment:staging","repo:<owner>/<repo>:environment:production"]
 
 Environment secrets (staging and production separately):

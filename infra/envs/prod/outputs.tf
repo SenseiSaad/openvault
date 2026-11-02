@@ -43,6 +43,11 @@ output "task_definition_families" {
   value       = module.ecs.task_definition_families
 }
 
+output "build_role_arn" {
+  description = "OIDC role for the image build/push job."
+  value       = module.iam_oidc.build_role_arn
+}
+
 output "deploy_role_arn" {
   description = "OIDC role for the deploy workflow."
   value       = module.iam_oidc.deploy_role_arn

@@ -12,3 +12,8 @@ output "terraform_apply_role_arn" {
   description = "Role assumed by the manual terraform-apply workflow (protected environment)."
   value       = aws_iam_role.terraform_apply.arn
 }
+
+output "build_role_arn" {
+  description = "Push-only role assumed by the deploy workflow build job."
+  value       = aws_iam_role.build.arn
+}

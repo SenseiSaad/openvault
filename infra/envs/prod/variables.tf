@@ -80,7 +80,7 @@ variable "budget_alarm_thresholds" {
 variable "dmarc_record" {
   description = "DMARC TXT record value."
   type        = string
-  default     = "v=DMARC1; p=none; rua=mailto:postmaster@openvault.pk"
+  default     = "v=DMARC1; p=none"
 }
 
 variable "enable_model_host" {

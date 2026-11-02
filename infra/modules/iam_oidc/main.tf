@@ -100,6 +100,17 @@ data "aws_iam_policy_document" "deploy_permissions" {
   }
 
   statement {
+    sid    = "NightlyBackupTarget"
+    effect = "Allow"
+    actions = [
+      "events:DescribeRule",
+      "events:ListTargetsByRule",
+      "events:PutTargets",
+    ]
+    resources = ["arn:aws:events:*:${data.aws_caller_identity.current.account_id}:rule/${var.name_prefix}-*"]
+  }
+
+  statement {
     sid    = "PassTaskRoles"
     effect = "Allow"
     actions = [
@@ -133,6 +144,46 @@ resource "aws_iam_role_policy" "deploy" {
   policy = data.aws_iam_policy_document.deploy_permissions.json
 }
 
+# Build-only role: pulls/pushes SHA-tagged images to both environment repos.
+# It has no ECS, SSM, or Terraform permissions.
+resource "aws_iam_role" "build" {
+  name                 = "${var.name_prefix}-github-build"
+  assume_role_policy   = data.aws_iam_policy_document.deploy_trust.json
+  max_session_duration = 3600
+
+  tags = local.common_tags
+}
+
+data "aws_iam_policy_document" "build_permissions" {
+  statement {
+    sid       = "ECRLogin"
+    effect    = "Allow"
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "ECRPushBothEnvs"
+    effect = "Allow"
+    actions = [
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:CompleteLayerUpload",
+      "ecr:InitiateLayerUpload",
+      "ecr:PutImage",
+      "ecr:UploadLayerPart",
+      "ecr:BatchGetImage",
+      "ecr:GetDownloadUrlForLayer",
+    ]
+    resources = ["arn:aws:ecr:*:${data.aws_caller_identity.current.account_id}:repository/openvault-*"]
+  }
+}
+
+resource "aws_iam_role_policy" "build" {
+  name   = "github-build-permissions"
+  role   = aws_iam_role.build.id
+  policy = data.aws_iam_policy_document.build_permissions.json
+}
+
 resource "aws_iam_role" "terraform_plan" {
   name               = "${var.name_prefix}-github-terraform-plan"
   assume_role_policy = data.aws_iam_policy_document.deploy_trust.json
@@ -147,7 +198,7 @@ resource "aws_iam_role_policy" "terraform_plan_read" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect   = "Allow"
+      Effect = "Allow"
       Action = [
         "ec2:Describe*", "elasticloadbalancing:Describe*", "acm:Describe*",
         "acm:List*", "application-autoscaling:Describe*", "logs:Describe*",
@@ -234,9 +285,9 @@ resource "aws_iam_policy" "terraform_apply_iam" {
         Resource = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/${var.name_prefix}-*"
       },
       {
-        Sid    = "ServiceLinkedRoles"
-        Effect = "Allow"
-        Action = ["iam:CreateServiceLinkedRole", "iam:DeleteServiceLinkedRole"]
+        Sid      = "ServiceLinkedRoles"
+        Effect   = "Allow"
+        Action   = ["iam:CreateServiceLinkedRole", "iam:DeleteServiceLinkedRole"]
         Resource = "*"
         Condition = {
           StringLike = {
