@@ -237,7 +237,7 @@ locals {
     name        = "migrate"
     image       = var.api_image
     essential   = true
-    command     = ["sh", "-c", "python manage.py migrate --noinput && python manage.py seed_plans && python manage.py bootstrap_platform_admin || echo 'bootstrap skipped (env not set)'"]
+    command     = ["python", "manage.py", "migrate", "--noinput"]
     environment = [for k, v in local.app_container_env : { name = k, value = v }]
     secrets     = [for s in var.app_secrets : { name = s.name, valueFrom = s.ssm_arn }]
     logConfiguration = {

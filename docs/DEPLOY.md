@@ -53,9 +53,11 @@ cp .env.production.example .env.production
 $EDITOR .env.production
 ```
 
-During preflight, `DATABASE_URL` may remain blank; after RDS is created, supply
-the endpoint and managed password, then run runtime validation and push the
-values to SSM SecureString. The checker prints parameter names only.
+During preflight, `DATABASE_URL` may remain blank. After RDS is created,
+`bootstrap.sh` reads the AWS-managed RDS password without printing it, writes a
+URL-encoded PostgreSQL URL to the ignored `.env.production`, validates it, and
+pushes the secrets to SSM SecureString. The checker prints parameter names
+only.
 
 ## Fresh deployment sequence
 
@@ -70,12 +72,18 @@ The entry point runs and stops on the first failure:
 2. `configure` — generates ignored per-environment tfvars/backend config from
    `deploy.config`.
 3. `bootstrap-infra` — creates the remote state/locking and shared OIDC
-   bootstrap resources, then staging's base network/data/registry.
+   bootstrap resources, creates the staging Route 53 zone, then pauses while
+   you delegate its printed NS records at the parent DNS provider. After you
+   confirm delegation, it creates staging's base network/data/ECR and zero-count
+   ECS services/task definitions. ACM may take several minutes after delegation.
 4. `first-image-push` — pushes the initial API and web images after ECR exists.
-5. `apply` — adds/starts staging ECS services after the images exist.
+5. `apply` — updates the service/task definitions while desired counts remain
+   zero, so the one-off migration runs against the new image before serving
+   tasks start.
 6. `migrate` — runs migrations in a one-off ECS task.
-7. `seed` — seeds plans and interactively creates the first platform admin;
-   MFA enrollment is completed in the browser before setup is marked complete.
+7. `seed` — seeds plans and interactively creates the first platform admin,
+   then applies `services_enabled=true` and waits for ECS stability. MFA
+   enrollment is completed in the browser before the smoke test.
 8. `smoke-test` — checks staging signup/verification bypass, login, upload,
    cited AI answer, and logout.
 

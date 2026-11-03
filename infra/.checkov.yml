@@ -30,6 +30,10 @@ skip-check:
   - CKV2_AWS_28   # S3 event notifications variant
   # Data-source pinning: AZ set is pinned by subnet count, not by the data source
   - CKV_AWS_394
+  # The deploy role's exact repo+environment subject is interpolated from
+  # deploy.config; Checkov's static parser treats the variable interpolation as
+  # an unsafe literal. The trust policy uses StringEquals for aud and sub.
+  - CKV_AWS_393
   # Bedrock invoke ARNs arrive as variables — wildcard resources in the
   # policy doc are resolved per-environment (no "*" reaches IAM)
   - CKV_AWS_356

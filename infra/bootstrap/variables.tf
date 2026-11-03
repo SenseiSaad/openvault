@@ -19,3 +19,13 @@ variable "owner" {
   type        = string
   default     = "OpenVault"
 }
+
+variable "github_repo" {
+  description = "GitHub owner/repository allowed to assume the OIDC roles."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$", var.github_repo))
+    error_message = "github_repo must be owner/repository."
+  }
+}

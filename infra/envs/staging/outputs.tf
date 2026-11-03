@@ -43,29 +43,14 @@ output "task_definition_families" {
   value       = module.ecs.task_definition_families
 }
 
-output "build_role_arn" {
-  description = "OIDC role for the image build/push job."
-  value       = module.iam_oidc.build_role_arn
-}
-
-output "oidc_provider_arn" {
-  description = "Account-global GitHub OIDC provider shared by prod and staging."
-  value       = module.iam_oidc.oidc_provider_arn
-}
-
 output "deploy_role_arn" {
   description = "OIDC role for the deploy workflow."
   value       = module.iam_oidc.deploy_role_arn
 }
 
-output "terraform_plan_role_arn" {
-  description = "Read-only OIDC role for terraform-plan PR checks."
-  value       = module.iam_oidc.terraform_plan_role_arn
-}
-
-output "terraform_apply_role_arn" {
-  description = "OIDC role for the manual terraform-apply workflow."
-  value       = module.iam_oidc.terraform_apply_role_arn
+output "services_enabled" {
+  description = "Whether desired ECS service counts are non-zero."
+  value       = var.services_enabled
 }
 
 output "sns_alerts_topic_arn" {

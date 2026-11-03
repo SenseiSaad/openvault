@@ -41,13 +41,15 @@
   + the daily-token alarm.
 
 ## Delivery (GitHub Actions + Terraform)
-* **What:** OIDC (no static keys), three roles with different blast radius
-  (deploy / plan / apply), actions pinned, concurrency groups, migrations as a
-  one-off task BEFORE service update, smoke test, rollback workflow by image tag.
-* **What broke:** Terraform state must exist before the first CI plan (bootstrap
-  apply is local, one-time); task-def registration via `update-service` means
-  Terraform ignores task_definition drift — task defs are CI-owned after the
-  first apply. That split is deliberate and documented.
+* **What:** OIDC (no static keys) is bootstrapped once: build (ECR only),
+  read-only plan, protected Terraform apply, and per-environment deploy roles.
+  Staging can be created first. Images are pushed after ECR; services stay at
+  zero until migrations and seed tasks finish.
+* **What broke:** Terraform state must exist before the first CI plan; the
+  bootstrap stack creates it, then migrates its own state into the bucket. Task
+  definition registration via deploy tooling means Terraform ignores
+  `task_definition` drift after initial creation; that ownership split is
+  deliberate and documented.
 
 ## Claims I CAN make
 * "Infrastructure as code with per-module validation, tflint, and documented

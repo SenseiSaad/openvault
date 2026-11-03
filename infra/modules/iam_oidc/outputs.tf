@@ -1,24 +1,4 @@
 output "deploy_role_arn" {
-  description = "Role assumed by deploy/rollback workflows (ECR push, ECS update)."
+  description = "Environment-scoped role assumed by deploy/rollback workflows."
   value       = aws_iam_role.deploy.arn
-}
-
-output "terraform_plan_role_arn" {
-  description = "Read-only role assumed by terraform-plan PR checks."
-  value       = aws_iam_role.terraform_plan.arn
-}
-
-output "terraform_apply_role_arn" {
-  description = "Role assumed by the manual terraform-apply workflow (protected environment)."
-  value       = aws_iam_role.terraform_apply.arn
-}
-
-output "build_role_arn" {
-  description = "Push-only role assumed by the deploy workflow build job."
-  value       = aws_iam_role.build.arn
-}
-
-output "oidc_provider_arn" {
-  description = "The account-global GitHub OIDC provider shared by environments."
-  value       = local.github_oidc_provider_arn
 }

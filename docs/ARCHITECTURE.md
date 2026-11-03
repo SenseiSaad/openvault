@@ -1,7 +1,23 @@
 # Architecture
 
-OpenVault: multi-tenant RAG knowledge base. One AWS region (ap-south-1),
-ECS Fargate, same domain for frontend + API so HttpOnly cookie sessions work.
+OpenVault: multi-tenant RAG knowledge base. The owner selects the AWS region
+and new subdomain in `deploy.config`. ECS Fargate serves the frontend and API
+from one origin so HttpOnly cookie sessions work.
+
+The account-global GitHub OIDC provider and build/plan/apply roles live in
+`infra/bootstrap`. Each environment owns only its scoped deploy role. Staging
+is the default first deployment; production can be created after staging passes
+its smoke test.
+
+Staging defaults to the deterministic `fake` LLM provider and disables email
+verification only for the documented staging signup test; it makes no Bedrock
+calls. Production keeps Bedrock and email verification enabled.
+
+The initial environment apply creates ECR repositories and ECS task/service
+definitions with desired counts at zero. The first API/web images are built and
+pushed only after ECR exists. Migrations and initial data setup run as one-off
+tasks, then Terraform enables the services. No task tries to pull a missing
+image.
 
 ```mermaid
 flowchart LR
@@ -55,11 +71,11 @@ flowchart LR
 | Tasks → AWS APIs | IAM task roles, least privilege: S3 prefixes, SSM `/openvault/<env>/*`, named Bedrock ARNs only |
 | Tenant → tenant | Django query-layer isolation, tested by a 17-case isolation matrix; chunks carry `company` FK |
 | Tenant admin → platform | BYO LLM `base_url` validated against private/metadata IPs (SSRF guard), https-only |
-| CI → AWS | GitHub OIDC, trust limited to one repo + refs; separate deploy / plan / apply roles |
+| CI → AWS | Bootstrap-owned GitHub OIDC provider; build trusts `main`, plan trusts pull requests, apply trusts protected environments, deploy trusts only its environment |
 
 ## Sizing reality
 
-One api task (1 vCPU/2GB) + one web + one worker serves the launch profile
-(5–7 concurrent users, 2 concurrent streamed answers). Autoscaling on CPU to 3
-api tasks. The load-test numbers in `docs/loadtest-results.md` are the
-reference.
+Initial running shape: API 0.5 vCPU/1 GiB, worker 0.25 vCPU/0.5 GiB, and web
+0.25 vCPU/0.5 GiB. The API scales from one to three tasks at a 60% CPU target.
+Local fake-provider tests are not ECS capacity measurements; AWS capacity is
+**UNVERIFIED** until staging load tests are run. See `docs/loadtest-results.md`.

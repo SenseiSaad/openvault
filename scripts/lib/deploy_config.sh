@@ -42,7 +42,7 @@ load_deploy_config() {
   done
   (( missing == 0 )) || return 2
 
-  [[ "$AWS_REGION" =~ ^[a-z]{2}(-gov)?-[a-z]+-[0-9]+$ ]] || { echo "AWS_REGION must look like a valid AWS region name." >&2; return 2; }
+  [[ "$AWS_REGION" =~ ^[a-z]{2}-[a-z]+-[0-9]+$ ]] || { echo "AWS_REGION must be a commercial AWS region name." >&2; return 2; }
   [[ "$DOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ && "$DOMAIN" == *.* ]] || { echo "DOMAIN must be the parent DNS name you control (not a URL)." >&2; return 2; }
   [[ "$SUBDOMAIN" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || { echo "SUBDOMAIN must contain DNS labels only, without dots at either end." >&2; return 2; }
   [[ "$ALERT_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || { echo "ALERT_EMAIL must be a valid email address." >&2; return 2; }
@@ -68,30 +68,30 @@ tf_quote() {
 }
 
 write_environment_tfvars() {
-  local env="$1" host owner model_json subjects_json dmarc github_environment from_email
+  local env="$1" host owner model_json dmarc from_email services_enabled tfvars_path
   host="$(environment_domain "$env")"
   from_email="${FROM_EMAIL_LOCAL_PART}@${host}"
   owner="${GITHUB_REPO%%/*}"
-  github_environment="$env"
-  [[ "$env" == prod ]] && github_environment=production
   model_json="$(jq -Rn --arg csv "$BEDROCK_MODEL_ARNS" '$csv | split(",") | map(select(length > 0))')"
-  subjects_json="$(jq -cn --arg repo "$GITHUB_REPO" --arg env "$github_environment" '[
-    ("repo:" + $repo + ":ref:refs/heads/main"),
-    ("repo:" + $repo + ":pull_request"),
-    ("repo:" + $repo + ":environment:" + $env)
-  ]')"
   dmarc="v=DMARC1; p=none; rua=mailto:${ALERT_EMAIL}"
+  services_enabled=false
+  tfvars_path="$OPENVAULT_ROOT/infra/envs/$env/terraform.tfvars"
+  if [[ -f "$tfvars_path" ]] && grep -qE '^services_enabled[[:space:]]*=[[:space:]]*true$' "$tfvars_path"; then
+    services_enabled=true
+  fi
 
-  cat > "$OPENVAULT_ROOT/infra/envs/$env/terraform.tfvars" <<EOF
+  cat > "$tfvars_path" <<EOF
 region = $(tf_quote "$AWS_REGION")
 domain = $(tf_quote "$host")
 owner = $(tf_quote "$owner")
 alert_email = $(tf_quote "$ALERT_EMAIL")
 from_email = $(tf_quote "$from_email")
+github_repo = $(tf_quote "$GITHUB_REPO")
 bedrock_model_arns = $model_json
-oidc_allowed_subjects = $subjects_json
 dmarc_record = $(tf_quote "$dmarc")
+github_repo = $(tf_quote "$GITHUB_REPO")
 initial_image_tag = "bootstrap"
+services_enabled = $services_enabled
 EOF
 }
 
@@ -103,6 +103,13 @@ write_backend_config() {
   cat > "$OPENVAULT_ROOT/infra/envs/$env/backend.tfbackend" <<EOF
 bucket         = "$bucket"
 key            = "envs/$env/terraform.tfstate"
+region         = "$AWS_REGION"
+dynamodb_table = "$lock_table"
+encrypt        = true
+EOF
+  cat > "$OPENVAULT_ROOT/infra/bootstrap/backend.tfbackend" <<EOF
+bucket         = "$bucket"
+key            = "bootstrap/terraform.tfstate"
 region         = "$AWS_REGION"
 dynamodb_table = "$lock_table"
 encrypt        = true

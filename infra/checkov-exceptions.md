@@ -13,3 +13,4 @@ recurring themes:
 | Staging is disposable | CKV_AWS_293 | Staging RDS deletion protection is off on purpose so the environment can be destroyed on demand; prod keeps it on. |
 | Logging niceties | CKV_AWS_18 (state/access-logs buckets), CKV2_AWS_62, CKV2_AWS_28 | The access-logs bucket cannot log to itself; event notifications have no consumers yet. |
 | Checker limitations | CKV2_AWS_5, CKV_AWS_394, CKV_AWS_355/356, CKV2_AWS_61 | SG attachment graph flows through module variables; ARN wildcards are resolved per-environment into exact ARNs. |
+| OIDC subject interpolation | CKV_AWS_393 | The deploy role's exact `repo:<configured-repo>:environment:<name>` subject and audience are both `StringEquals`; Checkov cannot statically resolve `deploy.config`-generated repo/environment inputs. Verify the rendered trust policy in the account-backed plan. |

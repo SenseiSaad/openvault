@@ -99,11 +99,11 @@ module "ecs" {
   certificate_arn       = module.dns_tls.certificate_arn
   access_logs_bucket_id = module.network.access_logs_bucket_id
 
-  api_desired_count    = 1
-  api_min_capacity     = 1
-  api_max_capacity     = 3
-  worker_desired_count = 1
-  web_desired_count    = 1
+  api_desired_count    = var.services_enabled ? 1 : 0
+  api_min_capacity     = var.services_enabled ? 1 : 0
+  api_max_capacity     = var.services_enabled ? 3 : 0
+  worker_desired_count = var.services_enabled ? 1 : 0
+  web_desired_count    = var.services_enabled ? 1 : 0
   log_retention_days   = 90
   container_insights   = false
 
@@ -165,7 +165,7 @@ module "observability" {
   api_log_group_name       = module.ecs.api_log_group
   alb_arn_suffix           = module.ecs.alb_arn_suffix
   cluster_name             = module.ecs.cluster_name
-  service_desired_counts   = { api = 1, web = 1, worker = 1 }
+  service_desired_counts   = var.services_enabled ? { api = 1, web = 1, worker = 1 } : {}
   db_instance_identifier   = "${local.name_prefix}-postgres"
   daily_total_token_budget = var.daily_total_token_budget
   budget_alarm_thresholds  = var.budget_alarm_thresholds
@@ -175,9 +175,11 @@ module "observability" {
 module "iam_oidc" {
   source = "../../modules/iam_oidc"
 
-  name_prefix      = local.name_prefix
-  allowed_subjects = var.oidc_allowed_subjects
-  tags             = local.tags
+  name_prefix        = local.name_prefix
+  github_repo        = var.github_repo
+  github_environment = "production"
+  oidc_provider_arn  = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com"
+  tags               = local.tags
 }
 
 module "model_host" {

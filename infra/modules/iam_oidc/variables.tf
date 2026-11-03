@@ -1,35 +1,38 @@
 variable "name_prefix" {
-  description = "Name prefix."
+  description = "Environment resource prefix."
   type        = string
 }
 
-variable "create_oidc_provider" {
-  description = "Create the account-global GitHub OIDC provider (only one environment should)."
-  type        = bool
-  default     = true
+variable "github_repo" {
+  description = "GitHub owner/repository allowed to deploy this environment."
+  type        = string
 }
 
-variable "oidc_provider_arn" {
-  description = "Existing account-global GitHub OIDC provider ARN when create_oidc_provider=false."
+variable "github_environment" {
+  description = "Exact GitHub Actions environment name used by this deploy job."
   type        = string
-  default     = ""
 
   validation {
-    condition = var.create_oidc_provider || can(regex(
-      "^arn:aws:iam::[0-9]{12}:oidc-provider/token.actions.githubusercontent.com$",
-      var.oidc_provider_arn,
-    ))
-    error_message = "oidc_provider_arn must identify the shared GitHub provider when create_oidc_provider is false."
+    condition     = contains(["staging", "production"], var.github_environment)
+    error_message = "github_environment must be staging or production."
   }
 }
 
-variable "allowed_subjects" {
-  description = "Subject patterns from which this module filters role-specific GitHub OIDC trust (main, pull_request, environment subjects)."
-  type        = list(string)
+variable "oidc_provider_arn" {
+  description = "Account-global GitHub OIDC provider created by the bootstrap stack."
+  type        = string
+
+  validation {
+    condition = can(regex(
+      "^arn:aws:iam::[0-9]{12}:oidc-provider/token.actions.githubusercontent.com$",
+      var.oidc_provider_arn,
+    ))
+    error_message = "oidc_provider_arn must identify the GitHub OIDC provider."
+  }
 }
 
 variable "tags" {
-  description = "Tags applied to every resource."
+  description = "Tags applied to every role/policy."
   type        = map(string)
   default     = {}
 }

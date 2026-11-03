@@ -14,9 +14,15 @@ variable "domain" {
   type        = string
 }
 
-variable "oidc_allowed_subjects" {
-  description = "OIDC subject patterns allowed to assume AWS roles."
-  type        = list(string)
+variable "github_repo" {
+  description = "GitHub owner/repository allowed to deploy this environment."
+  type        = string
+}
+
+variable "services_enabled" {
+  description = "Start ECS services only after the first image is pushed and migrations/seed complete."
+  type        = bool
+  default     = false
 }
 
 variable "bedrock_model_arns" {
@@ -35,14 +41,12 @@ variable "app_secrets" {
   description = "Map of env-var name -> SSM parameter NAME under /openvault/staging/."
   type        = map(string)
   default = {
-    SECRET_KEY                        = "openvault/staging/SECRET_KEY"
-    DATABASE_URL                      = "openvault/staging/DATABASE_URL"
-    LLM_KEY_ENCRYPTION_KEY            = "openvault/staging/LLM_KEY_ENCRYPTION_KEY"
-    EMAIL_HOST_USER                   = "openvault/staging/EMAIL_HOST_USER"
-    EMAIL_HOST_PASSWORD               = "openvault/staging/EMAIL_HOST_PASSWORD"
-    SENTRY_DSN                        = "openvault/staging/SENTRY_DSN"
-    BOOTSTRAP_PLATFORM_ADMIN_EMAIL    = "openvault/staging/BOOTSTRAP_PLATFORM_ADMIN_EMAIL"
-    BOOTSTRAP_PLATFORM_ADMIN_PASSWORD = "openvault/staging/BOOTSTRAP_PLATFORM_ADMIN_PASSWORD"
+    SECRET_KEY             = "openvault/staging/SECRET_KEY"
+    DATABASE_URL           = "openvault/staging/DATABASE_URL"
+    LLM_KEY_ENCRYPTION_KEY = "openvault/staging/LLM_KEY_ENCRYPTION_KEY"
+    EMAIL_HOST_USER        = "openvault/staging/EMAIL_HOST_USER"
+    EMAIL_HOST_PASSWORD    = "openvault/staging/EMAIL_HOST_PASSWORD"
+    SENTRY_DSN             = "openvault/staging/SENTRY_DSN"
   }
 }
 

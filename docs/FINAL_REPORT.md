@@ -45,10 +45,10 @@ environment. Do not describe it as live or as a completed migration.
 * `modules/observability` — SNS alerts, CloudWatch alarms for LLM errors/tokens,
   ALB 5xx/unhealthy targets, ECS no-datapoints, RDS CPU/storage/connections,
   AWS Budgets with absolute thresholds.
-* `modules/iam_oidc` — one account-global GitHub OIDC provider (owned by prod;
-  staging references it) and four roles: build, deploy,
-  Terraform plan, Terraform apply. The apply role uses a custom project-scoped
-  IAM policy instead of `IAMFullAccess`.
+* `bootstrap/` owns one account-global GitHub OIDC provider plus build, plan,
+  and protected-apply roles. Each environment creates only its own deploy role;
+  staging can therefore be planned and tested before production. Apply uses a
+  custom project-scoped IAM policy instead of `IAMFullAccess`.
 * `envs/prod` and `envs/staging` — separate VPC CIDRs, sizing, secrets prefixes,
   budgets, domains, and state keys.
 
@@ -253,9 +253,9 @@ identity, Bedrock policy, S3 policies, alarms, and budgets have only been
 validated statically. First apply will almost certainly surface at least one
 account-specific issue (quota, service availability, ARN shape, DNS timing).
 
-**Mitigation:** run `terraform plan` with the real account before apply; apply
-production first because it owns the account-global OIDC provider, then staging;
-read the plan for replacements/deletions; do not use
+**Mitigation:** run `terraform plan` with the real account before apply; the
+bootstrap stack creates the shared OIDC provider, so apply staging first and
+production only after staging verification; read the plan for replacements/deletions; do not use
 `AdministratorAccess` for CI.
 
 ### P1 — ACM validation depends on DNS delegation
@@ -332,10 +332,9 @@ The branch is committed locally but has not been pushed to `origin`.
 - [ ] Put the AWS account ID, subdomain and alert email into a private
       `terraform.tfvars` (never commit).
 - [ ] Run `terraform plan` with the real account; review every replacement.
-- [ ] Apply prod first (it creates the shared OIDC provider); delegate DNS;
-      confirm SNS and budget emails.
-- [ ] Apply staging; confirm ALB/ACM/ECS/RDS/Redis and one authenticated
-      question.
+- [ ] Apply staging first (bootstrap owns the shared OIDC provider); delegate
+      DNS; confirm SNS and budget emails.
+- [ ] Apply prod only after staging passes its smoke test.
 - [ ] Push SSM secrets; remove bootstrap admin values after first login.
 - [ ] Run `setup_github.sh`; set variables and smoke-test secrets.
 - [ ] Merge to `main`; approve production; verify smoke and rollback once.
