@@ -1,74 +1,95 @@
 """Create or promote a platform root admin (complete cross-tenant authority).
 
-Usage:
-    python manage.py create_platform_admin <email> [--password <pw>] [--promote]
-
-The flag is stored in the database (`is_platform_admin`), never inferred from
-an email address. With --promote an EXISTING user is granted the flag; without
-it a new detached (no company) root account is created. Password can be passed
-via --password or will be prompted for (hidden) or randomly generated.
+In production, run this interactively through ECS Exec. The email is prompted
+when omitted; passwords and confirmations are hidden and never printed. Avoid
+the optional --password argument in production because command arguments may
+be visible in process/session metadata.
 """
 import getpass
-import secrets
-import string
+import sys
 
+from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.core.management.base import BaseCommand, CommandError
-from django.contrib.auth.password_validation import validate_password
 
 from core.models import User
 
 
 class Command(BaseCommand):
-    help = "Create (or promote) a platform root admin with complete authority."
+    help = "Create or promote a platform root admin with complete authority."
 
     def add_arguments(self, parser):
-        parser.add_argument("email")
-        parser.add_argument("--password", default="")
+        parser.add_argument("email", nargs="?", default="")
+        parser.add_argument("--password", default="", help="Local/testing only; do not pass production secrets here.")
         parser.add_argument("--promote", action="store_true",
                             help="Grant the flag to an existing user instead of creating one.")
 
     def handle(self, *args, **opts):
-        email = opts["email"].strip().lower()
+        email = (opts["email"] or "").strip().lower()
+        if not email:
+            if not sys.stdin.isatty():
+                raise CommandError("Email is required when stdin is not interactive.")
+            email = input("Platform admin email: ").strip().lower()
         if not email or "@" not in email:
             raise CommandError("A valid email address is required.")
 
+        user = User.objects.filter(email__iexact=email).first()
         if opts["promote"]:
-            user = User.objects.filter(email__iexact=email).first()
             if not user:
                 raise CommandError(f"No existing user with email {email}.")
-            user.is_platform_admin = True
-            user.is_staff = True
-            user.is_superuser = True
-            user.email_verified = True
-            user.save(update_fields=["is_platform_admin", "is_staff", "is_superuser",
-                                     "email_verified"])
-            self.stdout.write(self.style.SUCCESS(
-                f"Promoted {email} to platform admin (keeps company: {user.company_id})."))
+            self._promote(user)
+            self.stdout.write(self.style.SUCCESS(f"Promoted {email} to platform admin."))
             return
 
-        if User.objects.filter(email__iexact=email).exists():
-            raise CommandError(
-                f"A user with email {email} already exists. Use --promote to grant it the flag.")
+        if user and user.is_platform_admin:
+            self.stdout.write(self.style.SUCCESS(
+                f"Platform admin {email} already exists; credentials were not changed."
+            ))
+            return
+        if user:
+            if not sys.stdin.isatty():
+                raise CommandError(
+                    f"A user with email {email} already exists. Run interactively to confirm promotion."
+                )
+            answer = input(f"User {email} exists. Promote this account? [y/N] ").strip().lower()
+            if answer not in {"y", "yes"}:
+                raise CommandError("Existing account was not promoted.")
+            self._promote(user)
+            self.stdout.write(self.style.SUCCESS(f"Promoted {email} to platform admin."))
+            return
 
         password = opts["password"]
         if not password:
-            password = getpass.getpass("Password (blank = generate random): ").strip()
-        if not password:
-            alphabet = string.ascii_letters + string.digits
-            password = "".join(secrets.choice(alphabet) for _ in range(16))
-            self.stdout.write(self.style.WARNING(f"Generated password: {password}"))
+            if not sys.stdin.isatty():
+                raise CommandError("A password is required when stdin is not interactive.")
+            password = getpass.getpass("Password (hidden): ").strip()
+            confirmation = getpass.getpass("Confirm password (hidden): ").strip()
+            if not password or password != confirmation:
+                raise CommandError("Passwords were blank or did not match.")
         try:
             validate_password(password)
         except ValidationError as exc:
-            raise CommandError("Password rejected: " + " ".join(exc.messages))
+            raise CommandError("Password rejected: " + " ".join(exc.messages)) from exc
 
-        user = User.objects.create_user(
-            email=email, password=password,
-            full_name="Platform Admin", title="Root", role="admin",
-            is_staff=True, is_superuser=True, is_platform_admin=True,
+        User.objects.create_user(
+            email=email,
+            password=password,
+            full_name="Platform Admin",
+            title="Root",
+            role="admin",
+            is_staff=True,
+            is_superuser=True,
+            is_platform_admin=True,
             email_verified=True,
         )
         self.stdout.write(self.style.SUCCESS(
-            f"Platform admin {email} created. It has no company (all-tenant view); "
-            "use the company switcher in the workspace to act inside a tenant."))
+            f"Platform admin {email} created. First login must enroll an authenticator before access is granted."
+        ))
+
+    @staticmethod
+    def _promote(user):
+        user.is_platform_admin = True
+        user.is_staff = True
+        user.is_superuser = True
+        user.email_verified = True
+        user.save(update_fields=["is_platform_admin", "is_staff", "is_superuser", "email_verified"])

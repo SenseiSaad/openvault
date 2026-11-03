@@ -99,6 +99,18 @@ resource "aws_iam_role" "app_task" {
 
 data "aws_iam_policy_document" "app_task" {
   statement {
+    sid    = "ECSExecSessionChannels"
+    effect = "Allow"
+    actions = [
+      "ssmmessages:CreateControlChannel",
+      "ssmmessages:CreateDataChannel",
+      "ssmmessages:OpenControlChannel",
+      "ssmmessages:OpenDataChannel",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
     sid       = "DocumentsBucket"
     effect    = "Allow"
     actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"]

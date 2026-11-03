@@ -187,8 +187,10 @@ set_env_var TF_VAR_services_enabled "true"
 set_env_var TF_VAR_initial_image_tag "bootstrap"
 if [[ "$TARGET_ENV" == staging ]]; then
   set_env_var ALLOW_EMAIL_VERIFICATION_BYPASS "1"
+  set_env_var SMOKE_TEST_MODE "signup"
 else
   set_env_var ALLOW_EMAIL_VERIFICATION_BYPASS "0"
+  set_env_var SMOKE_TEST_MODE "existing"
 fi
 
 echo "== Set smoke-test credentials (input hidden; values never displayed) =="

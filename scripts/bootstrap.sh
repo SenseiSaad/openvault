@@ -45,7 +45,7 @@ preflight() {
   load_deploy_config || return $?
 
   local cmd aws_version tf_version docker_version gh_version jq_version account_id
-  for cmd in aws terraform docker gh jq git curl python3; do require_command "$cmd"; done
+  for cmd in aws terraform docker gh jq git curl python3 session-manager-plugin; do require_command "$cmd"; done
 
   aws_version="$(aws --version 2>&1 | sed -E 's/^aws-cli\/([^ ]+).*/\1/')"
   [[ "$aws_version" == 2.* ]] || fail "AWS CLI v2 is required; detected '$aws_version'."
@@ -212,10 +212,16 @@ PY
   local cluster_name
   cluster_name="$(terraform -chdir="$ROOT/infra/envs/$ENVIRONMENT" output -raw cluster_name)" || return $?
   aws ecs wait services-stable --cluster "$cluster_name" --services api web worker --region "$AWS_REGION" || return $?
+  "$ROOT/scripts/post_deploy.sh" "$ENVIRONMENT" verify-mfa || return $?
 }
 
 stage_smoke_test() {
-  "$ROOT/scripts/smoke_test.sh" "https://$(environment_domain "$ENVIRONMENT")" || return $?
+  local bypass=0
+  [[ "$ENVIRONMENT" == staging ]] && bypass=1
+  DEPLOY_ENVIRONMENT="$ENVIRONMENT" \
+    ALLOW_EMAIL_VERIFICATION_BYPASS="$bypass" \
+    SMOKE_TEST_MODE=signup \
+    "$ROOT/scripts/smoke_test.sh" "https://$(environment_domain "$ENVIRONMENT")" || return $?
 }
 
 run_stage() {

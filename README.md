@@ -12,6 +12,8 @@ OpenVault is an enterprise document repository and retrieval-augmented generatio
 the stack; a GitHub repository/admin account; a domain whose DNS you control;
 and local tools: AWS CLI v2, Terraform `>=1.9`, Docker Engine `>=24` with
 Buildx, GitHub CLI `>=2.45`, `jq >=1.6`, Git `>=2.30`, and Python `>=3.12`.
+Install the AWS Session Manager plugin for the interactive initial-admin/MFA
+steps; its version is **UNVERIFIED** in this workspace.
 Versions exercised while preparing this guide were AWS CLI `2.35.21`, Terraform
 `1.16.1`, Docker `29.9.0`, `gh 2.45.0`, and `jq 1.7`.
 

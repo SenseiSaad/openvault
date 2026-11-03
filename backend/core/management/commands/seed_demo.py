@@ -8,7 +8,9 @@ without a running LLM.
 Idempotent — safe to re-run (uses get_or_create). For a clean rebuild, delete
 backend/db.sqlite3 and run again.
 """
+import getpass
 import os
+import sys
 import uuid
 from datetime import timedelta
 
@@ -17,6 +19,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 
 from core import rag
+from core import storage
 from core.models import Company, User, Document, DocumentAccess, DocumentShare
 
 
@@ -500,10 +503,8 @@ class Command(BaseCommand):
     def _doc(self, company, uploader, spec):
         (name, category, downloads, days_ago, desc, is_public, is_okf, body) = spec
         raw = body.encode("utf-8")
-        # write a real file so the demo download button works
-        folder = os.path.join(settings.DATA_DIR, company.slug)
-        os.makedirs(folder, exist_ok=True)
-        stored = os.path.join(folder, f"{uuid.uuid4().hex}_{name}")
+        # Use the storage abstraction so sample documents persist in S3 on ECS.
+        stored = f"{company.slug}/{uuid.uuid4().hex}_{name}"
         doc, created = Document.objects.get_or_create(
             company=company, filename=name,
             defaults=dict(
@@ -513,8 +514,9 @@ class Command(BaseCommand):
             ),
         )
         if created:
-            with open(stored, "wb") as out:
-                out.write(raw)
+            stored = storage.save_bytes(stored, raw, content_type="text/markdown", base_dir=settings.DATA_DIR)
+            doc.stored_path = stored
+            doc.save(update_fields=["stored_path"])
             rag.index_document(doc, raw)
             DocumentAccess.objects.get_or_create(document=doc, user=uploader)
             # backdate created_at (auto_now_add ignores assignment, so update directly)
@@ -530,10 +532,12 @@ class Command(BaseCommand):
             raise CommandError("seed_demo is disabled in production.")
         demo_password = os.getenv("DEMO_SEED_PASSWORD", "")
         if not demo_password:
-            raise CommandError(
-                "Set DEMO_SEED_PASSWORD in an ignored local environment file "
-                "before seeding demo accounts. No demo password is built into the project."
-            )
+            if not sys.stdin.isatty():
+                raise CommandError("DEMO_SEED_PASSWORD is unset and stdin is not interactive.")
+            demo_password = getpass.getpass("Demo account password (hidden): ").strip()
+            confirmation = getpass.getpass("Confirm demo password (hidden): ").strip()
+            if not demo_password or demo_password != confirmation:
+                raise CommandError("Demo passwords were blank or did not match.")
 
         # Optional local-only superuser for the seeded demo workspace.
         if not User.objects.filter(email="root@securekb.local").exists():
@@ -612,8 +616,8 @@ class Command(BaseCommand):
             f"{Document.objects.values('category').distinct().count()} categories."
         ))
         self.stdout.write(
-            "   Demo accounts were created with the password supplied through\n"
-            "   DEMO_SEED_PASSWORD. No demo password is printed or stored in source.\n"
+            "   Demo account password was entered hidden or supplied through a local ignored env var.\n"
+            "   No demo password is printed or stored in source.\n"
             "   Demo tenant admins include admin@company-a.com, admin@company-b.com,\n"
             "   and admin@company-c.com; hr@ and viewer@ accounts exist per tenant.\n"
             "   Collaboration demo: Company C's 'Vendor Security Requirements.md' is\n"

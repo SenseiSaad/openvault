@@ -39,6 +39,7 @@ jobs:
       SKIP_MIGRATE: "1"
       REQUIRE_AUTH_SMOKE: ${{ inputs.environment == 'production' && '1' || '0' }}
       ALLOW_EMAIL_VERIFICATION_BYPASS: ${{ inputs.environment == 'staging' && vars.ALLOW_EMAIL_VERIFICATION_BYPASS || '0' }}
+      SMOKE_TEST_MODE: ${{ vars.SMOKE_TEST_MODE }}
       SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
       SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
     steps:

@@ -39,7 +39,7 @@ ALLOW_MISSING_CLUSTER="${ALLOW_MISSING_CLUSTER:-0}"
 REQUIRE_AUTH_SMOKE="${REQUIRE_AUTH_SMOKE:-0}"
 SKIP_MIGRATE="${SKIP_MIGRATE:-0}"
 
-: "${ECR_REGISTRY:?ECR_REGISTRY is required (e.g. 123456789012.dkr.ecr.ap-south-1.amazonaws.com)}"
+: "${ECR_REGISTRY:?ECR_REGISTRY is required from the ECR repository output}"
 : "${PUBLIC_BASE_URL:?PUBLIC_BASE_URL is required}"
 
 API_IMAGE="${ECR_REGISTRY}/${ECR_API_REPOSITORY}:${IMAGE_TAG}"
@@ -181,8 +181,11 @@ check_taskdef "$WORKER_SERVICE" "$WORKER_ARN"
 check_taskdef "$WEB_SERVICE" "$WEB_ARN"
 
 echo "[deploy] smoke test"
-BASE_URL="$PUBLIC_BASE_URL" REQUIRE_AUTH_SMOKE="$REQUIRE_AUTH_SMOKE" \
-  "$(cd "$(dirname "$0")" && pwd)/smoke_test.sh"
+DEPLOY_ENVIRONMENT="$ENV_NAME" \
+ALLOW_EMAIL_VERIFICATION_BYPASS="${ALLOW_EMAIL_VERIFICATION_BYPASS:-0}" \
+SMOKE_TEST_MODE="${SMOKE_TEST_MODE:-existing}" \
+REQUIRE_AUTH_SMOKE="$REQUIRE_AUTH_SMOKE" \
+  "$(cd "$(dirname "$0")" && pwd)/smoke_test.sh" "$PUBLIC_BASE_URL"
 
 # Only now is the update considered successful. If the smoke test failed, the
 # ERR trap above restores the previous task definitions.

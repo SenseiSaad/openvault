@@ -210,7 +210,7 @@ def test_attendance_scan_flow(company_admin):
     assert "?scan=1&t=" in qr2["target"]
 
 
-def test_attendance_evaluation_unit(make_company, make_user):
+def test_attendance_evaluation_unit(make_company, make_user, monkeypatch):
     from core import attendance as att
     from datetime import timedelta
     from django.utils import timezone
@@ -219,7 +219,11 @@ def test_attendance_evaluation_unit(make_company, make_user):
     emp = make_user(company, email="att@acme.test")
 
     # A perfectly attended month has zero absences.
-    today = timezone.localdate()
+    current = timezone.localdate()
+    today = current.replace(day=1)
+    while today.weekday() >= 5:
+        today += timedelta(days=1)
+    monkeypatch.setattr(timezone, "localdate", lambda: today)
     record = AttendanceRecord(company=company, user=emp, date=today, status="Present")
     record.save()
     assert att.absences_in_month(emp, today.year, today.month) == 0

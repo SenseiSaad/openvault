@@ -11,6 +11,15 @@ from core.models import AttendanceExemption, Holiday
 pytestmark = pytest.mark.django_db
 
 
+def _freeze_to_first_business_day(monkeypatch):
+    current = timezone.localdate()
+    day = date(current.year, current.month, 1)
+    while day.weekday() >= 5:
+        day += timedelta(days=1)
+    monkeypatch.setattr(timezone, "localdate", lambda: day)
+    return day
+
+
 # ------------------------------------------------------------ signed tokens
 def test_qr_token_roundtrip_and_expiry(monkeypatch):
     monkeypatch.setattr(qr_tokens, "default_ttl", lambda: 600)
@@ -66,22 +75,19 @@ def _eval_user(make_company, make_user, email="cnic-exempt@acme.test"):
     return company, make_user(company, email=email)
 
 
-def test_holiday_is_not_an_absence(make_company, make_user):
+def test_holiday_is_not_an_absence(make_company, make_user, monkeypatch):
     company, user = _eval_user(make_company, make_user)
-    today = timezone.localdate()
-    # Today is a working day with no scan => normally 1 absence...
-    if today.weekday() < 5:
-        assert att.absences_in_month(user, today.year, today.month) >= 0
-        Holiday.objects.create(company=company, date=today, name="Company day")
-        assert att.absences_in_month(user, today.year, today.month) == 0
+    today = _freeze_to_first_business_day(monkeypatch)
+    assert att.absences_in_month(user, today.year, today.month) == 1
+    Holiday.objects.create(company=company, date=today, name="Company day")
+    assert att.absences_in_month(user, today.year, today.month) == 0
 
 
-def test_platform_wide_holiday_applies_to_all_tenants(make_company, make_user):
+def test_platform_wide_holiday_applies_to_all_tenants(make_company, make_user, monkeypatch):
     company, user = _eval_user(make_company, make_user, email="plat@acme.test")
-    today = timezone.localdate()
-    if today.weekday() < 5:
-        Holiday.objects.create(company=None, date=today, name="National day")
-        assert att.absences_in_month(user, today.year, today.month) == 0
+    today = _freeze_to_first_business_day(monkeypatch)
+    Holiday.objects.create(company=None, date=today, name="National day")
+    assert att.absences_in_month(user, today.year, today.month) == 0
 
 
 def test_approved_leave_window_is_not_an_absence(make_company, make_user):

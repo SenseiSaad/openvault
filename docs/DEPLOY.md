@@ -12,7 +12,9 @@ existing live hostname. No command below is run automatically by this guide;
   protected deployment environments.
 * Parent domain and access to its DNS provider to delegate a new subdomain.
 * AWS CLI v2, Terraform `>=1.9`, Docker Engine `>=24` + Buildx, GitHub CLI
-  `>=2.45`, `jq >=1.6`, Git `>=2.30`, Python `>=3.12`.
+  `>=2.45`, `jq >=1.6`, Git `>=2.30`, Python `>=3.12`, and the AWS Session
+  Manager plugin (required for hidden interactive password/TOTP setup; exact
+  plugin version is **UNVERIFIED** here).
 
 ## Manual account steps
 
@@ -143,7 +145,8 @@ Variables`):
 `TF_VAR_github_repo`, `TF_VAR_alert_email`, `TF_VAR_bedrock_model_arns`,
 `TF_VAR_from_email`, `TF_VAR_dmarc_record`, `TF_VAR_services_enabled`,
 `TF_VAR_initial_image_tag`, and `ALLOW_EMAIL_VERIFICATION_BYPASS` (set to `1`
-only for staging; production is `0`).
+only for staging; production is `0`), plus `SMOKE_TEST_MODE` (`signup` for
+staging; `existing` for production CI).
 
 **Secrets in each GitHub environment:** `SMOKE_TEST_EMAIL` and
 `SMOKE_TEST_PASSWORD`. They are set through hidden prompts by
@@ -173,9 +176,23 @@ environment teardown.
 
 * `https://<target-host>/api/health/live` returns liveness success.
 * `/api/health` reports database and storage readiness.
-* Complete signup, verification (or the staging-only test bypass), login,
-  upload a small text document, ask a question and confirm the answer cites it,
-  then logout.
+* `scripts/post_deploy.sh <staging|prod> migrate` runs a one-off migration task;
+  `seed` runs `seed_plans`, prompts in a secure ECS Exec session for the first
+  platform-admin email/password, and offers staging-only demo company/sample
+  documents. After ECS services are up, `verify-mfa` waits for browser-based
+  TOTP enrollment and checks that `mfa_enabled` is set. Passwords are typed
+  hidden and never printed; confirm your AWS Session Manager policy does not
+  record interactive input before entering a credential.
+  Typical staging sequence (also run by `bootstrap.sh`):
+  `scripts/post_deploy.sh staging migrate`, `... staging seed`, then
+  `... staging verify-mfa` after services start.
+* `scripts/smoke_test.sh <url>` checks health, signup, verification, login,
+  document upload/indexing, a streamed answer with a source citation, cleanup,
+  and logout. `ALLOW_EMAIL_VERIFICATION_BYPASS=1` is accepted only when
+  `DEPLOY_ENVIRONMENT=staging`. The production deployment workflow uses a
+  pre-verified, non-platform-admin account (`SMOKE_TEST_MODE=existing`); use
+  interactive `SMOKE_TEST_MODE=signup` once with access to the mailbox to test
+  actual production verification end to end.
 * Confirm CloudWatch logs contain usage metadata only, SNS subscription is
   confirmed, and a nightly backup object arrives in S3.
 * Bedrock model access, real SES delivery, ECS capacity, RDS PITR RTO, and a
