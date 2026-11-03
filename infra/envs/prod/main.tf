@@ -55,8 +55,8 @@ module "data" {
   db_max_allocated_storage_gb = 200
   db_multi_az                 = false
   db_backup_retention_days    = 14
-  db_deletion_protection      = true
-  db_skip_final_snapshot      = false
+  db_deletion_protection      = var.db_deletion_protection
+  db_skip_final_snapshot      = var.db_skip_final_snapshot
   cors_allowed_origins        = ["https://${local.domain}"]
   access_logs_bucket_id       = module.network.access_logs_bucket_id
   backup_retention_days       = 90

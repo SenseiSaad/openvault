@@ -166,11 +166,19 @@ variable Bedrock use; staging is about **$95–$110 while running**. The first
 apply creates billable services. Let DNS/SES verification complete before
 switching users; the old deployment remains untouched.
 
-Use `scripts/destroy.sh staging` for staging. It requires typing the
-environment name, snapshots the database, and leaves S3 objects alone unless
-`--empty-s3` is explicitly provided. Production additionally requires an
-explicit unsafe flag. The shared bootstrap state/OIDC resources are not part of
-environment teardown.
+Use `scripts/destroy.sh staging` for staging. It requires typing the exact
+environment name and snapshots RDS before Terraform destroy. It refuses to
+destroy non-empty versioned S3 buckets unless `--empty-s3` is explicitly
+provided; ECR images similarly require `--empty-ecr`. Production additionally
+requires `--allow-production` and a second exact confirmation.
+For example: `scripts/destroy.sh prod --allow-production --empty-s3 --empty-ecr`.
+
+Teardown removes only the selected environment's Terraform-managed resources.
+It intentionally does **not** delete the bootstrap state bucket/lock table or
+OIDC provider/roles, manual RDS snapshots, SSM parameters (which may contain
+secrets), GitHub environments/variables/secrets, the manually created SES SMTP
+IAM user, or parent-provider NS delegation records. Remove those separately
+only after confirming retention and recovery requirements.
 
 ## Validate after deployment
 

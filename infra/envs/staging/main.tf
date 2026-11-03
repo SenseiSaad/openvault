@@ -58,11 +58,11 @@ module "data" {
   db_multi_az                 = false
   db_backup_retention_days    = 1
   db_deletion_protection      = false
-  db_skip_final_snapshot      = true
+  db_skip_final_snapshot      = var.db_skip_final_snapshot
   cors_allowed_origins        = ["https://${local.domain}"]
   access_logs_bucket_id       = module.network.access_logs_bucket_id
   backup_retention_days       = 90
-  force_destroy_buckets       = true
+  force_destroy_buckets       = false
   tags                        = local.tags
 }
 

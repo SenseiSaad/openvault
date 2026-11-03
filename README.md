@@ -44,8 +44,10 @@ order. Allow **45–90 minutes** for the hands-on steps; DNS/SES verification ca
 take longer. **Estimated monthly cost:** about **$131 for production** plus
 Bedrock usage; staging is about **$95–$110 while running**. These are estimates,
 not a quote, and apply creates billable resources. To tear down staging, use
-`./scripts/destroy.sh staging`; production requires an extra explicit flag and
-confirmation. The Terraform state/OIDC bootstrap stack is intentionally kept.
+`./scripts/destroy.sh staging`; production requires
+`./scripts/destroy.sh prod --allow-production` plus confirmation. S3 objects and
+ECR images are emptied only with explicit `--empty-s3` / `--empty-ecr` flags.
+The Terraform state/OIDC bootstrap stack is intentionally kept.
 
 See [`docs/DEPLOY.md`](docs/DEPLOY.md) for account-specific details, verification,
 and what is not removed by teardown.

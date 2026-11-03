@@ -3,6 +3,11 @@ output "db_endpoint" {
   value       = aws_db_instance.postgres.address
 }
 
+output "db_instance_identifier" {
+  description = "RDS identifier used by the final-snapshot teardown script."
+  value       = aws_db_instance.postgres.identifier
+}
+
 output "db_port" {
   description = "RDS port."
   value       = aws_db_instance.postgres.port

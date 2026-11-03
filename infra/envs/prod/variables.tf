@@ -71,6 +71,18 @@ variable "from_email" {
   }
 }
 
+variable "db_deletion_protection" {
+  description = "Keep the production RDS instance deletion-protected except during the explicit destroy workflow."
+  type        = bool
+  default     = true
+}
+
+variable "db_skip_final_snapshot" {
+  description = "Skip Terraform's additional final snapshot during teardown after the explicit manual snapshot is available."
+  type        = bool
+  default     = false
+}
+
 variable "daily_total_token_budget" {
   description = "Daily input+output token guard for Bedrock cost (docs/COST.md)."
   type        = number

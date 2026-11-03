@@ -42,9 +42,9 @@ around **$95–$105/mo**. Do not run a second full environment unless you need i
 
 Staging uses the same modules with smaller inputs: `db.t4g.micro`, 20 GB,
 single-AZ, one task per service, 14-day logs. Estimated **~$95–$110/mo** while
-running. It is destroyed with the commands in `docs/DEPLOY.md`; RDS deletion
-protection and the final snapshot are off, and S3 buckets are force-destroyable
-**only in staging**.
+running. It is destroyed with `scripts/destroy.sh staging`; RDS deletion
+protection is off. S3 buckets are not force-destroyed: objects/versions are
+emptied only when the operator passes `--empty-s3` explicitly.
 
 ## Bedrock (variable)
 

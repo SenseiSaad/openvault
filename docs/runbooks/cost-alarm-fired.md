@@ -14,7 +14,8 @@ daily-token alarm fired.
 * **Budget alarm (infra)**: Cost Explorer → group by service, day-over-day.
   Common culprits: NAT/egress surprises (none in this design), RDS storage
   autoscaling, forgotten staging environment (destroy it:
-  `terraform destroy` in `infra/envs/staging`).
+  `scripts/destroy.sh staging` (preserve snapshots/state; S3 is emptied only
+  after explicitly adding `--empty-s3`).
 
 ## 2. Contain
 

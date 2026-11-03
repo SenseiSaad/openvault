@@ -25,6 +25,12 @@ variable "services_enabled" {
   default     = false
 }
 
+variable "db_skip_final_snapshot" {
+  description = "Skip Terraform's additional final snapshot during teardown after the explicit manual snapshot is available."
+  type        = bool
+  default     = true
+}
+
 variable "bedrock_model_arns" {
   description = "Bedrock model/inference-profile ARNs (same as prod, or empty to force keyword fallback in staging)."
   type        = list(string)

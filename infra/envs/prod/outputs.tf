@@ -13,6 +13,11 @@ output "db_endpoint" {
   value       = module.data.db_endpoint
 }
 
+output "db_instance_identifier" {
+  description = "RDS instance identifier for explicit snapshot/teardown operations."
+  value       = module.data.db_instance_identifier
+}
+
 output "db_master_secret_arn" {
   description = "Fetch the master password with: aws secretsmanager get-secret-value --secret-id <arn>"
   value       = module.data.db_master_secret_arn
@@ -26,6 +31,11 @@ output "documents_bucket" {
 output "backups_bucket" {
   description = "S3 bucket for database dumps."
   value       = module.data.backups_bucket
+}
+
+output "access_logs_bucket" {
+  description = "ALB/VPC access-log bucket name."
+  value       = module.network.access_logs_bucket_id
 }
 
 output "ecr_repositories" {
