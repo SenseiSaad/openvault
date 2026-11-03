@@ -6,6 +6,46 @@ OpenVault is an enterprise document repository and retrieval-augmented generatio
 
 ---
 
+## Deploy your own (AWS)
+
+**Prerequisites:** an AWS account with billing enabled and permissions to create
+the stack; a GitHub repository/admin account; a domain whose DNS you control;
+and local tools: AWS CLI v2, Terraform `>=1.9`, Docker Engine `>=24` with
+Buildx, GitHub CLI `>=2.45`, `jq >=1.6`, Git `>=2.30`, and Python `>=3.12`.
+Versions exercised while preparing this guide were AWS CLI `2.35.21`, Terraform
+`1.16.1`, Docker `29.9.0`, `gh 2.45.0`, and `jq 1.7`.
+
+**Manual account steps:** choose a new subdomain (do not reuse your live-site
+hostname), ensure your parent-DNS provider can add NS records, request SES
+production sending access, enable the Bedrock models you intend to use, and
+choose a human GitHub environment reviewer. Bedrock availability and inference
+profile ARNs are **UNVERIFIED** until checked in your account.
+
+```bash
+git clone <your-repository-url> OpenVault
+cd OpenVault
+git switch infra
+cp deploy.config.example deploy.config
+$EDITOR deploy.config
+cp .env.production.example .env.production
+$EDITOR .env.production
+./scripts/bootstrap.sh
+```
+
+The entry point runs preflight, config generation, bootstrap/base infrastructure,
+first image push, service apply, migrations, initial setup, and smoke tests in
+order. Allow **45–90 minutes** for the hands-on steps; DNS/SES verification can
+take longer. **Estimated monthly cost:** about **$131 for production** plus
+Bedrock usage; staging is about **$95–$110 while running**. These are estimates,
+not a quote, and apply creates billable resources. To tear down staging, use
+`./scripts/destroy.sh staging`; production requires an extra explicit flag and
+confirmation. The Terraform state/OIDC bootstrap stack is intentionally kept.
+
+See [`docs/DEPLOY.md`](docs/DEPLOY.md) for account-specific details, verification,
+and what is not removed by teardown.
+
+---
+
 ## Quickstart (any OS — clone and run)
 
 ```bash
