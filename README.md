@@ -28,9 +28,8 @@ choose a human GitHub environment reviewer. Bedrock availability and inference
 profile ARNs are **UNVERIFIED** until checked in your account.
 
 ```bash
-git clone <your-repository-url> OpenVault
+git clone --branch infra https://github.com/SenseiSaad/openvault.git OpenVault
 cd OpenVault
-git switch infra
 cp deploy.config.example deploy.config
 $EDITOR deploy.config
 cp .env.production.example .env.production

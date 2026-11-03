@@ -46,6 +46,8 @@ preflight() {
 
   local cmd aws_version tf_version docker_version gh_version jq_version account_id
   for cmd in aws terraform docker gh jq git curl python3 session-manager-plugin; do require_command "$cmd"; done
+  export TF_PLUGIN_CACHE_DIR="${TF_PLUGIN_CACHE_DIR:-${HOME}/.terraform.d/plugin-cache}"
+  mkdir -p "$TF_PLUGIN_CACHE_DIR"
 
   aws_version="$(aws --version 2>&1 | sed -E 's/^aws-cli\/([^ ]+).*/\1/')"
   [[ "$aws_version" == 2.* ]] || fail "AWS CLI v2 is required; detected '$aws_version'."

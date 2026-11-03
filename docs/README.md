@@ -20,6 +20,7 @@
 | [`runbooks/accidental-deletion.md`](runbooks/accidental-deletion.md) | S3 versions + database row recovery. |
 | [`loadtest-results.md`](loadtest-results.md) | Local k6 numbers and how to run a staging test safely. |
 | [`FINAL_REPORT.md`](FINAL_REPORT.md) | Section 8 handoff: what is verified, what is not, costs, inputs, risks, commands. |
+| [`FRESH_CLONE_TEST.md`](FRESH_CLONE_TEST.md) | Clean-clone steps, validation results, failures found, and unresolved blockers. |
 
 ## Legacy live deployment (do not modify)
 
