@@ -131,58 +131,29 @@ jobs:
           directory: infra
           framework: terraform
           config_file: infra/.checkov.yml
-          soft_fail: true
+          soft_fail: false
       - name: terraform validate (per config)
         run: |
           for d in bootstrap modules/* envs/prod envs/staging; do
             (cd "$d" && terraform init -backend=false -input=false >/dev/null 2>&1 && terraform validate) || exit 1
           done
 
-  terraform-plan:
-    name: Terraform plan (staging) — PR comment
-    needs: terraform
-    if: github.event_name == 'pull_request' && vars.TERRAFORM_PLAN_ROLE_ARN != ''
+  ci-required:
+    name: CI required
+    if: always()
+    needs: [backend, frontend, images, terraform]
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-      pull-requests: write
-    defaults:
-      run:
-        working-directory: infra/envs/staging
-    env:
-      TF_VAR_domain: ${{ vars.STAGING_DOMAIN }}
-      TF_VAR_bedrock_model_arns: ${{ vars.BEDROCK_MODEL_ARNS }}
-      TF_VAR_github_repo: ${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Configure AWS credentials (OIDC, read-only plan role)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.TERRAFORM_PLAN_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-      - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "1.9.0"
-      - name: terraform init + plan
-        id: plan
+      - name: Require all CI gates
+        env:
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          IMAGES_RESULT: ${{ needs.images.result }}
+          TERRAFORM_RESULT: ${{ needs.terraform.result }}
         run: |
-          terraform init -input=false
-          terraform plan -input=false -no-color -out=tfplan.out 2>&1 | tee plan.txt
-      - name: Post plan as PR comment
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            let body = 'Terraform plan produced no output.';
-            try {
-              const raw = fs.readFileSync('infra/envs/staging/plan.txt', 'utf8');
-              const trimmed = raw.length > 60000 ? raw.slice(0, 60000) + '\n… truncated' : raw;
-              body = '## Terraform plan (staging)\n\n<details><summary>Click to expand</summary>\n\n```hcl\n' + trimmed + '\n```\n\n</details>';
-            } catch (e) {}
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body
-            });
+          for result in "$BACKEND_RESULT" "$FRONTEND_RESULT" "$IMAGES_RESULT" "$TERRAFORM_RESULT"; do
+            if [[ "$result" != "success" ]]; then
+              echo "Required CI job did not succeed: $result" >&2
+              exit 1
+            fi
+          done

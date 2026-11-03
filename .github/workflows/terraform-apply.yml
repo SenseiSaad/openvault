@@ -4,39 +4,59 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: "Which environment root to apply"
+        description: "Target environment (staging first; production requires review)"
         required: true
         type: choice
-        options: [staging, prod]
+        options: [staging, production]
 
 concurrency:
-  group: terraform-${{ inputs.environment }}
+  group: terraform-apply-${{ inputs.environment }}
   cancel-in-progress: false
 
 permissions:
-  id-token: write
   contents: read
+  id-token: write
 
 jobs:
   apply:
-    name: terraform apply (${{ inputs.environment }})
+    name: Apply ${{ inputs.environment }}
     runs-on: ubuntu-latest
-    environment: ${{ inputs.environment == 'prod' && 'terraform-prod' || 'terraform-staging' }}
-    defaults:
-      run:
-        working-directory: infra/envs/${{ inputs.environment }}
+    environment: ${{ inputs.environment }}
     env:
-      TF_VAR_domain: ${{ vars.TF_VAR_DOMAIN }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_DIR: ${{ inputs.environment == 'production' && 'prod' || 'staging' }}
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_LOCK_TABLE: ${{ vars.TF_STATE_LOCK_TABLE }}
+      TF_VAR_region: ${{ vars.AWS_REGION }}
+      TF_VAR_domain: ${{ inputs.environment == 'production' && vars.DOMAIN_PROD || vars.DOMAIN_STAGING }}
+      TF_VAR_from_email: ${{ inputs.environment == 'production' && vars.FROM_EMAIL_PROD || vars.FROM_EMAIL_STAGING }}
+      TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
+      TF_VAR_github_repo: ${{ vars.REPOSITORY }}
       TF_VAR_bedrock_model_arns: ${{ vars.BEDROCK_MODEL_ARNS }}
+      TF_VAR_dmarc_record: ${{ vars.DMARC_RECORD }}
+      TF_VAR_services_enabled: "true"
+      TF_VAR_initial_image_tag: ${{ vars.INITIAL_IMAGE_TAG }}
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.TERRAFORM_APPLY_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: openvault-terraform-apply-${{ inputs.environment }}
+          aws-region: ${{ env.AWS_REGION }}
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.9.0"
-      - run: terraform init -input=false
-      - run: terraform plan -input=false -no-color
-      - run: terraform apply -input=false -auto-approve
+      - name: Initialize remote state
+        run: |
+          terraform -chdir="infra/envs/$TF_DIR" init -input=false \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="key=envs/$TF_DIR/terraform.tfstate" \
+            -backend-config="region=$AWS_REGION" \
+            -backend-config="dynamodb_table=$TF_STATE_LOCK_TABLE" \
+            -backend-config="encrypt=true"
+      - name: Plan
+        run: terraform -chdir="infra/envs/$TF_DIR" plan -input=false -no-color -out=tfplan
+      - name: Apply the saved plan
+        run: terraform -chdir="infra/envs/$TF_DIR" apply -input=false -auto-approve tfplan

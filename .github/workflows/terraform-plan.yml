@@ -17,66 +17,70 @@ permissions:
 
 jobs:
   plan:
-    name: Plan ${{ matrix.name }}
+    name: Plan ${{ matrix.github_environment }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: staging
-            dir: staging
-          - name: production
-            dir: prod
+          - github_environment: staging
+            tf_dir: staging
+          - github_environment: production
+            tf_dir: prod
     env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      TF_DIR: ${{ matrix.tf_dir }}
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
-      TF_VAR_domain: ${{ matrix.dir == 'prod' && vars.DOMAIN_PROD || vars.DOMAIN_STAGING }}
+      TF_VAR_region: ${{ vars.AWS_REGION }}
+      TF_VAR_domain: ${{ matrix.github_environment == 'staging' && vars.DOMAIN_STAGING || vars.DOMAIN_PROD }}
+      TF_VAR_from_email: ${{ matrix.github_environment == 'staging' && vars.FROM_EMAIL_STAGING || vars.FROM_EMAIL_PROD }}
       TF_VAR_alert_email: ${{ vars.ALERT_EMAIL }}
+      TF_VAR_github_repo: ${{ vars.REPOSITORY }}
       TF_VAR_bedrock_model_arns: ${{ vars.BEDROCK_MODEL_ARNS }}
-      TF_VAR_oidc_allowed_subjects: ${{ vars.OIDC_ALLOWED_SUBJECTS }}
-      TF_VAR_initial_image_tag: ${{ vars.INITIAL_IMAGE_TAG || 'bootstrap' }}
-      TF_VAR_dmarc_record: ${{ vars.DMARC_RECORD || 'v=DMARC1; p=none' }}
+      TF_VAR_dmarc_record: ${{ vars.DMARC_RECORD }}
+      TF_VAR_services_enabled: "true"
+      TF_VAR_initial_image_tag: ${{ vars.INITIAL_IMAGE_TAG }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      TF_STATE_LOCK_TABLE: ${{ vars.TF_STATE_LOCK_TABLE }}
     defaults:
       run:
-        working-directory: infra/envs/${{ matrix.dir }}
+        working-directory: infra/envs/${{ matrix.tf_dir }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
-          terraform_version: "1.9.8"
-      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
+          role-to-assume: ${{ vars.TERRAFORM_PLAN_ROLE_ARN }}
+          role-session-name: openvault-plan-${{ matrix.github_environment }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: hashicorp/setup-terraform@v3
         with:
-          role-to-assume: ${{ vars.AWS_TERRAFORM_PLAN_ROLE_ARN }}
-          role-session-name: openvault-plan-${{ matrix.name }}
-          aws-region: ${{ vars.AWS_REGION }}
-      - name: Init
-        run: terraform init -input=false -no-color
-      - name: Plan (read-only; no state lock)
+          terraform_version: "1.9.0"
+      - name: Initialize remote state
         run: |
-          set -euo pipefail
-          terraform plan -lock=false -input=false -no-color -out=tfplan
-          terraform show -no-color tfplan > plan.txt
-      - name: Post plan to PR
-        if: always()
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+          terraform init -input=false \
+            -backend-config="bucket=$TF_STATE_BUCKET" \
+            -backend-config="key=envs/$TF_DIR/terraform.tfstate" \
+            -backend-config="region=$AWS_REGION" \
+            -backend-config="dynamodb_table=$TF_STATE_LOCK_TABLE" \
+            -backend-config="encrypt=true"
+      - name: Create read-only plan
+        run: terraform plan -lock=false -input=false -no-color -out=tfplan
+      - name: Render plan for pull request
+        run: terraform show -no-color tfplan > plan.txt
+      - name: Post plan as PR comment
+        uses: actions/github-script@v7
         env:
-          PLAN_NAME: ${{ matrix.name }}
-          PLAN_DIR: ${{ matrix.dir }}
+          PLAN_ENV: ${{ matrix.github_environment }}
+          PLAN_FILE: infra/envs/${{ matrix.tf_dir }}/plan.txt
         with:
           script: |
             const fs = require('fs');
-            const path = `infra/envs/${process.env.PLAN_DIR}/plan.txt`;
-            let body = `### Terraform plan — ${process.env.PLAN_NAME}\n\n`;
-            if (fs.existsSync(path)) {
-              const text = fs.readFileSync(path, 'utf8');
-              body += '```\n' + text.slice(0, 60000) + '\n```';
-              if (text.length > 60000) body += '\n_(truncated; see the job log for the full plan)_';
-            } else {
-              body += '_Plan did not produce output. Check the job log._';
-            }
+            const text = fs.readFileSync(process.env.PLAN_FILE, 'utf8');
+            const clipped = text.length > 60000 ? text.slice(0, 60000) + '\n… truncated' : text;
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body,
+              body: `## Terraform plan — ${process.env.PLAN_ENV}\n\n\`\`\`hcl\n${clipped}\n\`\`\``
             });

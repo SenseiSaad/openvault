@@ -97,17 +97,64 @@ account and target environment; it retains rather than deletes existing state.
 
 ## GitHub Actions setup
 
-After bootstrap and staging outputs exist, run:
+After bootstrap and the selected environment's Terraform outputs exist, run:
 
 ```bash
-./scripts/setup_github.sh
+./scripts/setup_github.sh staging
+# After production has also been applied:
+./scripts/setup_github.sh prod
 ```
 
-The script reads Terraform outputs, sets repository/environment variables and
-smoke-test secrets with `gh`, creates staging/production environments with a
-required reviewer, and protects `main` with required CI checks and no required
-approving review. Exact variable and secret names are listed below once setup
-is configured; never add AWS access keys or application secrets to git.
+The script reads bootstrap/environment Terraform outputs, sets the variables
+and environment secrets with `gh`, creates both environments with the current
+GitHub user as a required reviewer, and protects `main` with CI checks and no
+required approving review. It is safe to rerun; values are overwritten from
+the current Terraform outputs/config. It prompts for the smoke-test account
+credentials without echoing them.
+
+### Exact GitHub Actions names
+
+**Repository variables** (`Settings → Secrets and variables → Actions →
+Variables`):
+
+| Name | Purpose |
+|---|---|
+| `AWS_REGION` | Region from `deploy.config`. |
+| `REPOSITORY` | OIDC repository subject (`owner/repository`). |
+| `TF_STATE_BUCKET`, `TF_STATE_LOCK_TABLE` | Remote state and locking outputs. |
+| `BUILD_ROLE_ARN` | Bootstrap ECR-only image push role. |
+| `TERRAFORM_PLAN_ROLE_ARN` | Bootstrap read-only PR plan role. |
+| `TERRAFORM_APPLY_ROLE_ARN` | Bootstrap apply role; used only behind staging/production reviewer environments. |
+| `ALERT_EMAIL`, `BEDROCK_MODEL_ARNS`, `DMARC_RECORD` | Terraform app/account configuration. |
+| `DOMAIN_STAGING`, `DOMAIN_PROD`, `FROM_EMAIL_STAGING`, `FROM_EMAIL_PROD` | Config-derived hostnames and SES sender addresses. |
+| `PUBLIC_BASE_URL_STAGING`, `PUBLIC_BASE_URL_PROD` | Smoke-test origins. |
+| `ECR_REGISTRY`, `INITIAL_IMAGE_TAG` | Shared ECR registry and bootstrap tag. |
+| `ECR_API_REPOSITORY_STAGING`, `ECR_WEB_REPOSITORY_STAGING` | Filled after staging apply. |
+| `STAGING_DEPLOY_ROLE_ARN`, `STAGING_ECS_CLUSTER` | Staging deploy identity and cluster. |
+| `STAGING_ECS_API_SERVICE`, `STAGING_ECS_WEB_SERVICE`, `STAGING_ECS_WORKER_SERVICE` | Staging services. |
+| `ECR_API_REPOSITORY_PROD`, `ECR_WEB_REPOSITORY_PROD` | Filled after production apply. |
+| `PROD_DEPLOY_ROLE_ARN`, `PROD_ECS_CLUSTER` | Production deploy identity and cluster. |
+| `PROD_ECS_API_SERVICE`, `PROD_ECS_WEB_SERVICE`, `PROD_ECS_WORKER_SERVICE` | Production services. |
+
+**Variables in each GitHub environment** (`staging`, `production`):
+`DEPLOY_ROLE_ARN`, `ECS_CLUSTER`, `ECS_API_SERVICE`, `ECS_WEB_SERVICE`,
+`ECS_WORKER_SERVICE`, `ECR_API_REPOSITORY`, `ECR_WEB_REPOSITORY`,
+`PUBLIC_BASE_URL`, `DOMAIN`, `TF_VAR_region`, `TF_VAR_domain`,
+`TF_VAR_github_repo`, `TF_VAR_alert_email`, `TF_VAR_bedrock_model_arns`,
+`TF_VAR_from_email`, `TF_VAR_dmarc_record`, `TF_VAR_services_enabled`,
+`TF_VAR_initial_image_tag`, and `ALLOW_EMAIL_VERIFICATION_BYPASS` (set to `1`
+only for staging; production is `0`).
+
+**Secrets in each GitHub environment:** `SMOKE_TEST_EMAIL` and
+`SMOKE_TEST_PASSWORD`. They are set through hidden prompts by
+`scripts/setup_github.sh`; never put them in `deploy.config` or git.
+GitHub supplies the built-in `GITHUB_TOKEN` to CI automatically; do not create
+or copy a personal access token for that name.
+
+The branch protection gate is `CI / CI required`; its actual GitHub check-run
+label remains **UNVERIFIED** until the first repository Actions run. Do not
+weaken branch protection if the label differs—select the exact successful
+required-check name shown by GitHub.
 
 ## Costs and teardown
 

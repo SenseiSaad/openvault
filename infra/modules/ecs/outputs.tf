@@ -13,6 +13,15 @@ output "cluster_name" {
   value       = aws_ecs_cluster.this.name
 }
 
+output "service_names" {
+  description = "ECS service names consumed by deploy/rollback tooling."
+  value = {
+    api    = aws_ecs_service.api.name
+    web    = aws_ecs_service.web.name
+    worker = aws_ecs_service.worker.name
+  }
+}
+
 output "task_definition_families" {
   description = "Task def families for CI: api, worker, web, migrate, backup."
   value = {

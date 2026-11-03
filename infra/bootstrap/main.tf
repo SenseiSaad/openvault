@@ -163,7 +163,6 @@ resource "aws_iam_role_policy" "github_build" {
         Action = [
           "ecr:BatchCheckLayerAvailability", "ecr:CompleteLayerUpload",
           "ecr:InitiateLayerUpload", "ecr:PutImage", "ecr:UploadLayerPart",
-          "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer",
         ]
         Resource = "arn:aws:ecr:${var.region}:${local.account_id}:repository/openvault-*"
       },
@@ -182,21 +181,33 @@ resource "aws_iam_role_policy" "github_terraform_plan" {
   role = aws_iam_role.github_terraform_plan.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "ec2:Describe*", "elasticloadbalancing:Describe*", "acm:Describe*",
-        "acm:List*", "application-autoscaling:Describe*", "logs:Describe*",
-        "logs:ListTags*", "events:Describe*", "events:List*", "kms:Describe*",
-        "kms:List*", "ecr:Describe*", "ecs:Describe*", "rds:Describe*",
-        "s3:List*", "s3:Get*", "iam:Get*", "iam:List*", "ssm:Describe*",
-        "ssm:Get*", "elasticache:Describe*", "route53:Get*", "route53:List*",
-        "bedrock:Get*", "bedrock:List*", "dynamodb:Describe*", "ses:Get*",
-        "ses:List*", "budgets:ViewBudget", "sts:GetCallerIdentity",
-        "cloudwatch:Describe*", "cloudwatch:List*", "sns:Get*", "sns:List*",
-      ]
-      Resource = "*"
-    }]
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ec2:Describe*", "elasticloadbalancing:Describe*", "acm:Describe*",
+          "acm:List*", "application-autoscaling:Describe*", "logs:Describe*",
+          "logs:ListTags*", "events:Describe*", "events:List*", "kms:Describe*",
+          "kms:List*", "ecr:Describe*", "ecs:Describe*", "rds:Describe*",
+          "iam:Get*", "iam:List*", "ssm:Describe*", "elasticache:Describe*",
+          "route53:Get*", "route53:List*", "bedrock:Get*", "bedrock:List*",
+          "dynamodb:Describe*", "ses:Get*", "ses:List*", "budgets:ViewBudget",
+          "sts:GetCallerIdentity", "cloudwatch:Describe*", "cloudwatch:List*",
+          "sns:Get*", "sns:List*",
+        ]
+        Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["s3:Get*", "s3:List*"]
+        Resource = ["arn:aws:s3:::openvault-*", "arn:aws:s3:::${var.name_prefix}-tfstate"]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:GetObjectVersion"]
+        Resource = "arn:aws:s3:::${var.name_prefix}-tfstate/*"
+      },
+    ]
   })
 }
 

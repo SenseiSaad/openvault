@@ -3,63 +3,55 @@ name: Rollback
 on:
   workflow_dispatch:
     inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        type: choice
+        options: [staging, production]
       image_tag:
-        description: "Image tag (commit SHA) to roll back to"
+        description: "Previously pushed immutable commit SHA"
         required: true
         type: string
 
 concurrency:
-  group: deploy-production
+  group: rollback-${{ inputs.environment }}
   cancel-in-progress: false
 
 permissions:
-  id-token: write
   contents: read
-
-env:
-  AWS_REGION: ${{ vars.AWS_REGION }}
-  CLUSTER: ${{ vars.ECS_CLUSTER }}
+  id-token: write
 
 jobs:
   rollback:
-    name: Roll production back to an earlier image
+    name: Roll back ${{ inputs.environment }}
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      ECR_REGISTRY: ${{ vars.ECR_REGISTRY }}
+      ECR_API_REPOSITORY: ${{ vars.ECR_API_REPOSITORY }}
+      ECR_WEB_REPOSITORY: ${{ vars.ECR_WEB_REPOSITORY }}
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      API_SERVICE: ${{ vars.ECS_API_SERVICE }}
+      WEB_SERVICE: ${{ vars.ECS_WEB_SERVICE }}
+      WORKER_SERVICE: ${{ vars.ECS_WORKER_SERVICE }}
+      PUBLIC_BASE_URL: ${{ vars.PUBLIC_BASE_URL }}
+      SKIP_MIGRATE: "1"
+      REQUIRE_AUTH_SMOKE: ${{ inputs.environment == 'production' && '1' || '0' }}
+      ALLOW_EMAIL_VERIFICATION_BYPASS: ${{ inputs.environment == 'staging' && vars.ALLOW_EMAIL_VERIFICATION_BYPASS || '0' }}
+      SMOKE_TEST_EMAIL: ${{ secrets.SMOKE_TEST_EMAIL }}
+      SMOKE_TEST_PASSWORD: ${{ secrets.SMOKE_TEST_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.DEPLOY_ROLE_ARN }}
+          role-session-name: openvault-rollback-${{ inputs.environment }}
           aws-region: ${{ env.AWS_REGION }}
-      - name: Point all services at the old tag
+      - name: Redeploy the previous immutable image (skip migrations)
         run: |
-          REG=${{ vars.ECR_REGISTRY }}
-          TAG=${{ inputs.image_tag }}
-          for FAMILY in openvault-prod-api openvault-prod-worker; do
-            aws ecs describe-task-definition --task-definition "$FAMILY" \
-              --query 'taskDefinition' --output json | jq \
-              --arg image "$REG/openvault-api:$TAG" \
-              '.containerDefinitions[0].image = $image |
-               del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
-                   .compatibilities, .registeredAt, .registeredBy)' > /tmp/def.json
-            aws ecs register-task-definition --cli-input-json file:///tmp/def.json \
-              --query 'taskDefinition.taskDefinitionArn' --output text
-          done
-          aws ecs describe-task-definition --task-definition openvault-prod-web \
-            --query 'taskDefinition' --output json | jq \
-            --arg image "$REG/openvault-web:$TAG" \
-            '.containerDefinitions[0].image = $image |
-             del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
-                 .compatibilities, .registeredAt, .registeredBy)' > /tmp/def.json
-          aws ecs register-task-definition --cli-input-json file:///tmp/def.json \
-            --query 'taskDefinition.taskDefinitionArn' --output text
-      - name: Deploy + wait for stability
-        run: |
-          aws ecs update-service --cluster "$CLUSTER" --service api \
-            --task-definition openvault-prod-api --force-new-deployment
-          aws ecs update-service --cluster "$CLUSTER" --service worker \
-            --task-definition openvault-prod-worker --force-new-deployment
-          aws ecs update-service --cluster "$CLUSTER" --service web \
-            --task-definition openvault-prod-web --force-new-deployment
-          aws ecs wait services-stable --cluster "$CLUSTER" --services api worker web
-      - name: Smoke test
-        run: curl -fsS "https://${{ vars.PROD_DOMAIN }}/api/health/live"
+          if [[ "${{ inputs.environment }}" == "production" ]]; then
+            ./scripts/deploy_ecs.sh prod "${{ inputs.image_tag }}"
+          else
+            ./scripts/deploy_ecs.sh staging "${{ inputs.image_tag }}"
+          fi

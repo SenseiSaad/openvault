@@ -38,6 +38,11 @@ output "cluster_name" {
   value       = module.ecs.cluster_name
 }
 
+output "service_names" {
+  description = "ECS API/web/worker service names."
+  value       = module.ecs.service_names
+}
+
 output "task_definition_families" {
   description = "Task def families CI updates (api/worker/web/migrate/backup)."
   value       = module.ecs.task_definition_families
