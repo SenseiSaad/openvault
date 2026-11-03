@@ -1,24 +1,32 @@
 #!/usr/bin/env bash
 # Push local .env values to SSM Parameter Store for the ECS task definitions.
-#   ./scripts/push_env_to_ssm.sh <env> [--dry-run]
-#   e.g. ./scripts/push_env_to_ssm.sh prod
-# Reads .env.<env> in the repo root (gitignored). Secrets -> SecureString,
+#   ./scripts/push_env_to_ssm.sh <staging|prod> [env-file] [--dry-run]
+# Reads a gitignored file (defaults to .env.production). Secrets -> SecureString,
 # plain config -> String. Prints parameter NAMES only, never values.
 set -euo pipefail
 
-ENV="${1:?usage: push_env_to_ssm.sh <staging|prod> [--dry-run]}"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/lib/deploy_config.sh"
+load_deploy_config
+
+ENV="${1:-$ENVIRONMENT}"
+[[ "$ENV" == staging || "$ENV" == prod ]] || { echo "env must be staging or prod" >&2; exit 2; }
 DRY_RUN=false
-[[ "${2:-}" == "--dry-run" ]] && DRY_RUN=true
-ENV_FILE=".env.${ENV}"
+ENV_FILE="$ROOT/.env.production"
+if [[ "${2:-}" == "--dry-run" ]]; then
+  DRY_RUN=true
+elif [[ -n "${2:-}" ]]; then
+  ENV_FILE="$2"
+fi
+[[ "${3:-}" == "--dry-run" ]] && DRY_RUN=true
 
 [[ -f "$ENV_FILE" ]] || { echo "Missing $ENV_FILE (copy .env.production.example)" >&2; exit 1; }
 command -v aws >/dev/null || { echo "aws CLI required" >&2; exit 1; }
 
-AWS_REGION="${AWS_REGION:-ap-south-1}"
 SECRET_NAMES=(SECRET_KEY DATABASE_URL LLM_KEY_ENCRYPTION_KEY EMAIL_HOST_USER
               EMAIL_HOST_PASSWORD SENTRY_DSN
-              BOOTSTRAP_PLATFORM_ADMIN_EMAIL BOOTSTRAP_PLATFORM_ADMIN_PASSWORD)
-REQUIRED=(SECRET_KEY DATABASE_URL LLM_KEY_ENCRYPTION_KEY)
+              )
+REQUIRED=(SECRET_KEY DATABASE_URL LLM_KEY_ENCRYPTION_KEY EMAIL_HOST_USER EMAIL_HOST_PASSWORD)
 
 get_value() {  # get_value KEY FILE — last non-comment assignment, quotes stripped
   awk -F= -v k="$1" '
@@ -30,7 +38,8 @@ get_value() {  # get_value KEY FILE — last non-comment assignment, quotes stri
     END { if (!found) exit 1 }' "$2"
 }
 
-echo "Pushing to /openvault/$ENV/ (dry-run: $DRY_RUN)"
+"$ROOT/scripts/check_env.sh" "$ENV_FILE" --phase runtime
+echo "Pushing to /openvault/$ENV/ in region $AWS_REGION (dry-run: $DRY_RUN)"
 FAILED=0
 for KEY in "${SECRET_NAMES[@]}"; do
   VALUE=$(get_value "$KEY" "$ENV_FILE" || true)

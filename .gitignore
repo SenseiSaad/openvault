@@ -6,6 +6,7 @@
 !**/.env.example
 backend/.env
 *credentials*.json
+deploy.config
 
 # ── Python ─────────────────────────────────────────────────────────────
 backend/.venv/
@@ -58,6 +59,9 @@ infra/modules/**/.terraform.lock.hcl
 !*.tfvars.example
 *.tfstate
 *.tfstate.*
+terraform.tfstate
+terraform.tfstate.backup
+*.tfbackend
 *.tfplan
 tfplan
 crash.log

@@ -1,28 +1,22 @@
 variable "region" {
   description = "AWS region for the staging environment."
   type        = string
-  default     = "ap-south-1"
 }
 
 variable "owner" {
   description = "Tag value for the resource owner."
   type        = string
-  default     = "saad"
+  default     = "OpenVault"
 }
 
 variable "domain" {
-  description = "Staging subdomain, e.g. stg.v2.example.com."
+  description = "Staging delegated hostname; it must be different from production and live hostnames."
   type        = string
 }
 
 variable "oidc_allowed_subjects" {
   description = "OIDC subject patterns allowed to assume AWS roles."
   type        = list(string)
-  default = [
-    "repo:REPLACE_ME/openvault:ref:refs/heads/main",
-    "repo:REPLACE_ME/openvault:pull_request",
-    "repo:REPLACE_ME/openvault:environment:staging",
-  ]
 }
 
 variable "bedrock_model_arns" {
@@ -56,6 +50,16 @@ variable "alert_email" {
   description = "Email for SNS alarms."
   type        = string
   default     = ""
+}
+
+variable "from_email" {
+  description = "Verified sender address for SES, generated from deploy.config."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[^[:space:]@]+@[^[:space:]@]+\\.[^[:space:]@]+$", var.from_email))
+    error_message = "from_email must be a valid address under the verified SES identity."
+  }
 }
 
 variable "daily_total_token_budget" {

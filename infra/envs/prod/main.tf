@@ -29,7 +29,7 @@ data "aws_caller_identity" "current" {}
 locals {
   name_prefix = "openvault-prod"
   tags        = { Project = "openvault", Env = "prod", Owner = var.owner }
-  domain      = var.domain # e.g. v2.example.com
+  domain      = var.domain
 }
 
 module "network" {
@@ -128,7 +128,7 @@ module "ecs" {
     LOG_FORMAT                 = "json"
     CACHE_URL                  = "redis://${module.data.redis_endpoint}:6379/1"
     CELERY_BROKER_URL          = "redis://${module.data.redis_endpoint}:6379/0"
-    DEFAULT_FROM_EMAIL         = "OpenVault <no-reply@${local.domain}>"
+    DEFAULT_FROM_EMAIL         = var.from_email
     EMAIL_HOST                 = "email-smtp.${var.region}.amazonaws.com"
     EMAIL_PORT                 = "587"
     EMAIL_USE_TLS              = "true"

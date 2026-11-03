@@ -15,6 +15,10 @@ Buildx, GitHub CLI `>=2.45`, `jq >=1.6`, Git `>=2.30`, and Python `>=3.12`.
 Versions exercised while preparing this guide were AWS CLI `2.35.21`, Terraform
 `1.16.1`, Docker `29.9.0`, `gh 2.45.0`, and `jq 1.7`.
 
+`deploy.config` asks for AWS region, parent domain, subdomain, alert mailbox,
+sender-name local part, GitHub `owner/repository`, and target environment.
+Secrets stay in the separate ignored `.env.production` file.
+
 **Manual account steps:** choose a new subdomain (do not reuse your live-site
 hostname), ensure your parent-DNS provider can add NS records, request SES
 production sending access, enable the Bedrock models you intend to use, and

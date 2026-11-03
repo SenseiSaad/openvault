@@ -22,7 +22,7 @@ case "$ENV_NAME" in
   *) echo "env must be staging or prod" >&2; exit 2 ;;
 esac
 
-export AWS_REGION="${AWS_REGION:-ap-south-1}"
+export AWS_REGION="${AWS_REGION:?AWS_REGION must come from deploy.config or the GitHub repository variable}"
 ECS_CLUSTER="${ECS_CLUSTER:-${PREFIX}-cluster}"
 API_SERVICE="${API_SERVICE:-api}"
 WEB_SERVICE="${WEB_SERVICE:-web}"

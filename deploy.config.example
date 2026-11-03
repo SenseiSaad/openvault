@@ -1,0 +1,11 @@
+# Copy to deploy.config and fill in every blank. Values are simple, unquoted
+# single-line values; do not put secrets here.
+AWS_REGION=
+DOMAIN=
+SUBDOMAIN=
+ALERT_EMAIL=
+FROM_EMAIL_LOCAL_PART=
+GITHUB_REPO=
+ENVIRONMENT=staging
+# Optional comma-separated exact Bedrock model/inference-profile ARNs.
+BEDROCK_MODEL_ARNS=

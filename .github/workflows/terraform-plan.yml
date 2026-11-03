@@ -48,7 +48,7 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_TERRAFORM_PLAN_ROLE_ARN }}
           role-session-name: openvault-plan-${{ matrix.name }}
-          aws-region: ${{ vars.AWS_REGION || 'ap-south-1' }}
+          aws-region: ${{ vars.AWS_REGION }}
       - name: Init
         run: terraform init -input=false -no-color
       - name: Plan (read-only; no state lock)

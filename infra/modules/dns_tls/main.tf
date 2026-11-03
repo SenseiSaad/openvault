@@ -1,4 +1,4 @@
-# Route 53 zone for a SUBDOMAIN only (e.g. v2.example.com) so the existing
+# Route 53 zone for a delegated subdomain so the existing
 # live site stays untouched: delegate the subdomain by pasting the output NS
 # records into the parent DNS provider. ACM validates via Route 53.
 terraform {
@@ -13,7 +13,7 @@ terraform {
 
 locals {
   common_tags = merge(var.tags, { Layer = "dns_tls" })
-  domain_name = var.domain # e.g. v2.example.com
+  domain_name = var.domain
 }
 
 resource "aws_route53_zone" "this" {

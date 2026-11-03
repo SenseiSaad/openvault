@@ -4,7 +4,7 @@ variable "name_prefix" {
 }
 
 variable "domain" {
-  description = "The SUBDOMAIN this stack owns (e.g. v2.example.com). The parent domain stays on the current DNS provider."
+  description = "The delegated hostname this stack owns; the parent domain stays with the current DNS provider."
   type        = string
 }
 

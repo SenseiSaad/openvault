@@ -99,8 +99,6 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
       - name: Update staging services
         run: |
-          REG=${{ vars.ECR_REGISTRY }}
-          TAG=${{ needs.build-push.outputs.tag }}
           aws ecs update-service --cluster "$STAGING_CLUSTER" --service api \
             --task-definition openvault-stg-api \
             --force-new-deployment || true

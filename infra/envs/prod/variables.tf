@@ -1,35 +1,27 @@
 variable "region" {
   description = "AWS region for everything in this environment."
   type        = string
-  default     = "ap-south-1"
 }
 
 variable "owner" {
   description = "Tag value for the resource owner."
   type        = string
-  default     = "saad"
+  default     = "OpenVault"
 }
 
 variable "domain" {
-  description = "The subdomain this stack owns, e.g. v2.example.com. The current live site is untouched."
+  description = "The delegated hostname this stack owns; it must not be the current live hostname."
   type        = string
 
   validation {
     condition     = can(regex("^[a-z0-9.-]+\\.[a-z]{2,}$", var.domain))
-    error_message = "domain must be a hostname like v2.example.com."
+    error_message = "domain must be a fully qualified hostname without a scheme or path."
   }
 }
 
 variable "oidc_allowed_subjects" {
   description = "OIDC subject patterns allowed to assume AWS roles."
   type        = list(string)
-  default = [
-    "repo:REPLACE_ME/openvault:ref:refs/heads/main",
-    "repo:REPLACE_ME/openvault:pull_request",
-    "repo:REPLACE_ME/openvault:ref:refs/tags/v*",
-    "repo:REPLACE_ME/openvault:environment:production",
-    "repo:REPLACE_ME/openvault:environment:staging",
-  ]
 }
 
 variable "bedrock_model_arns" {
@@ -63,6 +55,16 @@ variable "alert_email" {
   description = "Email for SNS alarms and budget notifications."
   type        = string
   default     = ""
+}
+
+variable "from_email" {
+  description = "Verified sender address for SES, generated from deploy.config."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[^[:space:]@]+@[^[:space:]@]+\\.[^[:space:]@]+$", var.from_email))
+    error_message = "from_email must be a valid address under the verified SES identity."
+  }
 }
 
 variable "daily_total_token_budget" {

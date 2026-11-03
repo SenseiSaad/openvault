@@ -1,5 +1,5 @@
 variable "mail_domain" {
-  description = "Domain sending email (usually the same subdomain as the app, e.g. v2.example.com)."
+  description = "Domain sending email, typically the same hostname as the app."
   type        = string
 }
 
@@ -9,7 +9,6 @@ variable "route53_zone_id" {
 }
 
 variable "dmarc_record" {
-  description = "DMARC policy record. Start at p=none with a rua mailbox, tighten after monitoring."
+  description = "DMARC TXT record derived from the alert mailbox in deploy.config."
   type        = string
-  default     = "v=DMARC1; p=none; rua=mailto:postmaster@openvault.pk"
 }
