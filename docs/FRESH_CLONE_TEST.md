@@ -1,7 +1,7 @@
 # Fresh-clone test record
 
 **Date:** 2026-11-03  
-**Branch commit tested:** `e3c0340` (`infra`, before this report was added)  
+**Branch commit tested:** `bc3edd2` (`infra`, clean local clone)
 **AWS apply/spend:** none
 
 ## Procedure
@@ -11,7 +11,7 @@ local branch rather than the hosted URL:
 
 ```bash
 git clone --no-hardlinks --branch infra /home/saad/Desktop/OpenVault \
-  /tmp/opencode/openvault-fresh-item7-20261103
+  /tmp/opencode/openvault-fresh-final-20261103
 ```
 
 In that empty clone, I followed the README setup through preflight using a fake
@@ -37,11 +37,11 @@ The fresh clone then ran:
 * `find infra -name '*.tfstate*' -o -name '*.tfplan'` — no state or plan files.
 
 The first cold provider download exceeded the shell time limit in this network
-environment. Re-running with a shared Terraform plugin cache populated on this
-host completed all roots. `scripts/bootstrap.sh` now creates/uses the user's
-`~/.terraform.d/plugin-cache` during its full pipeline so downloads are reused
-across config roots. Cold-download duration on a new network remains
-**UNVERIFIED**.
+environment. A retry using the host's populated provider cache completed all
+roots; the preflight also verified that the new default cache directory is
+created. `scripts/bootstrap.sh` uses `~/.terraform.d/plugin-cache` to reuse
+downloads across roots. The time for a completely cold first provider download
+on another network remains **UNVERIFIED**.
 
 ## Issues found and fixes made
 
@@ -61,7 +61,8 @@ across config roots. Cold-download duration on a new network remains
 
 * The README clone URL names the hosted repository, but `infra` has not been
   pushed/upstreamed. A real hosted `git clone --branch infra` was therefore not
-  possible in this test; the local branch clone was used instead.
+  possible in this test; the local branch clone was used instead. The hosted
+  clone path is **UNVERIFIED** until the branch is published.
 * The real `session-manager-plugin` is not installed in this environment; only
   its preflight presence check was stubbed for the fake-credential test. Install
   and verify it before real admin/MFA setup.
