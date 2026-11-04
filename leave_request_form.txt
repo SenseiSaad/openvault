@@ -1,0 +1,61 @@
+==================================================
+EMPLOYEE LEAVE / HALF-DAY REQUEST FORM - XYZ COMPANY
+==================================================
+
+1. EMPLOYEE INFORMATION
+-----------------------
+* Full Name: Saad Waseem
+* Employee ID: [e.g., EMP-1045]
+* Department / Team: [e.g., Engineering / Backend]
+* Manager / Supervisor Name: [Manager's Name]
+
+2. LEAVE TYPE
+-------------
+* [ ] Full-Day Leave
+* [ ] Half-Day Leave (Specify: [ ] First Half / [ ] Second Half)
+* [ ] Sick Leave
+* [ ] Casual / Annual Leave
+* [ ] Other: _______________
+
+3. LEAVE DURATION
+-----------------
+* Start Date & Time: [YYYY-MM-DD] [09:00 AM]
+* End Date & Time: [YYYY-MM-DD] [06:00 PM]
+* Total Days / Hours Requested: [e.g., 1 Day / 4 Hours]
+
+4. REASON FOR LEAVE
+-------------------
+* [Brief description, e.g., Personal appointment / Family event / Medical checkup]
+
+5. HANDOVER / COVERAGE DETAILS
+------------------------------
+* Tasks Handled By (Colleague Name): [Colleague's Name]
+* Pending / Urgent Items Handled: [Briefly note any urgent items or write "N/A"]
+
+6. CONTACT DETAILS DURING LEAVE
+-------------------------------
+* Phone Number / Messaging: [Your Phone Number]
+* Email: obsks23@gmail.com
+
+
+==================================================
+EMAIL TEMPLATE (To Manager / HR)
+==================================================
+
+Subject: Leave Request ([Full Day / Half Day]) – Saad Waseem – [Date]
+
+Hi [Manager's Name],
+
+Please accept this as my formal request for a [Full-Day / Half-Day] leave on [Date]. 
+
+- Type: [e.g., Half-Day (Second Half)]
+- Reason: [Brief reason]
+- Coverage: [Colleague's Name] has kindly agreed to cover any urgent matters while I am away.
+
+I can be reached via phone in case of any critical emergencies. Thank you for considering my request.
+
+Best regards,
+
+Saad Waseem  
+[Your Job Title]  
+obsks23@gmail.com

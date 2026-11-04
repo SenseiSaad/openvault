@@ -149,7 +149,8 @@ function UploadPanel({
   departments: Department[]
   onUploaded: (doc: EnterpriseDoc) => void
 }) {
-  const [file, setFile] = useState<File | null>(null)
+  const [files, setFiles] = useState<File[]>([])
+  const [uploadProgress, setUploadProgress] = useState('')
   const [category, setCategory] = useState('')
   const [description, setDescription] = useState('')
   const [tagsInput, setTagsInput] = useState('')
@@ -161,8 +162,8 @@ function UploadPanel({
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    if (!file) {
-      toast.error('Choose a file to upload.')
+    if (files.length === 0) {
+      toast.error('Choose at least one file to upload.')
       return
     }
     if (scope === 'department' && !deptId) {
@@ -170,40 +171,56 @@ function UploadPanel({
       return
     }
     setBusy(true)
-    const form = new FormData()
-    form.append('file', file)
-    form.append('category', category.trim())
-    form.append('description', description.trim())
-    form.append('access_scope', scope)
-    if (scope === 'department' && deptId) {
-      form.append('department', String(deptId))
-    }
+    let succeeded = 0
     const tags = tagsInput
       .split(',')
       .map((t) => t.trim())
       .filter(Boolean)
-    if (tags.length > 0) {
-      form.append('tags', JSON.stringify(tags))
-    }
-    form.append('is_okf', String(isOkf))
 
-    try {
-      const doc = await workApi.upload(form)
-      onUploaded(doc)
-      toast.success(`"${doc.filename}" uploaded.`)
-      setFile(null)
-      setCategory('')
-      setDescription('')
-      setTagsInput('')
-      setScope('company')
-      setDeptId('')
-      setIsOkf(false)
-      if (fileRef.current) fileRef.current.value = ''
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Upload failed.')
-    } finally {
-      setBusy(false)
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i]
+      if (files.length > 1) {
+        setUploadProgress(`Uploading ${i + 1} of ${files.length}: ${f.name}…`)
+      }
+      const form = new FormData()
+      form.append('file', f)
+      form.append('category', category.trim())
+      form.append('description', description.trim())
+      form.append('access_scope', scope)
+      if (scope === 'department' && deptId) {
+        form.append('department', String(deptId))
+      }
+      if (tags.length > 0) {
+        form.append('tags', JSON.stringify(tags))
+      }
+      form.append('is_okf', String(isOkf))
+
+      try {
+        const doc = await workApi.upload(form)
+        onUploaded(doc)
+        succeeded++
+      } catch (err) {
+        toast.error(`Failed to upload ${f.name}: ${err instanceof Error ? err.message : 'Upload error'}`)
+      }
     }
+
+    if (succeeded > 0) {
+      toast.success(
+        files.length === 1
+          ? `"${files[0].name}" uploaded.`
+          : `${succeeded} documents uploaded successfully.`,
+      )
+    }
+    setFiles([])
+    setUploadProgress('')
+    setCategory('')
+    setDescription('')
+    setTagsInput('')
+    setScope('company')
+    setDeptId('')
+    setIsOkf(false)
+    if (fileRef.current) fileRef.current.value = ''
+    setBusy(false)
   }
 
   return (
@@ -232,16 +249,22 @@ function UploadPanel({
         <form onSubmit={submit} className="space-y-4 border-t border-[#eae7df] p-5">
           <div>
             <label htmlFor="up-file" className="mb-1.5 block text-xs font-medium text-[#1d1d1b]">
-              File
+              File(s)
             </label>
             <input
               ref={fileRef}
               id="up-file"
               type="file"
+              multiple
               required
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              onChange={(e) => setFiles(Array.from(e.target.files || []))}
               className="block w-full rounded-xl border border-[#d8d5cc] bg-[#fffdfa] text-xs file:mr-4 file:border-0 file:bg-[#f2efe8] file:px-4 file:py-2.5"
             />
+            {files.length > 1 && (
+              <p className="mt-1 text-xs text-[#6b6862]">
+                {files.length} files selected ({formatBytes(files.reduce((acc, f) => acc + f.size, 0))})
+              </p>
+            )}
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -387,11 +410,21 @@ function UploadPanel({
           </label>
 
           <div className="flex flex-wrap items-center gap-3 pt-2">
-            <button type="submit" disabled={busy || !file} className={primaryBtn}>
+            <button type="submit" disabled={busy || files.length === 0} className={primaryBtn}>
               {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />}
-              {busy ? 'Uploading…' : 'Upload document'}
+              {busy
+                ? uploadProgress || 'Uploading…'
+                : files.length > 1
+                ? `Upload ${files.length} documents`
+                : 'Upload document'}
             </button>
-            <span className="text-xs text-[#6b6862]">{file?.name || 'No file selected'}</span>
+            <span className="text-xs text-[#6b6862]">
+              {files.length === 0
+                ? 'No file selected'
+                : files.length === 1
+                ? files[0].name
+                : `${files.length} files queued`}
+            </span>
           </div>
         </form>
       )}
@@ -999,6 +1032,28 @@ export default function DocumentsPage() {
       .catch((e) => setLoadError(e instanceof Error ? e.message : 'Could not load documents.'))
       .finally(() => setLoading(false))
   }, [])
+
+  const refreshSilent = useCallback((targetPage = 1) => {
+    workApi
+      .documents(targetPage, 50)
+      .then((res) => {
+        setDocs(res.results || [])
+        setTotalCount(res.count || 0)
+        setPage(res.page || 1)
+        setPages(res.pages || 1)
+      })
+      .catch(() => {})
+  }, [])
+
+  // Poll quietly every 2.5s while any document is in 'pending' indexing status
+  const hasPending = useMemo(() => docs.some((d) => d.indexing_status === 'pending'), [docs])
+  useEffect(() => {
+    if (!hasPending) return
+    const interval = setInterval(() => {
+      refreshSilent(page)
+    }, 2500)
+    return () => clearInterval(interval)
+  }, [hasPending, page, refreshSilent])
 
   useEffect(() => {
     load(1)

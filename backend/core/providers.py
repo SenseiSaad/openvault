@@ -133,11 +133,22 @@ class OllamaProvider(BaseProvider):
     def embed(self, texts):
         if np is None:
             return None
+        keep = os.getenv("OLLAMA_KEEP_ALIVE", "30m")
         try:
+            # One HTTP call per batch (Ollama >= 0.3). Far faster than one call per chunk.
+            r = _json(f"{self.base}/api/embed",
+                      {"model": self.embed_model, "input": list(texts), "keep_alive": keep},
+                      timeout=120.0)
+            embs = r.get("embeddings")
+            if embs and len(embs) == len(texts):
+                return [np.asarray(e, dtype=np.float32) for e in embs]
+        except Exception:
+            pass
+        try:  # older Ollama: legacy single-prompt endpoint
             vecs = []
             for t in texts:
                 r = _json(f"{self.base}/api/embeddings",
-                          {"model": self.embed_model, "prompt": t})
+                          {"model": self.embed_model, "prompt": t, "keep_alive": keep})
                 vecs.append(np.asarray(r["embedding"], dtype=np.float32))
             return vecs
         except Exception:
@@ -146,7 +157,12 @@ class OllamaProvider(BaseProvider):
     def stream_chat(self, messages, temperature=0.2, max_tokens=512):
         self.last_usage = {}
         payload = {"model": self.chat_model, "messages": messages, "stream": True,
-                   "options": {"temperature": temperature, "num_predict": max_tokens}}
+                   "keep_alive": os.getenv("OLLAMA_KEEP_ALIVE", "30m"),
+                   "options": {
+                       "temperature": temperature,
+                       "num_predict": max_tokens,
+                       "num_thread": int(os.getenv("OLLAMA_NUM_THREADS", "6")),
+                   }}
         with _open(f"{self.base}/api/chat", payload, timeout=_STREAM_TIMEOUT) as r:
             for line in _sse_lines(r):
                 try:
@@ -162,6 +178,23 @@ class OllamaProvider(BaseProvider):
                         "output_tokens": data.get("eval_count"),
                     }
                     break
+class SelfHostedProvider(OllamaProvider):
+    """Your own model server (e.g. Ollama on an EC2 host). Same wire protocol as
+    local Ollama, but a separate endpoint/model so both can be offered at once."""
+    label = "selfhosted"
+
+    def __init__(self, base_url, chat_model, embed_model):
+        self.base = (base_url or "").strip().rstrip("/")
+        self.chat_model = chat_model or "qwen2.5:7b"
+        self.embed_model = embed_model or "nomic-embed-text"
+        self.embed_model_name = self.embed_model
+
+    def available(self):
+        if not self.base:
+            return False
+        return super().available()
+
+
 class OpenAIProvider(BaseProvider):
     """OpenAI OR any OpenAI-compatible server (set base_url to point at it)."""
     label = "openai"
@@ -633,13 +666,24 @@ DEFAULT_MODELS = {
     "openai": "gpt-4o-mini",
     "anthropic": "claude-3-5-haiku-latest",
     "gemini": "gemini-2.5-flash",
+    "selfhosted": "qwen2.5:7b",
     "fake": "fake-1",
     # India geographic inference profile — NOT the global one.
     "bedrock": "in.anthropic.claude-haiku-4-5-20251001-v1:0",
 }
 
 
+# Providers that can ANSWER questions. "ollama" is the local machine; "selfhosted"
+# is your own server (EC2). Both speak the Ollama protocol.
+CHAT_TARGETS = ("bedrock", "gemini", "selfhosted", "ollama", "openai", "anthropic", "fake")
+# UI/API "mode" values -> provider names.
+MODE_TO_PROVIDER = {"local": "ollama", "online": "bedrock", "gemini": "gemini",
+                    "selfhosted": "selfhosted", "bedrock": "bedrock", "ollama": "ollama"}
+
+
 def _env_model(provider):
+    if provider == "selfhosted":
+        return os.getenv("SELFHOSTED_LLM_MODEL", DEFAULT_MODELS["selfhosted"])
     if provider == "ollama":
         return os.getenv("LLM_MODEL", DEFAULT_MODELS["ollama"])
     return os.getenv(f"{provider.upper()}_MODEL", DEFAULT_MODELS.get(provider, ""))
@@ -650,6 +694,8 @@ def _env_key(provider):
 
 
 def _env_base(provider):
+    if provider == "selfhosted":
+        return os.getenv("SELFHOSTED_LLM_URL", "")
     if provider == "ollama":
         return os.getenv("LLM_URL", "http://localhost:11434")
     if provider == "openai":
@@ -731,6 +777,15 @@ def _resolve(company=None):
         model = (row.chat_model or "").strip() or _env_model(provider)
         api_key = (row.api_key or "").strip() or _env_key(provider)
         base_url = _safe_tenant_base_url(row.base_url, company_row) or _env_base(provider)
+        # A stale platform setting for a key-backed SaaS provider must not
+        # silently select that provider without credentials. On the shared
+        # platform path, fall back to the task-role-backed Bedrock provider.
+        # A company-specific override never borrows the platform's provider.
+        if company_row is None and provider in ("gemini", "openai", "anthropic") and not api_key:
+            provider = "bedrock"
+            model = _env_model("bedrock")
+            api_key = _env_key("bedrock")
+            base_url = _env_base("bedrock")
         if company_row is not None and (company_row.api_key or "").strip():
             key_source = "company"
         elif shared_key and provider == "bedrock":
@@ -756,21 +811,18 @@ def _resolve(company=None):
 def get_chat_provider(mode: str = None, provider_override: str = None, company=None):
     """The provider used to ANSWER questions.
 
-    Bedrock is the supported online provider; Ollama is the local/server-hosted
-    option. Legacy provider overrides fall back to Bedrock so a stale
-    Gemini/OpenAI row cannot bypass the two-mode product configuration.
+    Four selectable backends: Gemini, Bedrock, self-hosted (your EC2 model) and
+    local Ollama. `mode` is the UI value (local|online|gemini|selfhosted);
+    `provider_override` may name a provider directly. With neither, the
+    configured default (LLM_PROVIDER / company row) is used.
     """
     c = _resolve(company)
 
-    target_provider = (provider_override or "").strip().lower()
-    if mode == "local":
-        target_provider = "ollama"
-    elif mode == "online" and target_provider not in ("bedrock", "ollama"):
-        target_provider = "bedrock"
+    target_provider = MODE_TO_PROVIDER.get((provider_override or "").strip().lower(), "")
+    if mode in MODE_TO_PROVIDER:
+        target_provider = MODE_TO_PROVIDER[mode]
     if not target_provider:
-        target_provider = c["provider"] if c["provider"] in ("bedrock", "ollama", "fake") else "bedrock"
-    if target_provider not in ("bedrock", "ollama", "gemini", "openai", "anthropic", "fake"):
-        target_provider = "bedrock"
+        target_provider = c["provider"] if c["provider"] in CHAT_TARGETS else "bedrock"
 
     if target_provider == "gemini":
         key = c["api_key"] if c["provider"] == "gemini" else _env_key("gemini")
@@ -793,6 +845,10 @@ def get_chat_provider(mode: str = None, provider_override: str = None, company=N
         region = c["base_url"] if c["provider"] == "bedrock" else _env_base("bedrock")
         model = c["model"] if c["provider"] == "bedrock" else _env_model("bedrock")
         prov = BedrockProvider(key, region, model)
+    elif target_provider == "selfhosted":
+        base = _env_base("selfhosted")
+        model = _env_model("selfhosted")
+        prov = SelfHostedProvider(base, model, os.getenv("EMBED_MODEL", "nomic-embed-text"))
     else:
         # ollama / local
         base = c["base_url"] if c["provider"] == "ollama" else _env_base("ollama")
@@ -870,4 +926,3 @@ def platform_key(provider):
             return env_key
     cfg = LLMConfig.load()
     return cfg.api_key if cfg.provider == provider else ""
-

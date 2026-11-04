@@ -120,6 +120,39 @@ export interface WorkflowResult {
 }
 
 // One NDJSON line from POST /api/ask.
+// A finished, copy/paste/send-ready document produced from a template.
+export interface Artifact {
+  id: number
+  kind: 'email' | 'form' | 'policy' | 'table' | 'text' | string
+  title: string
+  subject: string
+  content_md: string
+  structured: {
+    kind?: string
+    title?: string
+    subject?: string
+    sections?: { heading: string; fields: { label: string; value: string; placeholder?: boolean }[]; checkboxes?: { checked: boolean; label: string }[]; lines?: string[] }[]
+    table?: string[][] | null
+    markdown?: string
+    missing_fields?: string[]
+  }
+  missing_fields: string[]
+  source?: string
+  source_template_id?: number | null
+  downloads: Record<string, string>
+  created_at?: string
+}
+
+export function artifactDownloadUrl(id: number, fmt: 'md' | 'txt' | 'docx' | 'pdf' | 'html' | 'json'): string {
+  return `${API_BASE}/api/artifacts/${id}/download?fmt=${fmt}`
+}
+
+export const artifactsApi = {
+  fromText: (content: string, kind = 'text', title = 'OpenVault document'): Promise<Artifact> =>
+    api.post('/artifacts/from_text', { content, kind, title }),
+  get: (id: number): Promise<Artifact> => api.get(`/artifacts/${id}`),
+}
+
 export type AskEvent =
   | { type: 'sources'; sources: string[] }
   | { type: 'conversation'; conversation_id: number }
@@ -127,9 +160,13 @@ export type AskEvent =
   | { type: 'flag'; message: string; categories: string[] }
   | { type: 'token'; token: string }
   | { type: 'intent'; intent: string; data: Record<string, unknown> }
+  | { type: 'artifact'; artifact: Artifact }
+  | { type: 'missing_fields'; fields: string[] }
   | WorkflowResult
   | { type: 'done' }
   | { type: 'error'; message: string }
+
+export type ChatMode = 'local' | 'online' | 'gemini' | 'selfhosted'
 
 // Ask the RAG assistant and stream the answer back line by line. `onEvent` is
 // called for every parsed event; pass an AbortSignal to let the caller stop it.
@@ -137,7 +174,7 @@ export async function askStream(
   question: string,
   onEvent: (e: AskEvent) => void,
   signal?: AbortSignal,
-  options?: { mode?: 'local' | 'online'; provider?: string; conversationId?: number | null },
+  options?: { mode?: ChatMode; provider?: string; conversationId?: number | null },
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/api/ask`, {
     method: 'POST',
@@ -244,6 +281,9 @@ export interface CompanyProfile {
   phone: string
   max_employees: number | null
   plan: Plan | null
+  hr_email?: string
+  signature?: string
+  tone?: string
 }
 
 export interface User {
@@ -262,6 +302,11 @@ export interface User {
   is_active?: boolean
   is_platform_admin?: boolean
   is_superuser?: boolean
+  // Profile fields used when filling template documents (optional so older
+  // backend responses still typecheck).
+  manager?: string
+  employee_id?: string
+  join_date?: string | null
 }
 
 export interface AuthResponse {
@@ -302,7 +347,9 @@ export const authApi = {
     password: string
   }): Promise<AuthResponse> => api.post('/auth/register', p),
   logout: (): Promise<{ ok: boolean }> => api.post('/auth/logout'),
-  updateMe: (p: { full_name?: string; title?: string; language?: UiLanguage; current_password?: string; new_password?: string }): Promise<User> =>
+  updateMe: (p: { full_name?: string; title?: string; language?: UiLanguage;
+                   current_password?: string; new_password?: string;
+                   manager?: string; employee_id?: string; join_date?: string }): Promise<User> =>
     api.patch('/auth/update-me', p),
   requestVerification: (email: string): Promise<{ detail: string }> =>
     api.post('/auth/request-verification', { email }),
@@ -395,6 +442,18 @@ export interface LlmStatus {
     provider: string
     model: string
     has_key: boolean
+  }
+  gemini?: {
+    online: boolean
+    provider: string
+    model: string
+    has_key: boolean
+  }
+  selfhosted?: {
+    online: boolean
+    provider: string
+    model: string
+    configured: boolean
   }
 }
 
@@ -533,7 +592,7 @@ export const shareApi = {
 // Company settings (admin): profile + seat cap.
 export const companyApi2 = {
   settings: (): Promise<CompanyProfile> => api.get('/admin/company'),
-  updateSettings: (p: Partial<Pick<CompanyProfile, 'name' | 'website' | 'contact_email' | 'phone' | 'max_employees'>>): Promise<CompanyProfile> =>
+  updateSettings: (p: Partial<Pick<CompanyProfile, 'name' | 'website' | 'contact_email' | 'phone' | 'max_employees' | 'hr_email' | 'signature' | 'tone'>>): Promise<CompanyProfile> =>
     api.patch('/admin/company', p),
   departments: (): Promise<Department[]> => api.get('/admin/departments'),
   addDepartment: (name: string): Promise<Department> => api.post('/admin/departments', { name }),

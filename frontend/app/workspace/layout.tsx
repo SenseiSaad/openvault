@@ -129,8 +129,8 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
     <div className="min-h-dvh bg-background text-foreground">
       <div className="mx-auto flex max-w-7xl flex-col lg:flex-row">
         {/* Sidebar (desktop) / top bar (mobile) */}
-        <aside className="border-b border-border lg:sticky lg:top-0 lg:flex lg:h-dvh lg:w-64 lg:shrink-0 lg:flex-col lg:border-b-0 lg:border-r">
-          <div className="flex items-start justify-between gap-3 px-6 py-5">
+        <aside className="border-b border-border lg:sticky lg:top-0 lg:flex lg:h-dvh lg:w-64 lg:shrink-0 lg:flex-col lg:border-b-0 lg:border-r lg:overflow-hidden">
+          <div className="flex items-center justify-between gap-3 px-5 py-3.5 lg:py-4">
             <Logo href="/workspace" />
             <span className="rounded-full border border-border px-2 py-1 font-mono text-[8px] uppercase tracking-[0.12em] text-muted-foreground lg:hidden">
               Workspace
@@ -138,13 +138,13 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
           </div>
 
           {isPlatformAdmin && (
-            <div className="mx-4 mb-3 rounded-xl border border-accent/25 bg-accent-soft p-3 text-xs text-accent lg:mx-4">
+            <div className="mx-3 mb-2 rounded-xl border border-accent/25 bg-accent-soft p-2.5 text-xs text-accent">
               <div className="flex items-center gap-1.5 font-semibold">
                 <Shield className="size-3.5" />
                 <span>Platform Admin</span>
               </div>
-              <div className="mt-2">
-                <label className="mb-1 block text-[10px] uppercase tracking-wider text-muted-foreground">
+              <div className="mt-1.5">
+                <label className="mb-0.5 block text-[9px] uppercase tracking-wider text-muted-foreground">
                   Active Company:
                 </label>
                 <div className="relative">
@@ -152,7 +152,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
                     value={user.company_id || 0}
                     onChange={(e) => handleSwitchCompany(Number(e.target.value))}
                     disabled={switching}
-                    className="w-full appearance-none rounded-lg border border-border bg-surface py-1.5 pl-2 pr-7 text-xs font-medium text-foreground outline-none focus:border-border-strong"
+                    className="w-full appearance-none rounded-lg border border-border bg-surface py-1 pl-2 pr-7 text-xs font-medium text-foreground outline-none focus:border-border-strong"
                   >
                     <option value={0}>All tenants (detached)</option>
                     {companies.map((c) => (
@@ -167,7 +167,10 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
             </div>
           )}
 
-          <nav aria-label="Workspace" className="flex gap-1 overflow-x-auto px-4 pb-3 no-scrollbar lg:mt-2 lg:flex-col lg:overflow-visible">
+          <nav
+            aria-label="Workspace"
+            className="flex gap-1 overflow-x-auto px-3 pb-2 no-scrollbar lg:mt-1 lg:min-h-0 lg:flex-1 lg:flex-col lg:overflow-y-auto"
+          >
             {items.map((n) => {
               const Icon = n.icon
               const on = active(n)
@@ -176,13 +179,13 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
                   key={n.href}
                   href={n.href}
                   aria-current={on ? 'page' : undefined}
-                  className={`flex items-center gap-2.5 whitespace-nowrap rounded-xl px-3.5 py-2.5 text-sm transition-colors ${
+                  className={`flex items-center gap-2.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-medium transition-colors lg:text-[13px] ${
                     on
-                      ? 'bg-primary text-primary-foreground'
+                      ? 'bg-primary text-primary-foreground font-semibold'
                       : 'text-muted-foreground hover:bg-surface-2 hover:text-foreground'
                   }`}
                 >
-                  <Icon className="size-4" /> {n.label}
+                  <Icon className="size-4 shrink-0" /> <span>{n.label}</span>
                 </Link>
               )
             })}
@@ -218,36 +221,41 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
             </button>
           </div>
 
-          <div className="hidden px-4 pb-5 lg:mt-auto lg:block">
-            <div className="mx-2 mb-4 h-px bg-border" />
-            <div className="rounded-xl border border-border bg-surface p-3 text-xs">
-              <p className="truncate font-medium text-foreground">{user.full_name || user.email}</p>
-              <p className="mt-0.5 capitalize text-muted-foreground">
+          <div className="hidden px-3 pb-3 lg:block lg:shrink-0">
+            <div className="mx-2 mb-2.5 h-px bg-border" />
+            <div className="rounded-xl border border-border bg-surface p-2.5 text-xs">
+              <p className="truncate text-xs font-semibold text-foreground">{user.full_name || user.email}</p>
+              <p className="mt-0.5 truncate text-[11px] capitalize text-muted-foreground">
                 {user.department_name ? `${user.role} · ${user.department_name}` : user.role}
               </p>
-              {/* Reply-language preference: English default, Roman Urdu opt-in. */}
-              <div className="mt-3">
-                <div className="relative">
+
+              {/* Preferences: Language + Appearance in one compact row */}
+              <div className="mt-2.5 flex items-center gap-2">
+                <div className="relative min-w-0 flex-1">
                   <Languages className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                   <select
                     value={language}
                     onChange={(e) => setLanguage(e.target.value as 'en' | 'ur')}
                     aria-label="Reply language"
-                    className="w-full appearance-none rounded-lg border border-border bg-surface py-1.5 pl-7 pr-2 text-xs font-medium text-foreground outline-none focus:border-border-strong"
+                    className="w-full appearance-none rounded-lg border border-border bg-surface py-1 pl-6 pr-2 text-[11px] font-medium text-foreground outline-none focus:border-border-strong"
                   >
                     <option value="en">English</option>
                     <option value="ur">Roman Urdu</option>
                   </select>
                 </div>
-                <div className="mt-2 flex items-center justify-between">
-                  <span className="text-[10px] text-muted-foreground">Appearance</span>
-                  <ThemeToggle variant="segmented" compact />
-                </div>
+                <ThemeToggle variant="segmented" compact />
               </div>
-              <div className="mt-3 flex items-center justify-between border-t border-border pt-3">
-                <Link href="/" className="text-muted-foreground hover:text-foreground">{t('backToLanding')}</Link>
-                <button onClick={logout} className="flex items-center gap-1.5 text-danger hover:opacity-80">
-                  <LogOut className="size-3.5" /> {t('logout')}
+
+              {/* Actions row */}
+              <div className="mt-2.5 flex items-center justify-between border-t border-border pt-2 text-[11px]">
+                <Link href="/" className="text-muted-foreground transition-colors hover:text-foreground">
+                  {t('backToLanding')}
+                </Link>
+                <button
+                  onClick={logout}
+                  className="flex items-center gap-1 font-medium text-danger transition-opacity hover:opacity-80"
+                >
+                  <LogOut className="size-3" /> {t('logout')}
                 </button>
               </div>
             </div>

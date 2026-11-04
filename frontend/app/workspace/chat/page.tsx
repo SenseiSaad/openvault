@@ -1,10 +1,18 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import rehypeSanitize from 'rehype-sanitize'
 import {
   ArrowUp,
   CalendarCheck,
   Check,
+  ClipboardCopy,
+  Copy,
+  ExternalLink,
+  FileDown,
+  FileSpreadsheet,
   Download,
   FileText,
   Globe,
@@ -14,6 +22,8 @@ import {
   Mail,
   MessageSquare,
   Plus,
+  Table2,
+  Server,
   ShieldAlert,
   Sparkles,
   Square,
@@ -25,10 +35,14 @@ import {
 import { useAuth } from '@/lib/auth'
 import {
   askStream,
+  artifactDownloadUrl,
+  artifactsApi,
   chatApi,
   downloadGeneratedForm,
   workApi,
+  type ChatMode,
   type Conversation,
+  type Artifact,
   type LlmStatus,
   type WorkflowResult,
 } from '@/lib/api'
@@ -42,9 +56,18 @@ type Message = {
   sources?: string[]
   rating?: number | null
   error?: boolean
-  mode?: 'local' | 'online'
+  mode?: ChatMode
   flag?: { message: string; categories: string[] }
   workflow?: WorkflowResult
+  artifacts?: Artifact[]
+  missingFields?: string[]
+}
+
+function modeLabel(mode?: ChatMode): string {
+  if (mode === 'online') return 'AWS Bedrock'
+  if (mode === 'gemini') return 'Google Gemini'
+  if (mode === 'selfhosted') return 'Self-Hosted EC2'
+  return 'Local Ollama'
 }
 
 const EXAMPLES = [
@@ -59,7 +82,8 @@ export default function WorkspaceChatPage() {
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [llm, setLlm] = useState<LlmStatus | null>(null)
-  const [mode, setMode] = useState<'local' | 'online'>('online')
+  const [mode, setMode] = useState<ChatMode>('local')
+  const [modeInit, setModeInit] = useState(false)
 
   // Chat conversation history state
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -71,8 +95,20 @@ export default function WorkspaceChatPage() {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const refreshLlm = useCallback(() => {
-    workApi.llmStatus().then(setLlm).catch(() => setLlm(null))
-  }, [])
+    workApi.llmStatus().then((status) => {
+      setLlm(status)
+      if (!modeInit && status) {
+        setModeInit(true)
+        if (status.provider === 'bedrock' && status.online_api?.online) setMode('online')
+        else if (status.provider === 'gemini' && status.gemini?.online) setMode('gemini')
+        else if (status.provider === 'selfhosted' && status.selfhosted?.online) setMode('selfhosted')
+        else if (status.local?.online) setMode('local')
+        else if (status.online_api?.online) setMode('online')
+        else if (status.gemini?.online) setMode('gemini')
+        else if (status.selfhosted?.online) setMode('selfhosted')
+      }
+    }).catch(() => setLlm(null))
+  }, [modeInit])
 
   const loadConversations = useCallback(async () => {
     try {
@@ -95,6 +131,18 @@ export default function WorkspaceChatPage() {
   const onlineAvailable =
     llm?.online_api?.provider === 'bedrock' && !!llm.online_api.online
   const localAvailable = llm?.local?.provider === 'ollama' && !!llm.local.online
+  const geminiAvailable = !!llm?.gemini?.online
+  const selfhostedAvailable = !!llm?.selfhosted?.online
+
+  const isModeAvailable = useCallback(
+    (m: ChatMode) => {
+      if (m === 'online') return onlineAvailable
+      if (m === 'gemini') return geminiAvailable
+      if (m === 'selfhosted') return selfhostedAvailable
+      return localAvailable
+    },
+    [onlineAvailable, geminiAvailable, selfhostedAvailable, localAvailable],
+  )
 
   const selectConversation = useCallback(
     async (id: number) => {
@@ -161,12 +209,8 @@ export default function WorkspaceChatPage() {
     async (question: string) => {
       const q = question.trim()
       if (!q || streaming) return
-      if (mode === 'online' && !onlineAvailable) {
-        toast.error('Bedrock is not connected. Ask the platform admin to check AI settings.')
-        return
-      }
-      if (mode === 'local' && !localAvailable) {
-        toast.error('The configured Ollama server is not reachable from OpenVault.')
+      if (!isModeAvailable(mode)) {
+        toast.error(`${modeLabel(mode)} is not connected or reachable. Check AI settings or switch models.`)
         return
       }
       setInput('')
@@ -199,6 +243,15 @@ export default function WorkspaceChatPage() {
                 updated.flag = { message: e.message, categories: e.categories }
               else if (e.type === 'token') updated.content += e.token
               else if (e.type === 'workflow') updated.workflow = e
+              else if (e.type === 'artifact') {
+                updated.artifacts = [...(updated.artifacts || []), e.artifact]
+                // Artifact-only answers have no token stream: show the finished
+                // document as the message so copy/download works immediately.
+                if (!updated.content) updated.content = e.artifact.content_md
+                else if (updated.artifacts.length > 1)
+                  updated.content += '\n\n---\n\n' + e.artifact.content_md
+              } else if (e.type === 'missing_fields')
+                updated.missingFields = e.fields
               else if (e.type === 'error') {
                 updated.content = e.message
                 updated.error = true
@@ -230,7 +283,7 @@ export default function WorkspaceChatPage() {
         loadConversations()
       }
     },
-    [streaming, mode, currentConversationId, loadConversations, onlineAvailable, localAvailable],
+    [streaming, mode, currentConversationId, loadConversations, isModeAvailable],
   )
 
   const stop = useCallback(() => {
@@ -339,7 +392,7 @@ export default function WorkspaceChatPage() {
           ) : messages.length === 0 ? (
             <EmptyState
               mode={mode}
-              isAvailable={mode === 'online' ? onlineAvailable : localAvailable}
+              isAvailable={isModeAvailable(mode)}
               onPick={send}
             />
           ) : (
@@ -378,11 +431,21 @@ function ChatHeader({
   onModeChange,
 }: {
   llm: LlmStatus | null
-  mode: 'local' | 'online'
-  onModeChange: (m: 'local' | 'online') => void
+  mode: ChatMode
+  onModeChange: (m: ChatMode) => void
 }) {
   const localOnline = !!llm?.local?.online
   const onlineReady = llm?.online_api?.provider === 'bedrock' && !!llm.online_api.online
+  const geminiReady = !!llm?.gemini?.online
+  const selfhostedReady = !!llm?.selfhosted?.online
+
+  const options: { id: ChatMode; label: string; ready: boolean; icon: typeof Laptop; model?: string }[] = [
+    { id: 'local', label: 'Local (Ollama)', ready: localOnline, icon: Laptop, model: llm?.local?.model },
+    { id: 'online', label: 'Bedrock (AWS)', ready: onlineReady, icon: Globe, model: llm?.online_api?.model },
+    { id: 'gemini', label: 'Gemini', ready: geminiReady, icon: Sparkles, model: llm?.gemini?.model },
+    { id: 'selfhosted', label: 'Self-Hosted EC2', ready: selfhostedReady, icon: Server, model: llm?.selfhosted?.model },
+  ]
+  const currentOpt = options.find((o) => o.id === mode) || options[0]
 
   return (
     <header className="border-b border-[#e6e3dc] pb-4">
@@ -397,61 +460,43 @@ function ChatHeader({
           </p>
         </div>
 
-        {/* Bedrock vs Local Ollama switch */}
+        {/* 4-way model selector: Local Ollama, AWS Bedrock, Gemini, Self-Hosted EC2 */}
         <div className="flex flex-col items-start gap-1.5 sm:items-end">
-          <div className="inline-flex items-center rounded-2xl border border-[#d8d5cc] bg-[#f2efe9] p-1 shadow-inner">
-            <button
-              type="button"
-              onClick={() => onModeChange('local')}
-              className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium transition ${
-                mode === 'local'
-                  ? 'bg-[#1d1d1b] text-white shadow-sm'
-                  : 'text-[#6b6862] hover:text-[#1d1d1b]'
-              }`}
-            >
-              <Laptop className="size-3.5" />
-              <span>Local (Ollama)</span>
-              <span
-                className={`size-1.5 rounded-full ${
-                  localOnline ? 'bg-[#4a8a5c]' : 'bg-[#b9b6ae]'
-                }`}
-                title={localOnline ? 'Ollama running' : 'Ollama offline'}
-              />
-            </button>
-            <button
-              type="button"
-              onClick={() => onModeChange('online')}
-              className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-medium transition ${
-                mode === 'online'
-                  ? 'bg-[#1d1d1b] text-white shadow-sm'
-                  : 'text-[#6b6862] hover:text-[#1d1d1b]'
-              }`}
-            >
-              <Globe className="size-3.5" />
-              <span>Bedrock (AWS)</span>
-              <span
-                className={`size-1.5 rounded-full ${
-                  onlineReady ? 'bg-[#4a8a5c]' : 'bg-[#b9b6ae]'
-                }`}
-                title={onlineReady ? 'Bedrock ready' : 'Bedrock not connected'}
-              />
-            </button>
+          <div className="inline-flex flex-wrap items-center gap-1 rounded-2xl border border-[#d8d5cc] bg-[#f2efe9] p-1 shadow-inner">
+            {options.map((opt) => {
+              const Icon = opt.icon
+              return (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => onModeChange(opt.id)}
+                  className={`flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 text-xs font-medium transition ${
+                    mode === opt.id
+                      ? 'bg-[#1d1d1b] text-white shadow-sm'
+                      : 'text-[#6b6862] hover:text-[#1d1d1b]'
+                  }`}
+                >
+                  <Icon className="size-3.5" />
+                  <span>{opt.label}</span>
+                  <span
+                    className={`size-1.5 rounded-full ${
+                      opt.ready ? 'bg-[#4a8a5c]' : 'bg-[#b9b6ae]'
+                    }`}
+                    title={opt.ready ? `${opt.label} ready` : `${opt.label} offline`}
+                  />
+                </button>
+              )
+            })}
           </div>
 
           <div className="flex items-center gap-2 text-[11px] text-[#6b6862]">
-            {mode === 'online' ? (
-              onlineReady ? (
-                <span className="inline-flex items-center gap-1 text-[#3f6b45]">
-                  <Check className="size-3" /> Bedrock ready ({llm?.online_api?.model || 'active'})
-                </span>
-              ) : (
-                <span>Bedrock is not connected; ask the platform admin to check AI settings.</span>
-              )
+            {currentOpt.ready ? (
+              <span className="inline-flex items-center gap-1 text-[#3f6b45]">
+                <Check className="size-3" /> {currentOpt.label} ready ({currentOpt.model || 'active'})
+              </span>
             ) : (
               <span>
-                {localOnline
-                  ? `Ollama server ready (${llm?.local?.model || 'active'}); retrieval uses the configured embedding provider`
-                  : 'Ollama server offline or unreachable from the API'}
+                {currentOpt.label} is not configured or unreachable from the API.
               </span>
             )}
           </div>
@@ -466,7 +511,7 @@ function EmptyState({
   isAvailable,
   onPick,
 }: {
-  mode: 'local' | 'online'
+  mode: ChatMode
   isAvailable: boolean
   onPick: (q: string) => void
 }) {
@@ -476,6 +521,8 @@ function EmptyState({
         <span className="mx-auto grid size-12 place-items-center rounded-2xl bg-[#f4f2ec]">
           {mode === 'online' ? (
             <Globe className="size-6 text-[#20211f]" aria-hidden />
+          ) : mode === 'selfhosted' ? (
+            <Server className="size-6 text-[#20211f]" aria-hidden />
           ) : (
             <Sparkles className="size-6 text-[#20211f]" aria-hidden />
           )}
@@ -486,10 +533,8 @@ function EmptyState({
 
         <p className="mt-1.5 text-sm text-[#6b6862]">
           {isAvailable
-            ? `Ready using ${mode === 'online' ? 'AWS Bedrock' : 'Local Ollama'}. Try one of these:`
-            : mode === 'online'
-              ? 'Bedrock is not connected. Ask the platform admin to check Workspace Settings → AI.'
-              : 'The configured Ollama server is offline or unreachable from the API.'}
+            ? `Ready using ${modeLabel(mode)}. Try one of these:`
+            : `${modeLabel(mode)} is not configured or reachable right now.`}
         </p>
 
         <div className="mt-5 flex flex-col gap-2">
@@ -508,6 +553,99 @@ function EmptyState({
   )
 }
 
+function plainText(md: string): string {
+  return md
+    .replace(/<<<INTENT_JSON>>>[\s\S]*?<<<END_INTENT_JSON>>>/g, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*[-*]\s+/gm, '- ')
+    .replace(/^\s*\|/gm, '')
+    .replace(/^\s*_{1,2}(.*?)_{1,2}\s*$/gm, '$1')
+    .trim()
+}
+
+function FormattedMessage({
+  content,
+  onNode,
+}: {
+  content: string
+  onNode?: (el: HTMLDivElement | null) => void
+}) {
+  // remark-gfm renders tables/lists/headings; rehype-sanitize strips any raw
+  // HTML that a template or an LLM answer might contain before it reaches the
+  // DOM. No Markdown symbols are ever shown to the user.
+  return (
+    <div ref={onNode} className="ov-md text-sm text-[#20211f]">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>
+        {content}
+      </ReactMarkdown>
+    </div>
+  )
+}
+
+function ArtifactCard({ a }: { a: Artifact }) {
+  const [structured, setStructured] = useState(false)
+  const s = a.structured || {}
+  const hasStructured = !!s.sections?.length || !!s.table?.length
+  return (
+    <div className="mt-2 rounded-2xl border border-[#d9e5d9] bg-[#f5faf4] px-3.5 py-2.5 text-xs text-[#2f5b36]">
+      <div className="flex flex-wrap items-center gap-2">
+        <FileDown className="size-3.5" aria-hidden />
+        <span className="font-semibold uppercase tracking-wide">
+          {a.kind}: {a.title}
+        </span>
+        <button
+          type="button"
+          onClick={() => hasStructured && setStructured((v) => !v)}
+          disabled={!hasStructured}
+          className="ml-auto inline-flex items-center gap-1 rounded-full border border-[#cfe0d0] px-2 py-0.5 text-[10px] disabled:opacity-40"
+        >
+          <Table2 className="size-3" aria-hidden />
+          {structured ? 'Document view' : 'Structured view'}
+        </button>
+      </div>
+      {a.missing_fields?.length > 0 ? (
+        <p className="mt-1.5 text-[10px] text-[#8a6516]">
+          Missing fields: {a.missing_fields.join(', ')}
+        </p>
+      ) : null}
+      {structured && hasStructured ? (
+        <div className="ov-md mt-2 space-y-2">
+          {s.table?.length ? (
+            <table>
+              <tbody>
+                {s.table.map((row, i) => (
+                  <tr key={i}>
+                    {row.map((cell, j) =>
+                      i === 0 ? <th key={j}>{cell}</th> : <td key={j}>{cell}</td>,
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : null}
+          {s.sections?.map((sec, i) => (
+            <div key={i}>
+              <h4>{sec.heading}</h4>
+              {sec.fields.map((f, j) => (
+                <p key={j}>
+                  <strong>{f.label}:</strong> {f.value}
+                </p>
+              ))}
+              {sec.checkboxes?.map((cb, j) => (
+                <p key={j}>- [ ] {cb.label}</p>
+              ))}
+              {sec.lines?.map((l, j) => (
+                <p key={j}>{l}</p>
+              ))}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function Bubble({
   index,
   msg,
@@ -521,6 +659,93 @@ function Bubble({
   onRate?: (rating: 1 | -1) => void
   lang?: 'en' | 'ur'
 }) {
+  const [copied, setCopied] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [artifactId, setArtifactId] = useState<number | null>(null)
+  const mdRef = useRef<HTMLDivElement | null>(null)
+  const content = msg.content || ''
+  const artifacts = msg.artifacts || []
+  const emailArtifact = artifacts.find((a) => a.kind === 'email')
+  const isEmail =
+    !!emailArtifact || /(^|\n)\*{0,2}subject:\*{0,2}\s+/i.test(content)
+  const subject =
+    emailArtifact?.subject ||
+    content.match(/^\*{0,2}Subject:\*{0,2}\s*(.+)$/im)?.[1] ||
+    ''
+  const body = emailArtifact
+    ? emailArtifact.content_md.replace(/^\*{0,2}Subject:.*$/im, '').trim()
+    : content
+
+  function flash(what: string) {
+    setCopied(what)
+    setTimeout(() => setCopied(null), 1800)
+  }
+
+  async function copyPlain() {
+    await navigator.clipboard.writeText(plainText(content))
+    flash('plain')
+  }
+
+  async function copyRich() {
+    const html = mdRef.current?.innerHTML || ''
+    const plain = plainText(content)
+    try {
+      if (html && typeof ClipboardItem !== 'undefined') {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/html': new Blob([html], { type: 'text/html' }),
+            'text/plain': new Blob([plain], { type: 'text/plain' }),
+          }),
+        ])
+      } else {
+        await navigator.clipboard.writeText(plain)
+      }
+      flash('rich')
+    } catch {
+      await navigator.clipboard.writeText(plain)
+      flash('plain')
+    }
+  }
+
+  async function ensureArtifact(): Promise<number> {
+    if (artifactId) return artifactId
+    if (artifacts[0]) {
+      setArtifactId(artifacts[0].id)
+      return artifacts[0].id
+    }
+    const created = await artifactsApi.fromText(
+      content,
+      isEmail ? 'email' : 'text',
+      'OpenVault answer',
+    )
+    setArtifactId(created.id)
+    return created.id
+  }
+
+  async function download(fmt: 'docx' | 'pdf') {
+    try {
+      setBusy(true)
+      const id = await ensureArtifact()
+      await downloadGeneratedForm(
+        artifactDownloadUrl(id, fmt),
+        `${isEmail ? 'email' : 'document'}.${fmt}`,
+      )
+      flash(fmt)
+    } catch {
+      toast.error('Could not prepare the download.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function openMailApp() {
+    const to = ''
+    const href = `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(
+      plainText(body),
+    )}`
+    window.location.href = href
+  }
+
   if (msg.role === 'user') {
     return (
       <div className="flex flex-col items-end">
@@ -528,7 +753,7 @@ function Bubble({
           {msg.content}
         </div>
         <span className="mt-1 px-2 text-[10px] text-[#8c8a83]">
-          {msg.mode === 'online' ? '🌐 via AWS Bedrock' : '💻 via Local Ollama'}
+          via {modeLabel(msg.mode)}
         </span>
       </div>
     )
@@ -537,7 +762,7 @@ function Bubble({
   return (
     <div className="flex justify-start">
       <div className="max-w-[90%]">
-        {msg.content || streaming ? (
+        {content || streaming ? (
           <div
             className={`rounded-3xl rounded-bl-lg border px-4 py-3 text-sm leading-relaxed ${
               msg.error
@@ -545,8 +770,13 @@ function Bubble({
                 : 'border-[#dcdad3] bg-[#fffdfa] text-[#20211f]'
             }`}
           >
-            {msg.content ? (
-              <p className="whitespace-pre-wrap">{msg.content}</p>
+            {content ? (
+              <FormattedMessage
+                content={content}
+                onNode={(el) => {
+                  mdRef.current = el
+                }}
+              />
             ) : streaming ? (
               <span className="inline-flex items-center gap-2 text-[#6b6862]">
                 <Loader2 className="size-4 animate-spin" aria-hidden /> Thinking…
@@ -557,8 +787,16 @@ function Bubble({
 
         {msg.flag ? <FlagBanner flag={msg.flag} /> : null}
         {msg.workflow ? <WorkflowCard wf={msg.workflow} /> : null}
+        {artifacts.map((a) => (
+          <ArtifactCard key={a.id} a={a} />
+        ))}
+        {msg.missingFields && msg.missingFields.length > 0 ? (
+          <p className="mt-1.5 text-[11px] text-[#8a6516]">
+            Missing fields: {msg.missingFields.join(', ')}
+          </p>
+        ) : null}
 
-        {/* Sources & Rating footer */}
+        {/* Sources & Actions footer */}
         <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
           {msg.sources && msg.sources.length > 0 ? (
             <div className="flex flex-wrap items-center gap-1.5">
@@ -578,9 +816,85 @@ function Bubble({
             <div />
           )}
 
-          {/* Rating Buttons */}
-          {msg.id && !streaming && onRate && (
-            <div className="flex items-center gap-1">
+          {content && !streaming ? (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                onClick={copyRich}
+                title="Copy formatted (rich) text"
+                className="inline-flex items-center gap-1 rounded-full border border-transparent px-2 py-0.5 text-[11px] text-[#6b6862] transition hover:border-[#dcdad3] hover:bg-[#f2efe9] hover:text-[#1d1d1b]"
+              >
+                {copied === 'rich' ? <Check className="size-3 text-emerald-600" /> : <ClipboardCopy className="size-3" />}
+                <span>{copied === 'rich' ? 'Copied!' : 'Copy formatted'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={copyPlain}
+                title="Copy as plain text"
+                className="inline-flex items-center gap-1 rounded-full border border-transparent px-2 py-0.5 text-[11px] text-[#6b6862] transition hover:border-[#dcdad3] hover:bg-[#f2efe9] hover:text-[#1d1d1b]"
+              >
+                {copied === 'plain' ? <Check className="size-3 text-emerald-600" /> : <Copy className="size-3" />}
+                <span>{copied === 'plain' ? 'Copied!' : 'Copy plain'}</span>
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => download('docx')}
+                title="Download as DOCX"
+                className="inline-flex items-center gap-1 rounded-full border border-transparent px-2 py-0.5 text-[11px] text-[#6b6862] transition hover:border-[#dcdad3] hover:bg-[#f2efe9] hover:text-[#1d1d1b] disabled:opacity-40"
+              >
+                <FileDown className="size-3" /> <span>DOCX</span>
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => download('pdf')}
+                title="Download as PDF"
+                className="inline-flex items-center gap-1 rounded-full border border-transparent px-2 py-0.5 text-[11px] text-[#6b6862] transition hover:border-[#dcdad3] hover:bg-[#f2efe9] hover:text-[#1d1d1b] disabled:opacity-40"
+              >
+                <FileSpreadsheet className="size-3" /> <span>PDF</span>
+              </button>
+              {isEmail ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(subject)
+                      flash('subject')
+                    }}
+                    title="Copy email subject"
+                    className="inline-flex items-center gap-1 rounded-full border border-transparent px-2 py-0.5 text-[11px] text-[#6b6862] transition hover:border-[#dcdad3] hover:bg-[#f2efe9] hover:text-[#1d1d1b]"
+                  >
+                    {copied === 'subject' ? <Check className="size-3 text-emerald-600" /> : <Mail className="size-3" />}
+                    <span>Subject</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await navigator.clipboard.writeText(plainText(body))
+                      flash('body')
+                    }}
+                    title="Copy email body"
+                    className="inline-flex items-center gap-1 rounded-full border border-transparent px-2 py-0.5 text-[11px] text-[#6b6862] transition hover:border-[#dcdad3] hover:bg-[#f2efe9] hover:text-[#1d1d1b]"
+                  >
+                    {copied === 'body' ? <Check className="size-3 text-emerald-600" /> : <Copy className="size-3" />}
+                    <span>Body</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openMailApp}
+                    title="Open in your mail app"
+                    className="inline-flex items-center gap-1 rounded-full border border-transparent px-2 py-0.5 text-[11px] text-[#6b6862] transition hover:border-[#dcdad3] hover:bg-[#f2efe9] hover:text-[#1d1d1b]"
+                  >
+                    <ExternalLink className="size-3" /> <span>Mail app</span>
+                  </button>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+
+          {msg.id && !streaming && onRate ? (
+            <div className="flex items-center gap-1 border-l border-[#e6e3dc] pl-1.5">
               <button
                 type="button"
                 onClick={() => onRate(1)}
@@ -608,7 +922,7 @@ function Bubble({
                 <span>{t('notHelpful', lang)}</span>
               </button>
             </div>
-          )}
+          ) : null}
         </div>
       </div>
     </div>
@@ -781,7 +1095,7 @@ function Composer({
   placeholder,
 }: {
   value: string
-  mode: 'local' | 'online'
+  mode: ChatMode
   onChange: (v: string) => void
   onSend: () => void
   onStop: () => void
@@ -809,7 +1123,7 @@ function Composer({
           }}
           rows={1}
           disabled={disabled}
-          placeholder={placeholder || (mode === 'online' ? 'Ask anything using AWS Bedrock…' : 'Ask using the configured local Ollama model…')}
+          placeholder={placeholder || `Ask anything using ${modeLabel(mode)}…`}
           className="max-h-40 min-h-[2.5rem] flex-1 resize-none bg-transparent px-3 py-2 text-sm text-[#1d1d1b] outline-none placeholder:text-[#6b6862]"
           aria-label="Your question"
         />
@@ -836,7 +1150,7 @@ function Composer({
       <div className="mt-2 flex items-center justify-between px-2 text-[11px] text-[#6b6862]">
         <span>Enter to send · Shift+Enter for new line</span>
         <span className="font-mono text-[10px]">
-          Target: {mode === 'online' ? 'AWS Bedrock' : 'Local Ollama server'}
+          Target: {modeLabel(mode)}
         </span>
       </div>
     </div>

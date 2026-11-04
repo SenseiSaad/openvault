@@ -70,7 +70,7 @@ class CompanyProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
         fields = ["id", "name", "slug", "access_code", "website", "contact_email", "phone",
-                  "max_employees", "plan"]
+                  "max_employees", "plan", "hr_email", "signature", "tone"]
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -88,8 +88,8 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ["id", "email", "username", "full_name", "title", "role",
                   "company_id", "company", "department_id", "department_name",
-                  "email_verified", "language", "is_active",
-                  "is_platform_admin", "is_superuser"]
+                  "manager", "employee_id", "join_date", "email_verified",
+                  "language", "is_active", "is_platform_admin", "is_superuser"]
 
     def to_representation(self, instance):
         # Own profile (and auth responses without a request context) keeps the
@@ -116,6 +116,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             "downloads", "is_okf", "num_chunks", "access_scope", "department",
             "department_name", "tags", "indexing_status", "index_error",
             "version", "created_at", "updated_at", "company_name",
+            "is_template", "template_type",
         ]
 
     def get_tags(self, obj):
@@ -180,9 +181,23 @@ class UserCreateSerializer(serializers.Serializer):
 
 class AskSerializer(serializers.Serializer):
     question = serializers.CharField()
-    mode = serializers.ChoiceField(choices=["local", "online"], required=False, allow_null=True, default=None)
+    mode = serializers.ChoiceField(
+        choices=["local", "online", "gemini", "selfhosted", "bedrock", "ollama"],
+        required=False,
+        allow_null=True,
+        default=None,
+    )
     provider = serializers.CharField(required=False, allow_blank=True, default="")
     conversation_id = serializers.IntegerField(required=False, allow_null=True, default=None)
+    # Optional explicit output routing: "text", "form", "email", "policy",
+    # "table". When omitted the request text is classified automatically.
+    outputs = serializers.ListField(
+        child=serializers.ChoiceField(choices=["text", "form", "email", "policy", "table"]),
+        required=False, allow_empty=True, default=None,
+    )
+    # Caller-supplied field values for template filling (dates, reasons, ...).
+    fields = serializers.DictField(child=serializers.CharField(allow_blank=True),
+                                   required=False, default=dict)
 
 
 class DocumentShareSerializer(serializers.ModelSerializer):

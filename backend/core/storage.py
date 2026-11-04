@@ -42,10 +42,24 @@ def _bucket() -> str:
 
 
 def _resolve_local_path(key_or_path: str, base_dir: str | None = None) -> str:
-    base = str(base_dir or settings.DATA_DIR)
+    if not key_or_path:
+        return os.path.abspath(str(base_dir or settings.DATA_DIR))
+    base = os.path.abspath(str(base_dir or settings.DATA_DIR))
     if os.path.isabs(key_or_path):
         return key_or_path
-    return os.path.join(base, key_or_path)
+    if os.path.exists(key_or_path):
+        return os.path.abspath(key_or_path)
+    # Strip any redundant relative base directory prefix (e.g. "./data/..." or "data/...")
+    clean = key_or_path.lstrip("./").lstrip("/")
+    base_name = os.path.basename(base)
+    if clean.startswith(f"{base_name}/"):
+        cand = os.path.abspath(os.path.join(base, clean[len(base_name) + 1 :]))
+        if os.path.exists(cand):
+            return cand
+    cand = os.path.abspath(os.path.join(base, key_or_path))
+    if os.path.exists(cand):
+        return cand
+    return os.path.normpath(os.path.join(base, clean))
 
 
 def save_bytes(key: str, data: bytes, content_type: str = "", base_dir: str | None = None) -> str:

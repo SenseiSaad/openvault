@@ -13,6 +13,7 @@ paths = [
   '''(^|/)docs/''',
   '''(^|/)Certification/''',
   '''(^|/)frontend/\.next/''',
+  '''(^|/)\.next/''',
   '''(^|/)node_modules/''',
   '''(^|/)backend/\.venv/''',
   '''(^|/)backend/\.env$''',
@@ -20,6 +21,7 @@ paths = [
   '''(^|/)__pycache__/''',
   '''(^|/)backend/data/''',
   '''(^|/)backups/''',
+  '''(^|/)\.dev-logs/''',
 ]
 regexes = [
   '''REPLACE_ME''',

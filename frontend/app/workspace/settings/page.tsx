@@ -28,6 +28,7 @@ import {
   type Plan,
 } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
+import { authApi } from '@/lib/api'
 import { toast } from '@/components/toaster'
 
 const focusRing =
@@ -90,7 +91,18 @@ export default function SettingsPage() {
   const [compEmail, setCompEmail] = useState('')
   const [compPhone, setCompPhone] = useState('')
   const [compMaxSeats, setCompMaxSeats] = useState<string>('')
+  const [compHrEmail, setCompHrEmail] = useState('')
+  const [compSignature, setCompSignature] = useState('')
+  const [compTone, setCompTone] = useState('')
   const [savingComp, setSavingComp] = useState(false)
+
+  // My profile (template filling uses only non-empty fields)
+  const [myName, setMyName] = useState('')
+  const [myTitle, setMyTitle] = useState('')
+  const [myManager, setMyManager] = useState('')
+  const [myEmployeeId, setMyEmployeeId] = useState('')
+  const [myJoinDate, setMyJoinDate] = useState('')
+  const [savingMe, setSavingMe] = useState(false)
 
   // Plans & usage
   const [plans, setPlans] = useState<Plan[]>([])
@@ -147,10 +159,22 @@ export default function SettingsPage() {
         setCompEmail(res.contact_email || '')
         setCompPhone(res.phone || '')
         setCompMaxSeats(res.max_employees != null ? String(res.max_employees) : '')
+        setCompHrEmail(res.hr_email || '')
+        setCompSignature(res.signature || '')
+        setCompTone(res.tone || '')
       })
       .catch(() => setProfile(null))
       .finally(() => setCompLoading(false))
   }, [])
+
+  useEffect(() => {
+    if (!user) return
+    setMyName(user.full_name || '')
+    setMyTitle(user.title || '')
+    setMyManager(user.manager || '')
+    setMyEmployeeId(user.employee_id || '')
+    setMyJoinDate(user.join_date || '')
+  }, [user])
 
   const loadPlans = useCallback(() => {
     setPlanLoading(true)
@@ -190,6 +214,9 @@ export default function SettingsPage() {
         contact_email: compEmail.trim(),
         phone: compPhone.trim(),
         max_employees: compMaxSeats ? Number(compMaxSeats) : null,
+        hr_email: compHrEmail.trim(),
+        signature: compSignature.trim(),
+        tone: compTone.trim(),
       })
       setProfile(updated)
       toast.success('Company settings saved.')
@@ -288,6 +315,25 @@ export default function SettingsPage() {
   const activeProvider = PROVIDERS.find((p) => p.value === provider) ?? PROVIDERS[0]
   const hasLegacyProviderConfig = !!cfg && cfg.provider !== 'bedrock' && cfg.provider !== 'ollama'
   const currentPlan = profile?.plan
+
+  async function onSaveProfile(e: FormEvent) {
+    e.preventDefault()
+    setSavingMe(true)
+    try {
+      await authApi.updateMe({
+        full_name: myName.trim(),
+        title: myTitle.trim(),
+        manager: myManager.trim(),
+        employee_id: myEmployeeId.trim(),
+        join_date: myJoinDate.trim(),
+      })
+      toast.success('Your profile saved.')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not save your profile.')
+    } finally {
+      setSavingMe(false)
+    }
+  }
 
   return (
     <div className="mx-auto max-w-4xl pb-10">
@@ -416,6 +462,39 @@ export default function SettingsPage() {
                 </div>
               </div>
 
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className={label}>HR Email (for generated emails)</label>
+                  <input
+                    type="email"
+                    value={compHrEmail}
+                    onChange={(e) => setCompHrEmail(e.target.value)}
+                    placeholder="hr@acme.org"
+                    className={inputClass}
+                  />
+                </div>
+                <div>
+                  <label className={label}>Default Tone</label>
+                  <input
+                    value={compTone}
+                    onChange={(e) => setCompTone(e.target.value)}
+                    placeholder="formal / friendly"
+                    className={inputClass}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className={label}>Company Signature</label>
+                <textarea
+                  value={compSignature}
+                  onChange={(e) => setCompSignature(e.target.value)}
+                  rows={2}
+                  placeholder="Regards, HR Team"
+                  className={inputClass}
+                />
+              </div>
+
               <div className="pt-2">
                 <button type="submit" disabled={savingComp} className={primaryBtn}>
                   {savingComp ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
@@ -424,6 +503,46 @@ export default function SettingsPage() {
               </div>
             </form>
           )}
+        </section>
+      )}
+
+      {/* My profile — used to fill template fields */}
+      {tab === 'company' && user && (
+        <section className="mt-8 border-t border-[#eae7df] pt-6">
+          <h2 className="text-sm font-semibold text-[#1d1d1b]">My Profile</h2>
+          <p className="mt-1 text-xs text-[#6b6862]">
+            Only filled fields are used when generating forms and emails. Empty fields stay as
+            [Field name] placeholders. Role and department are managed by your admin because
+            they control document access.
+          </p>
+          <form onSubmit={onSaveProfile} className="mt-4 max-w-xl space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className={label}>Full Name</label>
+                <input value={myName} onChange={(e) => setMyName(e.target.value)} className={inputClass} />
+              </div>
+              <div>
+                <label className={label}>Job Title</label>
+                <input value={myTitle} onChange={(e) => setMyTitle(e.target.value)} className={inputClass} />
+              </div>
+              <div>
+                <label className={label}>Manager</label>
+                <input value={myManager} onChange={(e) => setMyManager(e.target.value)} className={inputClass} />
+              </div>
+              <div>
+                <label className={label}>Employee ID</label>
+                <input value={myEmployeeId} onChange={(e) => setMyEmployeeId(e.target.value)} className={inputClass} />
+              </div>
+              <div>
+                <label className={label}>Join Date</label>
+                <input type="date" value={myJoinDate} onChange={(e) => setMyJoinDate(e.target.value)} className={inputClass} />
+              </div>
+            </div>
+            <button type="submit" disabled={savingMe} className={primaryBtn}>
+              {savingMe ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+              Save My Profile
+            </button>
+          </form>
         </section>
       )}
 

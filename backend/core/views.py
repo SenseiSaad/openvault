@@ -32,6 +32,7 @@ from . import rag
 from . import providers
 from . import moderation
 from . import storage
+from . import docgen
 from . import attendance as attendance_svc
 from .auth import (
     set_auth_cookies, clear_auth_cookies, revoke_user_refresh_tokens,
@@ -42,7 +43,7 @@ from .uploads import UploadRejected, guard_zip_archive, validate_extension, vali
 from .models import (
     Announcement, AskLog, AuditLog, ChatConversation, ChatMessage, Company, Department,
     Document, DocumentAccess, DocumentShare, DocumentVersion, LLMConfig, Plan,
-    AttendanceRecord, UserStrike, User, OneTimeToken,
+    AttendanceRecord, UserStrike, User, OneTimeToken, GeneratedArtifact,
 )
 from .permissions import IsAdmin, IsEditor, IsPlatformAdmin, is_platform_admin
 from .serializers import (
@@ -437,9 +438,21 @@ def update_me(request):
     """Let a user edit their own profile: name, title, reply language, password."""
     user = request.user
     data = request.data
-    for field in ("full_name", "title"):
+    for field in ("full_name", "title", "manager", "employee_id"):
         if field in data:
             setattr(user, field, str(data.get(field) or "").strip()[:200])
+    if "join_date" in data:
+        raw = str(data.get("join_date") or "").strip()
+        if not raw:
+            user.join_date = None
+        else:
+            from datetime import date as _date
+            try:
+                user.join_date = _date.fromisoformat(raw)
+            except ValueError:
+                return Response({"detail": "join_date must be YYYY-MM-DD."}, status=400)
+    # role and department are permission boundaries (document access scopes),
+    # so they are deliberately NOT self-editable — admins use /admin/users.
     if "language" in data:
         lang = str(data.get("language") or "en").strip().lower()
         if lang not in ("en", "ur"):
@@ -590,6 +603,13 @@ def upload_document(request):
     category = request.data.get("category") or "Other"
     description = request.data.get("description") or ""
     tags = str(request.data.get("tags") or "").strip()[:300]
+    is_template = str(request.data.get("is_template", "")).lower() in ("1", "true", "yes", "on")
+    template_type = str(request.data.get("template_type") or "").strip().lower()
+    if template_type and template_type not in dict(Document.TEMPLATE_TYPES):
+        return Response({"detail": "template_type must be email, form, policy or other."},
+                        status=400)
+    if is_template and not template_type:
+        template_type = "other"
 
     company = request.user.company
     if company is None:
@@ -642,6 +662,7 @@ def upload_document(request):
             content_type=f.content_type or "", size=f.size,
             category=category, description=description, tags=tags,
             is_okf=is_okf, access_scope=access_scope, department=department,
+            is_template=is_template, template_type=template_type,
             uploaded_by=request.user, indexing_status="pending",
         )
         DocumentAccess.objects.create(document=doc, user=request.user)
@@ -722,6 +743,13 @@ def upload_confirm(request):
     category = request.data.get("category") or "Other"
     description = request.data.get("description") or ""
     tags = str(request.data.get("tags") or "").strip()[:300]
+    is_template = str(request.data.get("is_template", "")).lower() in ("1", "true", "yes", "on")
+    template_type = str(request.data.get("template_type") or "").strip().lower()
+    if template_type and template_type not in dict(Document.TEMPLATE_TYPES):
+        return Response({"detail": "template_type must be email, form, policy or other."},
+                        status=400)
+    if is_template and not template_type:
+        template_type = "other"
 
     plan = _plan_for(company)
     department = None
@@ -743,6 +771,7 @@ def upload_confirm(request):
             content_type=content_type, size=size,
             category=category, description=description, tags=tags,
             is_okf=is_okf, access_scope=access_scope, department=department,
+            is_template=is_template, template_type=template_type,
             uploaded_by=request.user, indexing_status="pending",
         )
         DocumentAccess.objects.create(document=doc, user=request.user)
@@ -752,10 +781,14 @@ def upload_confirm(request):
     return Response(DocumentSerializer(doc).data, status=201)
 
 
+_INDEX_LOCK = threading.BoundedSemaphore(2)
+
+
 def _index_in_background(doc: Document):
     """Extract/chunk/embed a document. Prefers the Celery worker when a broker
     is configured; on serverless platforms (SYNC_INDEXING=True) it runs inline
-    before returning; otherwise it runs on a daemon thread."""
+    before returning; otherwise it runs on a daemon thread (bounded concurrency
+    so 20+ simultaneous uploads never contend on SQLite or thrash local Ollama)."""
     if getattr(settings, "CELERY_BROKER_URL", "") and not getattr(settings, "CELERY_TASK_ALWAYS_EAGER", False):
         from .tasks import index_document_task
         index_document_task.delay(doc.id)
@@ -769,19 +802,20 @@ def _index_in_background(doc: Document):
 
     def run():
         from django.db import close_old_connections
-        close_old_connections()
-        try:
-            raw = storage.read_bytes(doc.stored_path, base_dir=settings.DATA_DIR)
-            n = rag.index_document(doc, raw)
-            doc.indexing_status = "ready" if n >= 0 else "failed"
-            doc.index_error = ""
-        except Exception as exc:
-            doc.indexing_status = "failed"
-            doc.index_error = str(exc)[:300]
-        finally:
-            doc.save(update_fields=["indexing_status", "index_error"])
-            if not getattr(settings, "SYNC_INDEXING", False):
-                close_old_connections()
+        with _INDEX_LOCK:
+            close_old_connections()
+            try:
+                raw = storage.read_bytes(doc.stored_path, base_dir=settings.DATA_DIR)
+                n = rag.index_document(doc, raw)
+                doc.indexing_status = "ready" if n >= 0 else "failed"
+                doc.index_error = ""
+            except Exception as exc:
+                doc.indexing_status = "failed"
+                doc.index_error = str(exc)[:300]
+            finally:
+                doc.save(update_fields=["indexing_status", "index_error"])
+                if not getattr(settings, "SYNC_INDEXING", False):
+                    close_old_connections()
 
     if getattr(settings, "SYNC_INDEXING", False):
         run()
@@ -839,6 +873,17 @@ def document_detail(request, pk):
     if not _is_editor_request(request):
         return Response({"detail": "Viewers cannot edit documents."}, status=403)
     data = request.data
+    if any(k in data for k in ("is_template", "template_type")):
+        if not (request.user.role == "admin" or _is_platform_level(request.user)):
+            return Response({"detail": "Only admins can change template settings."}, status=403)
+    if "is_template" in data:
+        doc.is_template = str(data.get("is_template")).lower() in ("1", "true", "yes", "on")
+    if "template_type" in data:
+        ttype = str(data.get("template_type") or "").strip().lower()
+        if ttype and ttype not in dict(Document.TEMPLATE_TYPES):
+            return Response({"detail": "template_type must be email, form, policy or other."},
+                            status=400)
+        doc.template_type = ttype
     if "access_scope" in data and not _can_manage_document(request, doc):
         return Response({"detail": "Only admins or the uploader can change who can access "
                                    "this document."}, status=403)
@@ -1053,6 +1098,14 @@ def ask(request):
     provider = s.validated_data.get("provider")
     conversation_id = s.validated_data.get("conversation_id")
 
+    # Output routing: a policy question gets ONLY the grounded text answer, a
+    # form/email request gets ONLY the finished document(s), and a mixed
+    # request gets exactly the outputs it asked for. Template generation is
+    # deterministic (no model call, no Bedrock, no invented facts).
+    doc_plan = docgen.classify(question, outputs=s.validated_data.get("outputs"))
+    overrides = s.validated_data.get("fields") or {}
+    template_text = docgen.template_context(request.user, doc_plan) if doc_plan.artifacts else ""
+
     # Provider selection is a bring-your-own-key feature: without the company's
     # own stored key a caller could steer shared platform spend at a costlier
     # provider, so the field is rejected outright for everyone else.
@@ -1094,13 +1147,54 @@ def ask(request):
     conv_payload = ({"type": "conversation", "conversation_id": conversation.id}
                     if conversation else None)
 
+    def artifact_events(emit_done=True):
+        """Generate the requested documents and stream them as NDJSON events."""
+        import time as _time
+        rendered = docgen.build_artifacts(request.user, question, doc_plan, overrides)
+        for r in rendered:
+            art = docgen.save_artifact(request.user, r)
+            payload = {
+                "id": art.id, "kind": art.kind, "title": art.title,
+                "subject": art.subject, "content_md": art.content_md,
+                "structured": r["structured"], "missing_fields": r["missing_fields"],
+                "source": r["source"], "source_template_id": r["source_template_id"],
+                "downloads": {
+                    fmt: f"/api/artifacts/{art.id}/download?fmt={fmt}"
+                    for fmt in ("md", "txt", "docx", "pdf", "html")
+                },
+            }
+            yield json.dumps({"type": "artifact", "artifact": payload}) + "\n"
+        missing = sorted({m for r in rendered for m in r["missing_fields"]})
+        if missing:
+            yield json.dumps({"type": "missing_fields", "fields": missing}) + "\n"
+        if rendered:
+            rag._log_ask(request.user, question, mode or "", "template", 0,
+                         True, False, _time.time())
+            if conversation is not None:
+                ChatMessage.objects.create(conversation=conversation, role="user",
+                                           content=question)
+                summary = "\n\n---\n\n".join(r["content_md"] for r in rendered)
+                ChatMessage.objects.create(conversation=conversation, role="assistant",
+                                           content=summary[:20000])
+        if emit_done:
+            yield json.dumps({"type": "done"}) + "\n"
+
     def stream():
         if conv_payload:
             yield json.dumps(conv_payload) + "\n"
+        if doc_plan.artifacts_only:
+            # No retrieval chunks, no LLM, no Bedrock: only the finished docs.
+            yield from artifact_events(True)
+            return
+        template_rules = (docgen.TEMPLATE_SYSTEM_RULES
+                          if (template_text and doc_plan.artifacts) else "")
         yield from rag.stream_answer(
             request.user, question, mode=mode, provider_override=provider,
             moderation_flags=None, conversation=conversation,
+            template_text=template_text, template_rules=template_rules,
         )
+        if doc_plan.artifacts:
+            yield from artifact_events(False)
 
     scan = moderation.scan(question)
     moderation_flags = None
@@ -1180,8 +1274,10 @@ def llm_status(request):
     from .models import LLMConfig as _LLMConfig
     company = getattr(request.user, "company", None)
     prov = providers.get_chat_provider(company=company)
-    local_prov = providers.get_chat_provider(mode="local")
+    local_prov = providers.get_chat_provider(mode="local", company=company)
     online_prov = providers.get_chat_provider(mode="online", company=company)
+    gemini_prov = providers.get_chat_provider(mode="gemini", company=company)
+    selfhosted_prov = providers.get_chat_provider(mode="selfhosted", company=company)
     return Response({
         "online": prov.available(),
         "provider": prov.label,
@@ -1199,6 +1295,18 @@ def llm_status(request):
             "model": online_prov.chat_model,
             "has_key": bool(online_prov.api_key),
         },
+        "gemini": {
+            "online": gemini_prov.available(),
+            "provider": gemini_prov.label,
+            "model": gemini_prov.chat_model,
+            "has_key": bool(gemini_prov.api_key),
+        },
+            "selfhosted": {
+                "online": selfhosted_prov.available(),
+                "provider": selfhosted_prov.label,
+                "model": selfhosted_prov.chat_model,
+                "configured": bool(getattr(selfhosted_prov, "base", "")),
+            },
     })
 
 
@@ -1334,9 +1442,11 @@ def company_settings(request):
         name = str(data.get("name") or "").strip()[:200]
         if name:
             company.name = name
-    for field in ("website", "contact_email", "phone"):
+    for field in ("website", "contact_email", "phone", "hr_email", "tone"):
         if field in data:
             setattr(company, field, str(data.get(field) or "").strip()[:200])
+    if "signature" in data:
+        company.signature = str(data.get("signature") or "").strip()[:2000]
     if "max_employees" in data:
         raw = data.get("max_employees")
         if raw in (None, ""):
@@ -2047,3 +2157,123 @@ def admin_attendance_evaluate(request):
         "evaluated": len(results),
         "results": results,
     })
+
+
+# ------------------------------------------- template document generation
+def _artifact_payload(art):
+    import json as _json
+    try:
+        structured = _json.loads(art.structured or "{}")
+    except ValueError:
+        structured = {}
+    try:
+        missing = _json.loads(art.missing_fields or "[]")
+    except ValueError:
+        missing = []
+    return {
+        "id": art.id, "kind": art.kind, "title": art.title, "subject": art.subject,
+        "content_md": art.content_md, "structured": structured,
+        "missing_fields": missing, "created_at": art.created_at.isoformat(),
+        "downloads": {
+            fmt: f"/api/artifacts/{art.id}/download?fmt={fmt}"
+            for fmt in ("md", "txt", "docx", "pdf", "html", "json")
+        },
+    }
+
+
+def _owned_artifact(request, pk):
+    """Artifacts are private to the user who generated them and their tenant."""
+    try:
+        art = GeneratedArtifact.objects.get(pk=pk)
+    except GeneratedArtifact.DoesNotExist:
+        raise Http404
+    if art.user_id != request.user.id and not _is_platform_level(request.user):
+        raise Http404
+    return art
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def templates_list(request):
+    """Available templates for this user: uploaded company templates (ACL
+    filtered, WHOLE documents) plus the built-in rough draft sections."""
+    uploaded = []
+    for doc in docgen.collect_uploaded_templates(request.user, []):
+        uploaded.append({"id": doc.document_id, "title": doc.title,
+                         "kind": doc.kind, "source": "uploaded"})
+    builtin = [{"id": None, "title": t.title, "kind": t.kind, "source": "builtin"}
+               for t in docgen.load_builtin_templates()]
+    return Response({"templates": uploaded + builtin})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@rate_limit("docgen", rate=30, per_seconds=60, key="user")
+def docgen_generate(request):
+    """Generate finished, copy/paste-ready documents from templates.
+
+    POST {question, outputs: ["form","email"], fields: {date: "..."}}.
+    Text-only requests belong to /api/ask and are rejected here.
+    """
+    question = str((request.data or {}).get("question") or "")
+    outputs = (request.data or {}).get("outputs") or None
+    overrides = (request.data or {}).get("fields") or {}
+    plan = docgen.classify(question, outputs=outputs)
+    if not plan.artifacts:
+        return Response({"detail": "Ask for a form, email, policy or table document; "
+                                   "policy questions belong to /api/ask."}, status=400)
+    rendered = docgen.build_artifacts(request.user, question, plan, overrides)
+    saved = [docgen.save_artifact(request.user, r) for r in rendered]
+    audit(request, "docgen", f"{len(saved)} document(s): {','.join(plan.artifacts)}")
+    return Response({
+        "outputs": plan.outputs,
+        "artifacts": [_artifact_payload(a) for a in saved],
+        "missing_fields": sorted({m for r in rendered for m in r["missing_fields"]}),
+    }, status=201)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@rate_limit("docgen", rate=30, per_seconds=60, key="user")
+def artifact_from_text(request):
+    """Turn any chat answer into a downloadable artifact (DOCX/PDF/copy)."""
+    d = request.data or {}
+    content = str(d.get("content") or "").strip()
+    if not content:
+        return Response({"detail": "content is required."}, status=400)
+    kind = str(d.get("kind") or "text").strip().lower()
+    if kind not in dict(GeneratedArtifact.KINDS):
+        kind = "text"
+    structured = docgen._parse_structured(kind,
+                                          str(d.get("title") or "OpenVault document")[:200],
+                                          content)
+    art = docgen.save_artifact(request.user, {
+        "kind": kind, "title": str(d.get("title") or "OpenVault document")[:200],
+        "subject": structured.get("subject", ""), "content_md": content,
+        "structured": structured, "missing_fields": [], "source_template_id": None,
+    })
+    return Response(_artifact_payload(art), status=201)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def artifact_detail(request, pk):
+    """Fetch a generated document (structured JSON + Markdown)."""
+    return Response(_artifact_payload(_owned_artifact(request, pk)))
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def artifact_download(request, pk):
+    """Download a generated document as md/txt/docx/pdf/html/json."""
+    art = _owned_artifact(request, pk)
+    fmt = str(request.query_params.get("fmt") or "docx").strip().lower()
+    try:
+        data, content_type, filename = docgen.artifact_download_bytes(art, fmt)
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=400)
+    except Exception:
+        return Response({"detail": "Could not render this format."}, status=500)
+    resp = FileResponse(io.BytesIO(data), as_attachment=True, filename=filename)
+    resp["Content-Type"] = content_type
+    return resp

@@ -38,8 +38,13 @@ urlpatterns = [
     # Registered-company directory used for controlled document sharing.
     path("companies/search", views.company_search),
     path("companies/<str:access_code>/members", views.company_members),
-    # chat
+    # chat + template document generation
     path("ask", views.ask),
+    path("docgen", views.docgen_generate),
+    path("templates", views.templates_list),
+    path("artifacts/from_text", views.artifact_from_text),
+    path("artifacts/<int:pk>/download", views.artifact_download, name="artifact-download"),
+    path("artifacts/<int:pk>", views.artifact_detail, name="artifact-detail"),
     path("llm-status", views.llm_status),
     path("conversations", views.conversations),
     path("conversations/<int:pk>", views.conversation_detail),

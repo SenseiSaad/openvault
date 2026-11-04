@@ -211,3 +211,26 @@ def test_bedrock_access_key_pair_keeps_sigv4():
         )
 
     assert captured["authorization"].startswith(b"AWS4-HMAC-SHA256 ")
+
+
+def test_four_chat_modes_resolve_distinct_providers(monkeypatch):
+    monkeypatch.setenv("LLM_URL", "http://localhost:11434")
+    monkeypatch.setenv("LLM_MODEL", "llama3.2:3b")
+    monkeypatch.setenv("BEDROCK_REGION", "ap-south-1")
+    monkeypatch.setenv("BEDROCK_MODEL", "in.anthropic.claude-haiku-4-5-20251001-v1:0")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-2.5-flash")
+    monkeypatch.setenv("SELFHOSTED_LLM_URL", "http://10.0.1.50:11434")
+    monkeypatch.setenv("SELFHOSTED_LLM_MODEL", "qwen2.5:7b")
+
+    p_local = providers.get_chat_provider(mode="local")
+    p_bedrock = providers.get_chat_provider(mode="online")
+    p_gemini = providers.get_chat_provider(mode="gemini")
+    p_selfhosted = providers.get_chat_provider(mode="selfhosted")
+
+    assert p_local.label == "ollama" and p_local.chat_model == "llama3.2:3b"
+    assert p_bedrock.label == "bedrock" and p_bedrock.chat_model == "in.anthropic.claude-haiku-4-5-20251001-v1:0"
+    assert p_gemini.label == "gemini" and p_gemini.chat_model == "gemini-2.5-flash"
+    assert p_selfhosted.label == "selfhosted" and p_selfhosted.chat_model == "qwen2.5:7b"
+    assert p_selfhosted.base == "http://10.0.1.50:11434"
+

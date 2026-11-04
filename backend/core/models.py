@@ -53,6 +53,11 @@ class Company(models.Model):
     website = models.CharField(max_length=200, blank=True, default="")
     contact_email = models.EmailField(blank=True, default="")
     phone = models.CharField(max_length=40, blank=True, default="")
+    # Company-level fields used when filling document templates. Only non-empty
+    # values are ever injected into a prompt or a generated document.
+    hr_email = models.EmailField(blank=True, default="")
+    signature = models.TextField(blank=True, default="")
+    tone = models.CharField(max_length=80, blank=True, default="")
     # Seat limit for member accounts. NULL means unlimited; when set, admins can't
     # add more members than this (enforced in the users() view, never crashes).
     max_employees = models.PositiveIntegerField(null=True, blank=True)
@@ -134,6 +139,12 @@ class User(AbstractBaseUser, PermissionsMixin):
     # LLM default, plans and company plan assignment. Granted via the
     # `create_platform_admin` management command — never hardcoded to an email.
     is_platform_admin = models.BooleanField(default=False)
+    # Profile fields used for template filling (all optional; only non-empty
+    # values are injected). role/department stay admin-controlled because they
+    # are permission boundaries, not display labels.
+    manager = models.CharField(max_length=200, blank=True, default="")
+    employee_id = models.CharField(max_length=60, blank=True, default="")
+    join_date = models.DateField(null=True, blank=True)
     # TOTP two-factor secrets (RFC 6238). Required for platform-admin sign-ins;
     # see core.mfa. The secret is encrypted at rest like LLMConfig.api_key.
     mfa_secret = EncryptedCharField(max_length=64, blank=True, default="")
@@ -299,6 +310,15 @@ class Document(models.Model):
     description = models.TextField(blank=True, default="")
     downloads = models.IntegerField(default=0)
     is_okf = models.BooleanField(default=False)     # curated OKF note, always in context
+    # Templates are returned WHOLE (not chunked) when a user asks for a filled
+    # form/email/policy document. Editing these flags is admin-only.
+    TEMPLATE_TYPES = [
+        ("email", "Email"), ("form", "Form"),
+        ("policy", "Policy"), ("other", "Other"),
+    ]
+    is_template = models.BooleanField(default=False)
+    template_type = models.CharField(max_length=20, choices=TEMPLATE_TYPES,
+                                     blank=True, default="")
     uploaded_by = models.ForeignKey(User, null=True, on_delete=models.SET_NULL)
     num_chunks = models.IntegerField(default=0)
     # `company` keeps the existing tenant-wide behaviour. `restricted` means
@@ -560,6 +580,36 @@ class AttendanceRecord(models.Model):
 
     def __str__(self):
         return f"{self.user} {self.date} {self.status}"
+
+
+class GeneratedArtifact(models.Model):
+    """A finished, copy/paste-ready document produced from a template.
+
+    Deterministic filler output — no model call, no invented facts. Owned by
+    the user who requested it; download/GET endpoints enforce that ownership
+    and the company boundary.
+    """
+    KINDS = [("email", "Email"), ("form", "Form"), ("policy", "Policy"),
+             ("table", "Table"), ("text", "Text")]
+
+    company = models.ForeignKey(Company, on_delete=models.CASCADE,
+                                related_name="artifacts")
+    user = models.ForeignKey(User, on_delete=models.CASCADE,
+                             related_name="artifacts")
+    kind = models.CharField(max_length=20, choices=KINDS, default="text")
+    title = models.CharField(max_length=200, blank=True, default="")
+    subject = models.CharField(max_length=300, blank=True, default="")
+    content_md = models.TextField(blank=True, default="")
+    structured = models.TextField(blank=True, default="{}")
+    missing_fields = models.TextField(blank=True, default="[]")
+    source_template_id = models.IntegerField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.kind}: {self.title or self.pk}"
 
 
 class UserStrike(models.Model):

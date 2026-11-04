@@ -109,6 +109,10 @@ else:
             # Honour SQLITE_PATH so container deployments can put the database
             # on a persistent volume instead of inside the image layer.
             "NAME": os.getenv("SQLITE_PATH") or str(BASE_DIR / "db.sqlite3"),
+            "OPTIONS": {
+                "timeout": 30,
+                "init_command": "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;",
+            },
         }
     }
 
@@ -198,7 +202,8 @@ RATELIMIT_ENABLED = os.getenv("RATELIMIT_ENABLED", "true").lower() in ("1", "tru
 
 # ── App/LLM config ──
 _default_data_dir = str(Path(tempfile.gettempdir()) / "openvault" / "data") if IS_VERCEL else str(BASE_DIR / "data")
-DATA_DIR = os.getenv("DATA_DIR", _default_data_dir)
+_raw_data_dir = os.getenv("DATA_DIR", _default_data_dir)
+DATA_DIR = _raw_data_dir if os.path.isabs(_raw_data_dir) else str((BASE_DIR / _raw_data_dir).resolve())
 try:
     os.makedirs(DATA_DIR, exist_ok=True)
 except OSError:
@@ -259,7 +264,8 @@ REQUIRE_EMAIL_VERIFICATION = os.getenv("REQUIRE_EMAIL_VERIFICATION", "false").lo
 # ── Media (generated artefacts: auto-filled leave forms, etc.) ──
 MEDIA_URL = os.getenv("MEDIA_URL", "/media/")
 _default_media_root = str(Path(tempfile.gettempdir()) / "openvault" / "media") if IS_VERCEL else str(BASE_DIR / "media")
-MEDIA_ROOT = os.getenv("MEDIA_ROOT", _default_media_root)
+_raw_media_root = os.getenv("MEDIA_ROOT", _default_media_root)
+MEDIA_ROOT = _raw_media_root if os.path.isabs(_raw_media_root) else str((BASE_DIR / _raw_media_root).resolve())
 try:
     os.makedirs(os.path.join(MEDIA_ROOT, "forms"), exist_ok=True)
 except OSError:

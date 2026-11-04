@@ -35,7 +35,15 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       LLM_KEY_ENCRYPTION_KEY: ${LLM_KEY_ENCRYPTION_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.5-flash}
+      BEDROCK_API_KEY: ${BEDROCK_API_KEY:-}
+      BEDROCK_REGION: ${BEDROCK_REGION:-ap-south-1}
+      BEDROCK_MODEL: ${BEDROCK_MODEL:-in.anthropic.claude-haiku-4-5-20251001-v1:0}
       LLM_URL: ${LLM_URL:-http://host.docker.internal:11434}
+      LLM_MODEL: ${LLM_MODEL:-llama3.2:3b}
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
+      SELFHOSTED_LLM_URL: ${SELFHOSTED_LLM_URL:-}
+      SELFHOSTED_LLM_MODEL: ${SELFHOSTED_LLM_MODEL:-qwen2.5:7b}
       # Email (console backend unless SMTP is configured)
       EMAIL_BACKEND: ${EMAIL_BACKEND:-django.core.mail.backends.console.EmailBackend}
       EMAIL_HOST: ${EMAIL_HOST:-}

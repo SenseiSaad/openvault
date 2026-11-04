@@ -1,0 +1,231 @@
+{
+  "summary": {
+    "cases": 20,
+    "placeholder_accuracy": 1.0,
+    "no_invention_rate": 1.0,
+    "missing_line_rate": 1.0,
+    "pass_rate": 1.0
+  },
+  "cases": [
+    {
+      "id": "t01",
+      "lang": "en",
+      "kind": "form",
+      "filled_ok": true,
+      "kept_ok": true,
+      "no_invention": true,
+      "missing_line_ok": true,
+      "pass": true,
+      "invented": []
+    },
+    {
+      "id": "t02",
+      "lang": "en",
+      "kind": "email",
+      "filled_ok": true,
+      "kept_ok": true,
+      "no_invention": true,
+      "missing_line_ok": true,
+      "pass": true,
+      "invented": []
+    },
+    {
+      "id": "t03",
+      "lang": "en",
+      "kind": "email",
+      "filled_ok": true,
+      "kept_ok": true,
+      "no_invention": true,
+      "missing_line_ok": true,
+      "pass": true,
+      "invented": []
+    },
+    {
+      "id": "t04",
+      "lang": "en",
+      "kind": "form",
+      "filled_ok": true,
+      "kept_ok": true,
+      "no_invention": true,
+      "missing_line_ok": true,
+      "pass": true,
+      "invented": []
+    },
+    {
+      "id": "t05",
+      "lang": "ur",
+      "kind": "form",
+      "filled_ok": true,
+      "kept_ok": true,
+      "no_invention": true,
+      "missing_line_ok": true,
+      "pass": true,
+      "invented": []
+    },
+    {
+      "id": "t06",
+      "lang": "ur",
+      "kind": "email",
+      "filled_ok": true,
+      "kept_ok": true,
+      "no_invention": true,
+      "missing_line_ok": true,
+      "pass": true,
+      "invented": []
+    },
+    {
+      "id": "t07",
+      "lang": "en",
+      "kind": "form",
+      "filled_ok": true,
+      "kept_ok": true,
+      "no_invention": true,
+      "missing_line_ok": true,
+      "pass": true,
+      "invented": []
+    },
+    {
+      "id": "t08",
+      "lang": "ur",
+      "kind": "form",
+      "filled_ok": true,
+      "kept_ok": true,
+      "no_invention": true,
+      "missing_line_ok": true,
+      "pass": true,
+      "invented": []
+    },
+    {
+      "id": "t09",
+      "lang": "en",
+      "kind": "policy",
+      "filled_ok": true,
+      "kept_ok": true,
+      "no_invention": true,
+      "missing_line_ok": true,
+      "pass": true,
+      "invented": []
+    },
+    {
+      "id": "t10",
+      "lang": "en",
+      "kind": "table",
+      "filled_ok": true,
+      "kept_ok": true,
+      "no_invention": true,
+      "missing_line_ok": true,
+      "pass": true,
+      "invented": []
+    },
+    {
+      "id": "t11",
+      "lang": "en",
+      "kind": "form",
+      "filled_ok": true,
+      "kept_ok": true,
+      "no_invention": true,
+      "missing_line_ok": true,
+      "pass": true,
+      "invented": []
+    },
+    {
+      "id": "t12",
+      "lang": "en",
+      "kind": "email",
+      "filled_ok": true,
+      "kept_ok": true,
+      "no_invention": true,
+      "missing_line_ok": true,
+      "pass": true,
+      "invented": []
+    },
+    {
+      "id": "t13",
+      "lang": "en",
+      "kind": "form",
+      "filled_ok": true,
+      "kept_ok": true,
+      "no_invention": true,
+      "missing_line_ok": true,
+      "pass": true,
+      "invented": []
+    },
+    {
+      "id": "t14",
+      "lang": "ur",
+      "kind": "email",
+      "filled_ok": true,
+      "kept_ok": true,
+      "no_invention": true,
+      "missing_line_ok": true,
+      "pass": true,
+      "invented": []
+    },
+    {
+      "id": "t15",
+      "lang": "en",
+      "kind": "policy",
+      "filled_ok": true,
+      "kept_ok": true,
+      "no_invention": true,
+      "missing_line_ok": true,
+      "pass": true,
+      "invented": []
+    },
+    {
+      "id": "t16",
+      "lang": "en",
+      "kind": "table",
+      "filled_ok": true,
+      "kept_ok": true,
+      "no_invention": true,
+      "missing_line_ok": true,
+      "pass": true,
+      "invented": []
+    },
+    {
+      "id": "t17",
+      "lang": "en",
+      "kind": "email",
+      "filled_ok": true,
+      "kept_ok": true,
+      "no_invention": true,
+      "missing_line_ok": true,
+      "pass": true,
+      "invented": []
+    },
+    {
+      "id": "t18",
+      "lang": "ur",
+      "kind": "form",
+      "filled_ok": true,
+      "kept_ok": true,
+      "no_invention": true,
+      "missing_line_ok": true,
+      "pass": true,
+      "invented": []
+    },
+    {
+      "id": "t19",
+      "lang": "en",
+      "kind": "form",
+      "filled_ok": true,
+      "kept_ok": true,
+      "no_invention": true,
+      "missing_line_ok": true,
+      "pass": true,
+      "invented": []
+    },
+    {
+      "id": "t20",
+      "lang": "en",
+      "kind": "email",
+      "filled_ok": true,
+      "kept_ok": true,
+      "no_invention": true,
+      "missing_line_ok": true,
+      "pass": true,
+      "invented": []
+    }
+  ]
+}

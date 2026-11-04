@@ -770,3 +770,58 @@
 .dark .bg-white\/90 {
   background-color: var(--surface-2);
 }
+
+/* ---- Chat answers: sanitized Markdown (remark-gfm) ---- */
+.ov-md > :first-child { margin-top: 0; }
+.ov-md > :last-child { margin-bottom: 0; }
+.ov-md h1, .ov-md h2, .ov-md h3, .ov-md h4 {
+  margin: 0.75rem 0 0.35rem;
+  font-weight: 650;
+  line-height: 1.3;
+  color: #1d1d1b;
+  letter-spacing: -0.01em;
+}
+.ov-md h1 { font-size: 1.05rem; }
+.ov-md h2 { font-size: 1rem; }
+.ov-md h3, .ov-md h4 { font-size: 0.925rem; }
+.ov-md p { margin: 0.25rem 0; line-height: 1.65; }
+.ov-md strong { font-weight: 650; color: #1d1d1b; }
+.ov-md ul, .ov-md ol { margin: 0.4rem 0 0.4rem 1.1rem; padding: 0; }
+.ov-md ul { list-style: disc; }
+.ov-md ol { list-style: decimal; }
+.ov-md li { margin: 0.15rem 0; line-height: 1.6; }
+.ov-md li input[type='checkbox'] { margin-right: 0.35rem; }
+.ov-md table {
+  width: 100%;
+  margin: 0.5rem 0;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+.ov-md th, .ov-md td {
+  border: 1px solid #e2dfd7;
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  vertical-align: top;
+}
+.ov-md th { background: #f7f5ef; font-weight: 650; color: #1d1d1b; }
+.ov-md tr:nth-child(even) td { background: #fcfbf7; }
+.ov-md blockquote {
+  margin: 0.4rem 0;
+  padding-left: 0.75rem;
+  border-left: 3px solid #dcdad3;
+  color: #6b6862;
+}
+.ov-md code {
+  background: #f2efe9;
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+  font-size: 0.8rem;
+}
+.ov-md pre {
+  background: #f7f5ef;
+  border-radius: 8px;
+  padding: 0.6rem;
+  overflow-x: auto;
+}
+.ov-md a { color: #2f5b36; text-decoration: underline; }
+.ov-md hr { border: 0; border-top: 1px solid #e6e3dc; margin: 0.6rem 0; }
