@@ -249,6 +249,10 @@ LLM_URL = os.getenv("LLM_URL", "http://localhost:11434").rstrip("/")
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:1.5b")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "nomic-embed-text")
 TOP_K = int(os.getenv("TOP_K", "4"))
+# Total characters of retrieved document text sent to the model. The old
+# hard-coded 1,500-character cap could fit only one or two chunks, so a single
+# OKF note could hide the passage that actually answered the question.
+RAG_MAX_CONTEXT_CHARS = int(os.getenv("RAG_MAX_CONTEXT_CHARS", "12000"))
 # pgvector column dimension — must match the embedding provider's output width
 # (titan-embed-text-v2 = 1024, nomic-embed-text = 768, text-embedding-3-small =
 # 1536). Changing it requires a reindex; see docs/runbooks.

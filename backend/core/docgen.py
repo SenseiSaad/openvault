@@ -25,7 +25,6 @@ import re
 from dataclasses import dataclass, field
 
 from django.conf import settings
-from django.utils import timezone
 
 # ------------------------------------------------------------------ fields
 # Canonical field -> keywords found inside bracket placeholders / tokens.
@@ -37,13 +36,15 @@ FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "department": ("department", "team", "unit", "shoba", "engineering backend"),
     "manager": ("manager", "supervisor", "reporting manager", "boss"),
     "employee_id": ("employee id", "employee number", "emp id", "staff id", "id number", "emp"),
-    "join_date": ("join date", "joining date", "start date", "date of joining"),
+    "join_date": ("join date", "joining date", "date of joining"),
     "company_name": ("company", "organization", "organisation", "firm"),
     "hr_email": ("hr email", "hr address", "human resources email"),
     "signature": ("signature", "sign off", "signed"),
     "tone": ("tone", "style"),
     "phone": ("phone", "mobile", "contact number", "phone number"),
-    "date": ("date", "today", "yyyy-mm-dd", "aaj", "tareekh"),
+    # A bare "Date" is ambiguous (transaction date, leave dates, approval
+    # date); only an explicit current-date label may use today's date.
+    "date": ("today", "current date", "yyyy-mm-dd", "aaj", "tareekh"),
     "reason": ("brief reason", "reason for leave", "reason", "wajah"),
     "coverage": ("colleague", "coverage", "handover", "backup"),
 }
@@ -82,7 +83,6 @@ def resolve_fields(user, overrides: dict | None = None) -> dict[str, str]:
     """
     company = getattr(user, "company", None)
     dept = getattr(user, "department", None)
-    today = timezone.localdate()
     raw: dict[str, str] = {
         "full_name": (getattr(user, "full_name", "") or "").strip(),
         "email": (getattr(user, "email", "") or "").strip(),
@@ -97,15 +97,14 @@ def resolve_fields(user, overrides: dict | None = None) -> dict[str, str]:
         "signature": (getattr(company, "signature", "") or "").strip(),
         "tone": (getattr(company, "tone", "") or "").strip(),
         "phone": (getattr(company, "phone", "") or "").strip(),
-        "date": today.isoformat(),
-        "day": today.strftime("%A, %d %B %Y"),
     }
     fields = {k: v for k, v in raw.items() if v}
     for key, value in (overrides or {}).items():
-        key = str(key).strip().lower()
+        key = _field_key(str(key))
         value = str(value or "").strip()
-        if value:
-            fields[key] = value[:300]
+        if not key or not value:
+            continue
+        fields[key] = value[:300]
     return fields
 
 
@@ -118,12 +117,49 @@ def canonical_field(label: str) -> str | None:
     low = re.sub(r"[^a-z0-9 ]+", " ", label.lower())
     low = re.sub(r"\s+", " ", low).strip()
     low = re.sub(r"^(e g|eg|your|the|a|brief|specify)\s+", "", low)
+    # A transaction, leave, or approval date is not today's date or the
+    # employee's joining date. Ask the user rather than filling a plausible
+    # but potentially incorrect date from their profile.
+    if re.search(r"\b(expense|transaction|purchase|incurred|start|end|leave|approval|travel) date\b", low):
+        return None
     best: tuple[int, str] | None = None
     for key, aliases in FIELD_ALIASES.items():
         for alias in aliases:
             if alias in low and (best is None or len(alias) > best[0]):
                 best = (len(alias), key)
     return best[1] if best else None
+
+
+def _field_key(label: str) -> str:
+    """Canonicalize known profile labels, preserving unknown form-field keys."""
+    clean = str(label or "").strip().strip("[]").strip()
+    canonical = canonical_field(clean)
+    if canonical:
+        return canonical
+    return re.sub(r"[^a-z0-9]+", "_", clean.lower()).strip("_")
+
+
+def extract_explicit_fields(question: str) -> dict[str, str]:
+    """Read plainly labelled values the user explicitly typed in the request.
+
+    This is a conservative label/value parser, not an LLM extraction step:
+    only ``Field: value`` lines are accepted, and bracketed template/example
+    placeholders are ignored. Profile values are the fallback; explicit
+    request values then override them. Unknown fields remain deterministic.
+    """
+    extracted: dict[str, str] = {}
+    for raw_line in (question or "").splitlines():
+        line = re.sub(r"^\s*(?:(?:\d+[.)])|[-*])\s*", "", raw_line).strip()
+        match = re.match(r"^([^:]{2,80}):\s*(.*?)\s*$", line)
+        if not match:
+            continue
+        label, value = match.group(1).strip(), match.group(2).strip().strip("`\"'")
+        if not value or ("[" in value and "]" in value) or set(value) <= {"_", "-", " "}:
+            continue
+        key = _field_key(label)
+        if key:
+            extracted[key] = value[:300]
+    return extracted
 
 
 def _clean_label(label: str) -> str:
@@ -138,8 +174,25 @@ def fill_template(text: str, fields: dict[str, str]) -> FillResult:
     result = FillResult(text="")
     missing: list[str] = []
 
+    # An approval date belongs to the approver, not the employee preparing a
+    # claim. Keep this out of the employee's missing-details form.
+    text = re.sub(
+        r"(?im)^(\s*(?:[*-]\s*)?approval date):\s*\[date\]\s*$",
+        r"\1: To be completed by approver",
+        text,
+    )
+    # Make an inline yes/no row fillable instead of leaving a static pair of
+    # unchecked boxes that the missing-details UI cannot address. Standalone
+    # choice checkboxes (e.g. leave type) are intentionally left untouched.
+    text = re.sub(
+        r"(?m)^(\s*[*-]\s*)([^:\n]+):\s*\[\s*\]\s*Yes\s*/\s*\[\s*\]\s*No\s*$",
+        lambda m: f"{m.group(1)}{m.group(2).strip()}: [{m.group(2).strip()}]",
+        text,
+        flags=re.IGNORECASE,
+    )
+
     def substitute(label: str) -> str:
-        key = canonical_field(label)
+        key = _field_key(label)
         if key and fields.get(key):
             if key not in result.filled:
                 result.filled.append(key)
@@ -158,7 +211,10 @@ def fill_template(text: str, fields: dict[str, str]) -> FillResult:
     # 1. Literal sample values already present in the rough draft.
     for sample, key in SAMPLE_VALUES.items():
         if fields.get(key):
-            filled = filled.replace(sample, fields[key])
+            if sample in filled:
+                filled = filled.replace(sample, fields[key])
+                if key not in result.filled:
+                    result.filled.append(key)
     # 2. `{{ field }}` tokens.
     def braces_repl(m: re.Match) -> str:
         key = m.group(1).strip().lower()
@@ -289,24 +345,134 @@ def whole_template_text(doc) -> str:
         return ""
 
 
-def collect_uploaded_templates(user, kinds: list[str]) -> list[TemplateDoc]:
+_FENCED_TEMPLATE = re.compile(r"```(?:text|markdown|md)?[ \t]*\r?\n(.*?)```", re.DOTALL | re.IGNORECASE)
+
+
+def extract_template_body(text: str) -> str:
+    """Return the actual form/email block inside a markdown template file.
+
+    Uploaded templates (``demo_docs/form_expense_claim.md`` etc.) wrap the
+    usable document in a fenced block after a ``## Template`` heading, followed
+    by a field guide and usage notes. Feeding the whole file to the fill/parse
+    code produced documents littered with instructions and duplicate field
+    tables, so prefer the fenced block. Plain ``.txt`` templates pass through.
+    """
+    raw = (text or "").strip()
+    if "```" not in raw:
+        return raw
+    heading = raw.lower().find("## template")
+    match = _FENCED_TEMPLATE.search(raw, heading if heading >= 0 else 0)
+    if match is None:
+        match = _FENCED_TEMPLATE.search(raw)
+    if match is None:
+        return raw
+    return (match.group(1) or "").strip() or raw
+
+
+_TEMPLATE_PREFIXES = {
+    "email_": "email",
+    "form_": "form",
+    "application_": "form",
+    "letter_": "form",
+}
+_TEMPLATE_STOPWORDS = {
+    "a", "an", "and", "any", "document", "draft", "fill", "for", "form", "forms",
+    "generate", "give", "me", "my", "need", "please", "prepare", "the", "to",
+    "want", "with", "create", "make", "blank", "new",
+}
+
+
+def template_kind_for(doc) -> str:
+    """Infer a template kind from an uploaded document.
+
+    Prefer the explicit ``template_type``; fall back to the filename prefix so
+    demo documents that were imported before template flags were set still work.
+    """
+    kind = (getattr(doc, "template_type", "") or "").strip().lower()
+    if kind:
+        return kind
+    name = (getattr(doc, "filename", "") or "").lower()
+    for prefix, inferred in _TEMPLATE_PREFIXES.items():
+        if name.startswith(prefix):
+            return inferred
+    return ""
+
+
+def _template_words(text: str) -> set[str]:
+    return {
+        w for w in re.findall(r"[a-z0-9]+", (text or "").lower())
+        if len(w) > 2 and w not in _TEMPLATE_STOPWORDS
+    }
+
+
+def template_match_score(question: str, template: TemplateDoc) -> int:
+    """Score how well a template's name/body matches the request.
+
+    Deliberately simple and deterministic: exact phrase hits score highest,
+    then title/filename words, then body words. This is what makes "expense
+    claim" choose ``form_expense_claim.md`` instead of the first form uploaded.
+    """
+    low_q = (question or "").lower()
+    title = template.title.lower().replace("_", " ")
+    body = template.text[:4000].lower()
+    score = 0
+    # Exact phrases from the request, e.g. "expense claim", "it access".
+    request_words = [
+        w for w in re.findall(r"[a-z0-9]+", low_q)
+        if len(w) > 2 and w not in _TEMPLATE_STOPWORDS
+    ]
+    for left, right in zip(request_words, request_words[1:]):
+        phrase = f"{left} {right}"
+        if phrase in title:
+            score += 8
+        elif phrase in body:
+            score += 2
+    q_words = _template_words(question)
+    title_words = _template_words(template.title)
+    body_words = _template_words(template.text[:4000])
+    score += 4 * len(q_words & title_words)
+    score += len(q_words & body_words)
+    return score
+
+
+def collect_uploaded_templates(user, kinds: list[str], include_like: bool = False) -> list[TemplateDoc]:
     """Company-owned templates the user is allowed to see. Isolation is the
-    same ACL used by document retrieval — never another company's templates."""
+    same ACL used by document retrieval — never another company's templates.
+
+    ``include_like`` also considers template-shaped files (``form_*``,
+    ``email_*``, ``application_*``, ``letter_*``) even when their ``is_template``
+    flag was not set by an older import. Marked templates always win.
+    """
     from .models import Document
     from .rag import accessible_doc_ids
+    from django.db.models import Q
 
     allowed = accessible_doc_ids(user)
     if not allowed:
         return []
-    qs = Document.objects.filter(id__in=allowed, is_template=True)
-    if kinds and "other" not in kinds:
-        qs = qs.filter(template_type__in=kinds)
+    qs = Document.objects.filter(id__in=allowed)
+    if include_like:
+        qs = qs.filter(
+            Q(is_template=True)
+            | Q(filename__istartswith="form_")
+            | Q(filename__istartswith="email_")
+            | Q(filename__istartswith="application_")
+            | Q(filename__istartswith="letter_")
+        )
+    else:
+        qs = qs.filter(is_template=True)
     out: list[TemplateDoc] = []
-    for doc in qs[:20]:
-        text = whole_template_text(doc)
+    for doc in qs.order_by("-is_template", "id")[:200]:
+        kind = template_kind_for(doc)
+        if not doc.is_template:
+            if not include_like or not kind:
+                continue
+        if kinds and "other" not in kinds and kind not in kinds:
+            continue
+        text = extract_template_body(whole_template_text(doc))
         if text.strip():
             out.append(TemplateDoc(
-                kind=doc.template_type or "other",
+                kind=kind or "other",
                 title=doc.filename, text=text,
                 source=f"uploaded:{doc.id}", document_id=doc.id,
             ))
@@ -492,7 +658,13 @@ def _parse_structured(kind: str, title: str, text: str) -> dict:
 def render_artifact(template: TemplateDoc, fields: dict[str, str],
                     overrides: dict | None = None) -> dict:
     filled = fill_template(template.text, fields)
-    title = fill_template(template.title, fields).text.strip()
+    title_source = template.title
+    first_line = filled.text.strip().splitlines()[0].strip() if filled.text.strip() else ""
+    if template.source.startswith("uploaded:") and template.kind in ("form", "table", "policy") and first_line:
+        # Uploaded templates are titled by filename; their first line is the
+        # real document heading (e.g. "EXPENSE CLAIM FORM - Acme Corp").
+        title_source = first_line.lstrip("# ").strip()[:160]
+    title = fill_template(title_source, fields).text.strip()
     structured = _parse_structured(template.kind, title, filled.text)
     return {
         "kind": template.kind,
@@ -512,21 +684,26 @@ def build_artifacts(user, question: str, plan: RequestPlan,
                     overrides: dict | None = None) -> list[dict]:
     """Pick templates (uploaded company templates first, then the rough root
     file), fill them, and return the finished documents. No model calls."""
-    fields = resolve_fields(user, overrides)
+    explicit = extract_explicit_fields(question)
+    explicit.update(overrides or {})
+    fields = resolve_fields(user, explicit)
     wanted = plan.artifacts or ["form", "email"]
-    templates: list[TemplateDoc] = collect_uploaded_templates(user, wanted)
+    templates: list[TemplateDoc] = collect_uploaded_templates(user, wanted, include_like=True)
     builtin = load_builtin_templates()
 
     out: list[dict] = []
     for kind in wanted:
         candidates = [t for t in templates if t.kind == kind]
-        if not candidates:
-            candidates = [t for t in builtin if t.kind == kind]
+        # Let the builtin draft compete on relevance too: a request for a
+        # "leave request form" should beat an unrelated uploaded form.
+        candidates += [t for t in builtin if t.kind == kind]
         if not candidates and kind == "policy":
             candidates = [t for t in builtin if t.kind in ("policy", "form")]
         if not candidates:
             # Last resort: a generic builtin section, never an invented doc.
             candidates = builtin[:1]
+        # Choose by request wording (e.g. "expense claim" -> form_expense_claim).
+        candidates.sort(key=lambda t: template_match_score(question, t), reverse=True)
         for tpl in candidates[:1]:
             out.append(render_artifact(tpl, fields, overrides))
     return out
@@ -560,14 +737,26 @@ def profile_prompt_block(fields: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
-def template_context(user, plan: RequestPlan) -> str:
+def template_context(user, plan: RequestPlan, question: str = "") -> str:
     """Whole template text for the prompt (never chunks). Empty when no
-    template was requested."""
+    template was requested. Picks the same best-matching template as
+    ``build_artifacts`` so a mixed request gets the right document."""
     if not plan.artifacts:
         return ""
-    texts = [t.text for t in (collect_uploaded_templates(user, plan.artifacts)
-                              or load_builtin_templates())]
-    return "\n\n---\n\n".join(texts[:3])[:50_000]
+    uploaded = collect_uploaded_templates(user, plan.artifacts, include_like=True)
+    builtin = load_builtin_templates()
+    chosen: list[TemplateDoc] = []
+    for kind in plan.artifacts:
+        candidates = [t for t in uploaded if t.kind == kind]
+        candidates += [t for t in builtin if t.kind == kind]
+        if not candidates and kind == "policy":
+            candidates = [t for t in builtin if t.kind in ("policy", "form")]
+        if candidates:
+            candidates.sort(key=lambda t: template_match_score(question, t), reverse=True)
+            chosen.append(candidates[0])
+    if not chosen:
+        chosen = (uploaded or builtin)[:3]
+    return "\n\n---\n\n".join(t.text for t in chosen)[:50_000]
 
 
 # ------------------------------------------------------------------ storage

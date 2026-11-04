@@ -391,7 +391,8 @@ def test_plans_public_and_platform_plan_change(api, auth_client, make_company, m
     assert company.plan_id == business.id
 
 
-def test_platform_company_switch_and_detach(auth_client, make_company, make_user):
+def test_platform_admin_cannot_join_a_tenant(auth_client, make_company, make_user):
+    """Root admins are report-only: switch/detach must be refused."""
     make_company("Switch Co")
     root = make_user(None, email="root-swap@openvault.test", role="admin",
                      is_platform_admin=True, is_superuser=True)
@@ -399,6 +400,8 @@ def test_platform_company_switch_and_detach(auth_client, make_company, make_user
     target = Company.objects.first()
     switched = client.post("/api/admin/switch-company", {"company_id": target.id},
                            format="json")
-    assert switched.json()["company_id"] == target.id
+    assert switched.status_code == 403
     detached = client.post("/api/admin/detach-company", format="json")
-    assert detached.json()["company_id"] is None
+    assert detached.status_code == 403
+    root.refresh_from_db()
+    assert root.company_id is None

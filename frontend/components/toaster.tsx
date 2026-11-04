@@ -8,6 +8,7 @@ type Toast = { id: number; message: string; type: 'success' | 'error' }
 const ToastContext = createContext<any>(null)
 
 let addToastObj: (t: Omit<Toast, 'id'>) => void = () => {}
+let nextToastId = 0
 
 export const toast = {
   success: (msg: string) => addToastObj({ message: msg, type: 'success' }),
@@ -19,7 +20,7 @@ export function Toaster() {
 
   useEffect(() => {
     addToastObj = (t) => {
-      const id = Date.now()
+      const id = ++nextToastId
       setToasts((prev) => [...prev, { ...t, id }])
       setTimeout(() => {
         setToasts((prev) => prev.filter((x) => x.id !== id))

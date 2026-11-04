@@ -153,14 +153,32 @@ def _is_platform_level(user):
     )
 
 
+def _platform_admin_blocked(request):
+    """403 for a platform/root admin trying to touch tenant-scoped data.
+
+    Root admins have no `company` by design: they see platform reports
+    (/api/admin/reports) and platform config only, never a tenant's documents,
+    chat history, member directory or generated artifacts.
+    """
+    if _is_platform_level(request.user) and not getattr(request.user, "company_id", None):
+        return Response(
+            {"detail": "Platform admins cannot access company data. "
+                       "Use /api/admin/reports for platform analytics."},
+            status=403,
+        )
+    return None
+
+
 def visible_documents(user):
-    """Return only documents the signed-in user is allowed to read."""
-    if _is_platform_level(user):
-        if getattr(user, "company_id", None):
-            return Document.objects.filter(company_id=user.company_id).distinct()
-        return Document.objects.all().distinct()
+    """Return only documents the signed-in user is allowed to read.
+
+    Platform/root admins have NO tenant context and therefore see NO company
+    documents; platform reporting lives in /api/admin/reports, not here.
+    """
     if not getattr(user, "company_id", None):
         return Document.objects.none()
+    if _is_platform_level(user):
+        return Document.objects.filter(company_id=user.company_id).distinct()
     dept_q = (
         Q(access_scope="department", department_id=user.department_id)
         if getattr(user, "department_id", None) else Q()
@@ -546,6 +564,9 @@ def reset_password(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def documents(request):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """List documents readable by this member. Paginated with ?page=&page_size="""
     # select_related matches DocumentSerializer's FK traversal (company name,
     # department name) so a 200-row page costs 1 query, not 400.
@@ -582,6 +603,9 @@ def _plan_for(company):
 @api_view(["POST"])
 @permission_classes([IsEditor])
 def upload_document(request):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """Upload + index a file. Indexing runs in a background thread so the
     request returns immediately with indexing_status='pending'."""
     f = request.FILES.get("file")
@@ -675,6 +699,9 @@ def upload_document(request):
 @api_view(["POST"])
 @permission_classes([IsEditor])
 def upload_presign(request):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """Return a presigned S3 PUT URL so the browser can upload large files (>4.5 MB)
     directly to S3 without hitting Vercel's serverless request body limit."""
     if not storage.is_s3_enabled():
@@ -698,6 +725,9 @@ def upload_presign(request):
 @api_view(["POST"])
 @permission_classes([IsEditor])
 def upload_confirm(request):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """Confirm a direct-to-S3 upload, create the Document row, and trigger indexing."""
     if not storage.is_s3_enabled():
         return Response({"detail": "Direct S3 upload is not enabled on this server."}, status=400)
@@ -834,6 +864,9 @@ def _index_in_background(doc: Document):
 @api_view(["POST"])
 @permission_classes([IsEditor])
 def document_reindex(request, pk):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """Retry indexing for a failed/pending document."""
     doc = _get_doc(request, pk)
     if doc.indexing_status != "failed":
@@ -848,6 +881,9 @@ def document_reindex(request, pk):
 @api_view(["GET", "PATCH", "DELETE"])
 @permission_classes([IsAuthenticated])
 def document_detail(request, pk):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """Read metadata, edit (category/description/tags/scope), or delete a doc."""
     doc = _accessible_doc(request, pk)
     if request.method == "GET":
@@ -913,6 +949,8 @@ def document_detail(request, pk):
 
 def _is_editor_request(request):
     u = request.user
+    if not getattr(u, "company_id", None):
+        return False
     return bool(u.role in ("admin", "employee") or _is_platform_level(u))
 
 
@@ -925,12 +963,17 @@ def _can_manage_document(request, doc):
     stronger check.
     """
     u = request.user
+    if not getattr(u, "company_id", None) or doc.company_id != u.company_id:
+        return False
     return bool(_is_platform_level(u) or u.role == "admin" or doc.uploaded_by_id == u.id)
 
 
 @api_view(["POST"])
 @permission_classes([IsEditor])
 def document_new_version(request, pk):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """Upload a new version of a document: the old file is archived to
     DocumentVersion, the new file is indexed, and `version` increments.
     Plan-gated (allow_versions)."""
@@ -976,6 +1019,9 @@ def document_new_version(request, pk):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def document_versions(request, pk):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """Version history for a document (plan-gated at upload time; viewable always)."""
     doc = _accessible_doc(request, pk)
     versions = doc.versions.all()
@@ -983,10 +1029,10 @@ def document_versions(request, pk):
 
 
 def _get_doc(request, pk):
-    """Owner-company only, or platform admin."""
+    """Owner-company only. A platform/root admin without a company sees nothing."""
+    if not getattr(request.user, "company_id", None):
+        raise Http404
     try:
-        if _is_platform_level(request.user):
-            return Document.objects.get(pk=pk)
         return Document.objects.get(pk=pk, company=request.user.company)
     except Document.DoesNotExist:
         raise Http404
@@ -999,8 +1045,8 @@ def _accessible_doc(request, pk):
     except Document.DoesNotExist:
         raise Http404
     u = request.user
-    if _is_platform_level(u):
-        return doc
+    if _is_platform_level(u) and not getattr(u, "company_id", None):
+        raise Http404
     if getattr(u, "company_id", None) and doc.company_id == u.company_id:
         if doc.access_scope in ("company",):
             return doc
@@ -1020,8 +1066,6 @@ def _accessible_doc(request, pk):
 def _can_download(request, doc):
     """Enforce download permission server-side, not just in the UI."""
     u = request.user
-    if _is_platform_level(u):
-        return True
     if doc.company_id == getattr(u, "company_id", None):
         if doc.access_scope in ("company", "department"):
             return True
@@ -1037,6 +1081,9 @@ def _can_download(request, doc):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def download_document(request, pk):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     doc = _accessible_doc(request, pk)
     if not _can_download(request, doc):
         return Response({"detail": "Download is disabled for this document."}, status=403)
@@ -1055,6 +1102,9 @@ def download_document(request, pk):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def document_preview(request, pk):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """Return extracted plain text for in-browser preview (ACL-checked).
 
     Uses the text cached at index time; falls back to a fresh extraction (and
@@ -1098,13 +1148,20 @@ def ask(request):
     provider = s.validated_data.get("provider")
     conversation_id = s.validated_data.get("conversation_id")
 
+    if _is_platform_level(request.user) and not getattr(request.user, "company_id", None):
+        return Response(
+            {"detail": "Platform admins cannot query company data. "
+                       "Use /api/admin/reports for subscription analytics."},
+            status=403,
+        )
+
     # Output routing: a policy question gets ONLY the grounded text answer, a
     # form/email request gets ONLY the finished document(s), and a mixed
     # request gets exactly the outputs it asked for. Template generation is
     # deterministic (no model call, no Bedrock, no invented facts).
     doc_plan = docgen.classify(question, outputs=s.validated_data.get("outputs"))
     overrides = s.validated_data.get("fields") or {}
-    template_text = docgen.template_context(request.user, doc_plan) if doc_plan.artifacts else ""
+    template_text = docgen.template_context(request.user, doc_plan, question) if doc_plan.artifacts else ""
 
     # Provider selection is a bring-your-own-key feature: without the company's
     # own stored key a caller could steer shared platform spend at a costlier
@@ -1157,6 +1214,7 @@ def ask(request):
                 "id": art.id, "kind": art.kind, "title": art.title,
                 "subject": art.subject, "content_md": art.content_md,
                 "structured": r["structured"], "missing_fields": r["missing_fields"],
+                "filled_fields": r.get("filled_fields", []),
                 "source": r["source"], "source_template_id": r["source_template_id"],
                 "downloads": {
                     fmt: f"/api/artifacts/{art.id}/download?fmt={fmt}"
@@ -1212,6 +1270,9 @@ def ask(request):
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def conversations(request):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """List the caller's chat threads, or start an empty one."""
     if not request.user.company_id:
         return Response([])
@@ -1233,6 +1294,9 @@ def conversations(request):
 @api_view(["GET", "DELETE", "PATCH"])
 @permission_classes([IsAuthenticated])
 def conversation_detail(request, pk):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """One thread with its messages (own threads only), or delete/rename it."""
     try:
         conv = ChatConversation.objects.get(pk=pk, user=request.user)
@@ -1254,6 +1318,9 @@ def conversation_detail(request, pk):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def message_rate(request, pk):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """Thumbs up (1) / down (-1) on an assistant message (own messages only)."""
     try:
         msg = ChatMessage.objects.get(pk=pk, conversation__user=request.user, role="assistant")
@@ -1442,7 +1509,7 @@ def company_settings(request):
         name = str(data.get("name") or "").strip()[:200]
         if name:
             company.name = name
-    for field in ("website", "contact_email", "phone", "hr_email", "tone"):
+    for field in ("website", "contact_email", "phone", "hr_email", "tone", "industry"):
         if field in data:
             setattr(company, field, str(data.get(field) or "").strip()[:200])
     if "signature" in data:
@@ -1461,11 +1528,71 @@ def company_settings(request):
     return Response(CompanyProfileSerializer(company).data)
 
 
+@api_view(["GET"])
+@permission_classes([IsPlatformAdmin])
+def platform_reports(request):
+    """Platform-level subscription/usage reporting ONLY.
+
+    Root admins see which type of company (industry) uses which subscription,
+    plus aggregate counts. No document contents, no chat text, no member
+    emails or names, no tenant-owned rows — those stay inside each company.
+    """
+    from django.db.models import Count, Sum
+    from datetime import timedelta
+    from django.utils import timezone
+
+    companies = []
+    since = timezone.now() - timedelta(days=30)
+    for c in (Company.objects.select_related("plan")
+              .annotate(_members=Count("users", distinct=True),
+                        _docs=Count("documents", distinct=True))
+              .order_by("name")):
+        companies.append({
+            "id": c.id,
+            "name": c.name,
+            "industry": c.industry or "Unspecified",
+            "plan": c.plan.name if c.plan else "No plan",
+            "plan_price_usd": c.plan.price_usd if c.plan else 0,
+            "billing_period": c.plan.billing_period if c.plan else "",
+            "member_count": c._members,
+            "document_count": c._docs,
+            "asks_30d": AskLog.objects.filter(company=c, created_at__gte=since).count(),
+            "storage_mb": round((c.documents.aggregate(s=Sum("size"))["s"] or 0) / (1024 * 1024), 2),
+            "created_at": c.created_at.date().isoformat(),
+        })
+
+    by_plan: dict[str, int] = {}
+    by_industry: dict[str, int] = {}
+    for row in companies:
+        by_plan[row["plan"]] = by_plan.get(row["plan"], 0) + 1
+        by_industry[row["industry"]] = by_industry.get(row["industry"], 0) + 1
+
+    return Response({
+        "summary": {
+            "total_companies": len(companies),
+            "total_members": sum(r["member_count"] for r in companies),
+            "total_documents": sum(r["document_count"] for r in companies),
+            "asks_30d": sum(r["asks_30d"] for r in companies),
+            "companies_by_plan": by_plan,
+            "companies_by_industry": by_industry,
+        },
+        "companies": companies,
+        "plans": [
+            {"name": p.name, "price_usd": p.price_usd,
+             "subscribers": Company.objects.filter(plan=p).count()}
+            for p in Plan.objects.filter(is_active=True).order_by("price_usd")
+        ],
+    })
+
+
 # --------------------------------------------------------- company directory
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 @rate_limit("company_search", rate=20, per_seconds=60, key="ip")
 def company_search(request):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """Find a registered company by its short share code."""
     code = (request.query_params.get("code") or "").strip().upper()
     if not code:
@@ -1480,6 +1607,9 @@ def company_search(request):
 @permission_classes([IsAuthenticated])
 @rate_limit("company_members", rate=20, per_seconds=60, key="ip")
 def company_members(request, access_code):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """List selectable enterprise members for a company found by access code.
     Rate-limited so the directory cannot be enumerated at speed."""
     company = Company.objects.filter(access_code__iexact=access_code.strip()).first()
@@ -1493,6 +1623,9 @@ def company_members(request, access_code):
 @api_view(["GET", "POST"])
 @permission_classes([IsEditor])
 def document_shares(request, pk):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """List (GET) or grant (POST {access_code, user_id}) access to ONE document
     for ONE user. Only the owning company can manage a document's shares."""
     doc = _get_doc(request, pk)
@@ -1525,6 +1658,9 @@ def document_shares(request, pk):
 @api_view(["DELETE"])
 @permission_classes([IsEditor])
 def document_share_detail(request, pk, user_id):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """Revoke one user's access to a document."""
     doc = _get_doc(request, pk)
     DocumentShare.objects.filter(document=doc, shared_with_user_id=user_id).delete()
@@ -1536,6 +1672,9 @@ def document_share_detail(request, pk, user_id):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def shared_with_me(request):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """Documents from OTHER companies that were shared with the current user."""
     shares = (
         DocumentShare.objects.filter(shared_with_user=request.user)
@@ -1878,7 +2017,11 @@ def list_companies(request):
 @api_view(["POST"])
 @permission_classes([IsPlatformAdmin])
 def switch_company(request):
-    """Switch the platform admin's active company (for support/testing)."""
+    """DISABLED: platform/root admins must never join a tenant — they may only
+    see platform-level reports. Kept as an endpoint so older clients get a
+    clear error instead of a 404."""
+    return Response({"detail": "Platform admins cannot access company workspaces. "
+                                "Use /api/admin/reports for platform analytics."}, status=403)
     company_id = request.data.get("company_id")
     if not company_id:
         return Response({"detail": "company_id is required."}, status=400)
@@ -1894,7 +2037,8 @@ def switch_company(request):
 @api_view(["POST"])
 @permission_classes([IsPlatformAdmin])
 def detach_company(request):
-    """Return the platform admin to no-company (all-tenant) view."""
+    """DISABLED: see switch_company."""
+    return Response({"detail": "Platform admins cannot switch tenant context."}, status=403)
     request.user.company = None
     request.user.department = None
     request.user.save(update_fields=["company", "department"])
@@ -1905,9 +2049,12 @@ def detach_company(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def workflow_form_download(request, user_id, name):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """Serve a generated workflow document (e.g. an auto-filled leave form) to
     its owner. Path is confined to MEDIA_ROOT/forms/<user_id>/ (or S3 forms/<user_id>/)."""
-    if not (_is_platform_level(request.user) or request.user.id == user_id):
+    if request.user.id != user_id:
         return Response({"detail": "You can only download your own forms."}, status=403)
 
     safe_name = os.path.basename(name)
@@ -2187,7 +2334,7 @@ def _owned_artifact(request, pk):
         art = GeneratedArtifact.objects.get(pk=pk)
     except GeneratedArtifact.DoesNotExist:
         raise Http404
-    if art.user_id != request.user.id and not _is_platform_level(request.user):
+    if art.user_id != request.user.id:
         raise Http404
     return art
 
@@ -2195,6 +2342,9 @@ def _owned_artifact(request, pk):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def templates_list(request):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """Available templates for this user: uploaded company templates (ACL
     filtered, WHOLE documents) plus the built-in rough draft sections."""
     uploaded = []
@@ -2210,6 +2360,9 @@ def templates_list(request):
 @permission_classes([IsAuthenticated])
 @rate_limit("docgen", rate=30, per_seconds=60, key="user")
 def docgen_generate(request):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """Generate finished, copy/paste-ready documents from templates.
 
     POST {question, outputs: ["form","email"], fields: {date: "..."}}.
@@ -2225,9 +2378,14 @@ def docgen_generate(request):
     rendered = docgen.build_artifacts(request.user, question, plan, overrides)
     saved = [docgen.save_artifact(request.user, r) for r in rendered]
     audit(request, "docgen", f"{len(saved)} document(s): {','.join(plan.artifacts)}")
+    artifact_payloads = []
+    for art, result in zip(saved, rendered):
+        payload = _artifact_payload(art)
+        payload["filled_fields"] = result.get("filled_fields", [])
+        artifact_payloads.append(payload)
     return Response({
         "outputs": plan.outputs,
-        "artifacts": [_artifact_payload(a) for a in saved],
+        "artifacts": artifact_payloads,
         "missing_fields": sorted({m for r in rendered for m in r["missing_fields"]}),
     }, status=201)
 
@@ -2236,6 +2394,9 @@ def docgen_generate(request):
 @permission_classes([IsAuthenticated])
 @rate_limit("docgen", rate=30, per_seconds=60, key="user")
 def artifact_from_text(request):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """Turn any chat answer into a downloadable artifact (DOCX/PDF/copy)."""
     d = request.data or {}
     content = str(d.get("content") or "").strip()
@@ -2258,6 +2419,9 @@ def artifact_from_text(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def artifact_detail(request, pk):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """Fetch a generated document (structured JSON + Markdown)."""
     return Response(_artifact_payload(_owned_artifact(request, pk)))
 
@@ -2265,6 +2429,9 @@ def artifact_detail(request, pk):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def artifact_download(request, pk):
+    _guard = _platform_admin_blocked(request)
+    if _guard:
+        return _guard
     """Download a generated document as md/txt/docx/pdf/html/json."""
     art = _owned_artifact(request, pk)
     fmt = str(request.query_params.get("fmt") or "docx").strip().lower()

@@ -70,7 +70,7 @@ class CompanyProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = Company
         fields = ["id", "name", "slug", "access_code", "website", "contact_email", "phone",
-                  "max_employees", "plan", "hr_email", "signature", "tone"]
+                  "max_employees", "plan", "hr_email", "signature", "tone", "industry"]
 
 
 class UserSerializer(serializers.ModelSerializer):

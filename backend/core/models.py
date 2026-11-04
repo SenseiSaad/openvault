@@ -44,6 +44,8 @@ class Company(models.Model):
     and queries always filter by it, so tenants stay fully isolated."""
     name = models.CharField(max_length=200)
     slug = models.SlugField(unique=True)
+    # "Type of company" for platform-level subscription reporting only.
+    industry = models.CharField(max_length=80, blank=True, default="")
     # Short identifier shown to admins and used for cross-company lookup.
     # It is intentionally not derived from the company name, so it is safe to
     # share without exposing a predictable tenant URL. 8 chars since the

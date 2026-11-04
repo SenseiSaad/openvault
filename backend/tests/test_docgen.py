@@ -17,7 +17,6 @@ def _profile(**kw):
         "title": "Backend Engineer", "department": "Engineering",
         "manager": "Ali Raza", "employee_id": "EMP-1045",
         "company_name": "Acme Corp", "hr_email": "hr@acme.test",
-        "date": "2026-11-04",
     }
     base.update(kw)
     return base
@@ -34,6 +33,60 @@ def test_fill_known_fields_and_keep_unknown():
     assert "[ ] Yes" in r.text                # checkbox untouched
     assert "Missing fields (fill before sending):" in r.text
     assert r.text.count("Missing fields") == 1  # exactly ONE line
+
+
+def test_inline_yes_no_field_is_reported_as_a_missing_detail():
+    r = docgen.fill_template("* Receipt attached: [ ] Yes / [ ] No", _profile())
+    assert "Receipt attached: [Receipt attached]" in r.text
+    assert "[Receipt attached]" in r.missing
+
+
+def test_expense_and_leave_dates_are_not_filled_with_today_or_join_date():
+    fields = _profile(join_date="2020-01-01")
+    r = docgen.fill_template(
+        "Expense date: [Date]\nStart date: [Start Date]\nApproval date: [Date]", fields
+    )
+    assert "Expense date: [Date]" in r.text
+    assert "Start date: [Start Date]" in r.text
+    assert "Approval date: To be completed by approver" in r.text
+    assert "2026-11-04" not in r.text
+    assert "2020-01-01" not in r.text
+    assert docgen.canonical_field("Date") is None
+
+
+def test_explicit_labeled_values_in_chat_fill_only_what_user_provided():
+    question = """1. EMPLOYEE INFORMATION
+Full Name: Lancer
+Employee ID: EMP-1045
+Department / Team: dev
+Manager / Supervisor Name: assad
+Expense Date: 2026-12-26
+Expense Category: Travel
+Amount: 2500
+Currency: PKR
+Receipt attached: Yes
+Date: [YYYY-MM-DD]"""
+    supplied = docgen.extract_explicit_fields(question)
+    assert supplied["full_name"] == "Lancer"
+    assert supplied["employee_id"] == "EMP-1045"
+    assert supplied["department"] == "dev"
+    assert supplied["manager"] == "assad"
+    assert supplied["expense_date"] == "2026-12-26"
+    assert supplied["expense_category"] == "Travel"
+    assert supplied["amount"] == "2500"
+    assert supplied["currency"] == "PKR"
+    assert supplied["receipt_attached"] == "Yes"
+    assert "date" not in supplied  # placeholder example is ignored
+
+    fields = docgen.resolve_fields(object(), supplied)
+    rendered = docgen.fill_template(
+        "[Full Name] [Employee ID] [Department] [Manager's Name]\n"
+        "[Expense Date] [Expense Category] [Amount] [Currency] [Receipt attached]",
+        fields,
+    )
+    for value in ("Lancer", "EMP-1045", "dev", "assad", "2026-12-26", "Travel", "2500", "PKR", "Yes"):
+        assert value in rendered.text
+    assert not rendered.missing
 
 
 def test_placeholder_never_invents_facts():
@@ -125,6 +178,59 @@ def test_builtin_template_has_form_and_email_sections():
     assert "form" in kinds and "email" in kinds
 
 
+def test_extract_template_body_strips_instructions_and_field_guide():
+    raw = (
+        "# Expense Claim Form\n\n**Template type:** form\n\n## Template\n\n"
+        "```text\nEXPENSE CLAIM FORM - [Company]\n* Amount: [Amount]\n```\n\n"
+        "## Field guide\n\n| Placeholder | Source |\n"
+    )
+    body = docgen.extract_template_body(raw)
+    assert body.startswith("EXPENSE CLAIM FORM")
+    assert "Field guide" not in body
+    assert "[Amount]" in body
+
+
+def test_request_wording_selects_the_matching_template(make_company, make_user):
+    company = make_company()
+    user = make_user(company, email="tpl@acme.test", role="admin")
+    for filename, body in [
+        ("form_it_access_request.md", "IT ACCESS REQUEST FORM\n* System: [System Name]"),
+        (
+            "form_expense_claim.md",
+            "EXPENSE CLAIM FORM\n* Expense Date: [Expense Date]\n"
+            "* Expense Category: [Expense Category]\n* Amount: [Amount]\n"
+            "* Currency: [Currency]\n* Receipt attached: [ ] Yes / [ ] No",
+        ),
+    ]:
+        Document.objects.create(
+            company=company, filename=filename, stored_path="s", uploaded_by=user,
+            is_template=False, preview_text=body,
+        )
+
+    plan = docgen.classify("give me form for expense claim")
+    rendered = docgen.build_artifacts(user, "give me form for expense claim", plan)
+    assert rendered[0]["title"] == "EXPENSE CLAIM FORM"
+    assert "EXPENSE CLAIM FORM" in rendered[0]["content_md"]
+    explicit_request = (
+        "give me form for expense claim\nExpense Date: 2026-12-26\n"
+        "Expense Category: Travel\nAmount: 2500\nCurrency: PKR\n"
+        "Receipt attached: Yes"
+    )
+    rendered = docgen.build_artifacts(
+        user, explicit_request, docgen.classify(explicit_request)
+    )
+    assert "2026-12-26" in rendered[0]["content_md"]
+    assert "Travel" in rendered[0]["content_md"]
+    assert "2500" in rendered[0]["content_md"]
+    assert "PKR" in rendered[0]["content_md"]
+    assert "**Receipt attached:** Yes" in rendered[0]["content_md"]
+    assert not rendered[0]["missing_fields"]
+
+    plan = docgen.classify("give me IT access request form")
+    rendered = docgen.build_artifacts(user, "give me IT access request form", plan)
+    assert rendered[0]["title"] == "IT ACCESS REQUEST FORM"
+
+
 def test_render_real_rough_template_with_client_info():
     tpls = {t.kind: t for t in docgen.load_builtin_templates()}
     r = docgen.render_artifact(tpls["form"], _profile())
@@ -132,7 +238,7 @@ def test_render_real_rough_template_with_client_info():
     assert "EMP-1045" in r["content_md"]
     assert "Ali Raza" in r["content_md"]
     assert "Acme Corp" in r["title"]
-    assert "[YYYY-MM-DD]" in r["content_md"]      # unknown stays
+    assert "[Start Date]" in r["content_md"]      # unknown stays
     assert r["structured"]["sections"]            # structured JSON for forms
     assert r["structured"]["markdown"]            # markdown fallback present
 
@@ -193,6 +299,7 @@ def test_docgen_generate_returns_only_artifacts_no_model_call(auth_client, make_
     assert "form" in kinds and "email" in kinds
     assert body["outputs"] == ["form", "email"]   # no text answer
     assert "Saad Waseem" in body["artifacts"][0]["content_md"]
+    assert "full_name" in body["artifacts"][0]["filled_fields"]
     assert body["missing_fields"]                 # unknown placeholders reported
 
 

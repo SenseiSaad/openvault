@@ -137,10 +137,20 @@ export interface Artifact {
     missing_fields?: string[]
   }
   missing_fields: string[]
+  filled_fields?: string[]
   source?: string
   source_template_id?: number | null
   downloads: Record<string, string>
   created_at?: string
+}
+
+export const docgenApi = {
+  generate: (
+    question: string,
+    outputs: string[],
+    fields: Record<string, string>,
+  ): Promise<{ outputs: string[]; artifacts: Artifact[]; missing_fields: string[] }> =>
+    api.post('/docgen', { question, outputs, fields }),
 }
 
 export function artifactDownloadUrl(id: number, fmt: 'md' | 'txt' | 'docx' | 'pdf' | 'html' | 'json'): string {

@@ -76,7 +76,8 @@ urlpatterns = [
     path("admin/llm-test", views.llm_test),
     # plans
     path("plans", views.plans),
-    # platform admin tools
+    # platform admin tools (report-only; root admins cannot join a tenant)
+    path("admin/reports", views.platform_reports),
     path("admin/companies", views.list_companies),
     path("admin/companies/<int:pk>/plan", views.company_set_plan),
     path("admin/switch-company", views.switch_company),

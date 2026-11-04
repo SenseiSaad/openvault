@@ -40,6 +40,44 @@ def test_bm25_handles_empty_inputs():
     assert rag._bm25_scores("", ["text"]) == [0.0]
 
 
+# ------------------------------------------------------------- retrieval
+def test_retrieve_does_not_let_okf_chunks_hide_the_answer(
+        monkeypatch, make_company, make_user):
+    """A large OKF-marked document must not crowd the relevant chunk out.
+
+    Regression: retrieve() used to prepend the first TOP_K OKF chunks and
+    exclude every other OKF chunk from ranking, so an OKF-marked policy was
+    only ever represented by its first four chunks.
+    """
+    company = make_company()
+    user = make_user(company, email="okf@acme.test", role="admin")
+    doc = Document.objects.create(company=company, filename="payroll.md", stored_path="s",
+                                  uploaded_by=user, is_okf=True)
+    for i in range(6):
+        Chunk.objects.create(document=doc, company=company, ord=i,
+                             text=f"Unrelated template paragraph {i}.", embedding=None)
+    Chunk.objects.create(document=doc, company=company, ord=6,
+                         text="The pay cycle pays salaries on the 25th of each month.",
+                         embedding=None)
+
+    monkeypatch.setattr(rag, "embed", lambda texts: None)
+    chunks = rag.retrieve(user, "What is the pay cycle?")
+
+    texts = [c.text for c in chunks]
+    assert any("25th of each month" in t for t in texts), texts
+    assert len(chunks) == 4
+
+
+def test_build_messages_sends_more_than_one_chunk():
+    """The context cap must fit several passages, not one 900-char chunk."""
+    doc = Document(filename="handbook.md")
+    chunks = [Chunk(text=f"{i} " + ("policy sentence " * 50), document=doc) for i in range(4)]
+    messages = rag.build_messages(chunks, "question")
+    context = messages[-1]["content"]
+    assert "0 " in context and "3 " in context
+    assert len(context) > 2_000
+
+
 # ------------------------------------------------------- prompt building
 def test_build_messages_orders_and_caps_history():
     doc = Document(filename="handbook.pdf")
