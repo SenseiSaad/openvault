@@ -38,7 +38,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **opts):
         qs = Chunk.objects.all() if opts["all"] else Chunk.objects.filter(embedding=None)
-        todo = list(qs.only("id", "text"))
+        todo = list(qs.only("id", "text", "document_id"))
         if not todo:
             self.stdout.write(self.style.SUCCESS("Nothing to do — every chunk already has a vector."))
             return
@@ -46,6 +46,7 @@ class Command(BaseCommand):
         self.stdout.write(f"Embedding {len(todo)} chunk(s)…")
         batch = max(1, opts["batch"])
         done = failed = 0
+        touched_doc_ids = set()
         for i in range(0, len(todo), batch):
             group = todo[i:i + batch]
             vecs = rag.embed([c.text for c in group])  # None => embed provider offline
@@ -57,6 +58,16 @@ class Command(BaseCommand):
                 chunk.save(update_fields=["embedding"])
                 rag.persist_chunk_vectors([(chunk.pk, vec)])
                 done += 1
+                if chunk.document_id:
+                    touched_doc_ids.add(chunk.document_id)
+
+        if touched_doc_ids:
+            from core import providers
+            from core.models import Document
+            provider = providers.get_embed_provider()
+            model_name = getattr(provider, "embed_model_name", "") or ""
+            if model_name:
+                Document.objects.filter(id__in=touched_doc_ids).update(embed_model=model_name)
 
         if failed:
             self.stdout.write(self.style.WARNING(

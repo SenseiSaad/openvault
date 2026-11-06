@@ -926,3 +926,57 @@ def platform_key(provider):
             return env_key
     cfg = LLMConfig.load()
     return cfg.api_key if cfg.provider == provider else ""
+
+
+PROVIDER_DEFAULT_DIMS = {
+    "bedrock": 1024,
+    "ollama": 768,
+    "openai": 1536,
+    "gemini": 3072,
+}
+
+MODEL_KNOWN_DIMS = {
+    "amazon.titan-embed-text-v2:0": 1024,
+    "amazon.titan-embed-text-v1": 1536,
+    "nomic-embed-text": 768,
+    "text-embedding-3-small": 1536,
+    "text-embedding-3-large": 3072,
+    "text-embedding-ada-002": 1536,
+    "gemini-embedding-001": 3072,
+    "text-embedding-004": 768,
+}
+
+
+def get_expected_dim(provider_name: str, model_name: str = "") -> int:
+    """Return the expected vector dimension for a provider/model."""
+    from django.conf import settings
+    if model_name and model_name in MODEL_KNOWN_DIMS:
+        return MODEL_KNOWN_DIMS[model_name]
+    return PROVIDER_DEFAULT_DIMS.get(
+        provider_name.lower(), getattr(settings, "EMBED_DIM", 1024)
+    )
+
+
+def check_embed_dimension_warning(provider_name: str, model_name: str = "") -> str:
+    """Check if switching to this provider/model will mismatch the database EMBED_DIM.
+
+    If EMBED_PROVIDER is pinned to a different provider in .env, changing LLM provider
+    only affects chat generation, so no embedding dimension mismatch occurs.
+    Otherwise, if the provider has a different vector dimension than settings.EMBED_DIM,
+    returns an informative warning explaining that re-indexing is required.
+    """
+    import os
+    from django.conf import settings
+    pinned = os.getenv("EMBED_PROVIDER", "").strip().lower()
+    if pinned and pinned != provider_name.lower():
+        return ""  # Embeddings are pinned to another provider; chat switch is safe
+    effective_prov = pinned if pinned else provider_name
+    expected = get_expected_dim(effective_prov, model_name)
+    db_dim = getattr(settings, "EMBED_DIM", 1024)
+    if expected != db_dim:
+        return (
+            f"Provider '{effective_prov}' uses {expected}-dimensional embeddings, but the database vector "
+            f"column is configured for {db_dim} dimensions. Switching requires re-indexing existing documents."
+        )
+    return ""
+

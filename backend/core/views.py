@@ -169,6 +169,22 @@ def _platform_admin_blocked(request):
     return None
 
 
+def _attendance_disabled(request):
+    """403 when attendance tracking is turned off for the user's company."""
+    company = getattr(request.user, "company", None)
+    if company is not None and not getattr(company, "enable_attendance", True):
+        return Response({"detail": "Attendance tracking is disabled for your company."}, status=403)
+    return None
+
+
+def _docgen_disabled(request):
+    """403 when document & template generation is turned off for the user's company."""
+    company = getattr(request.user, "company", None)
+    if company is not None and not getattr(company, "enable_docgen", True):
+        return Response({"detail": "Document and template generation is disabled for your company."}, status=403)
+    return None
+
+
 def visible_documents(user):
     """Return only documents the signed-in user is allowed to read.
 
@@ -1159,7 +1175,11 @@ def ask(request):
     # form/email request gets ONLY the finished document(s), and a mixed
     # request gets exactly the outputs it asked for. Template generation is
     # deterministic (no model call, no Bedrock, no invented facts).
-    doc_plan = docgen.classify(question, outputs=s.validated_data.get("outputs"))
+    company = getattr(request.user, "company", None)
+    if company and not getattr(company, "enable_docgen", True):
+        doc_plan = docgen.DocumentPlan(artifacts=[], wants_text=True)
+    else:
+        doc_plan = docgen.classify(question, outputs=s.validated_data.get("outputs"))
     overrides = s.validated_data.get("fields") or {}
     template_text = docgen.template_context(request.user, doc_plan, question) if doc_plan.artifacts else ""
 
@@ -1514,6 +1534,14 @@ def company_settings(request):
             setattr(company, field, str(data.get(field) or "").strip()[:200])
     if "signature" in data:
         company.signature = str(data.get("signature") or "").strip()[:2000]
+    def _parse_bool(val):
+        return val if isinstance(val, bool) else str(val).lower() in ("1", "true", "yes", "on")
+    if "enable_attendance" in data:
+        company.enable_attendance = _parse_bool(data["enable_attendance"])
+    if "attendance_auto_freeze" in data:
+        company.attendance_auto_freeze = _parse_bool(data["attendance_auto_freeze"])
+    if "enable_docgen" in data:
+        company.enable_docgen = _parse_bool(data["enable_docgen"])
     if "max_employees" in data:
         raw = data.get("max_employees")
         if raw in (None, ""):
@@ -2093,6 +2121,9 @@ def attendance_scan(request):
     scanner's own company — a leaked URL cannot check anyone in remotely.
     Set ATTENDANCE_QR_REQUIRED=false to allow self-serve scans without a QR
     (kiosk-style deployments)."""
+    _guard = _attendance_disabled(request)
+    if _guard:
+        return _guard
     from . import qr_tokens
     user = request.user
     if not getattr(user, "company_id", None):
@@ -2129,6 +2160,9 @@ def attendance_scan(request):
 @permission_classes([IsAuthenticated])
 def attendance_me(request):
     """The signed-in user's own attendance history and discipline counters."""
+    _guard = _attendance_disabled(request)
+    if _guard:
+        return _guard
     user = request.user
     today = timezone.localdate()
     records = AttendanceRecord.objects.filter(user=user)[:120]
@@ -2151,6 +2185,9 @@ def attendance_qr(request):
     The target embeds a signed token bound to the caller's company and a short
     TTL, so a photographed QR dies within minutes and never works for another
     company."""
+    _guard = _attendance_disabled(request)
+    if _guard:
+        return _guard
     from . import qr_tokens
     user = request.user
     if not getattr(user, "company_id", None):
@@ -2177,6 +2214,9 @@ def attendance_qr(request):
 def admin_holidays(request):
     """Company holiday calendar (plus platform-wide entries shown read-only):
     days that never count as absences."""
+    _guard = _attendance_disabled(request)
+    if _guard:
+        return _guard
     from .models import Holiday
     company = request.user.company
     if company is None:
@@ -2219,6 +2259,9 @@ def admin_holiday_detail(request, pk):
 @permission_classes([IsAdmin])
 def admin_exemptions(request):
     """Approved absence windows (leave/travel) — excluded from strike math."""
+    _guard = _attendance_disabled(request)
+    if _guard:
+        return _guard
     from .models import AttendanceExemption
     company = request.user.company
     if company is None:
@@ -2276,13 +2319,17 @@ def admin_attendance_evaluate(request):
     company = request.user.company
     if company is None:
         return Response({"detail": "No company context for evaluation."}, status=400)
+    _guard = _attendance_disabled(request)
+    if _guard:
+        return _guard
 
     def _flag(name, default):
         raw = request.data.get(name, default)
         return raw if isinstance(raw, bool) else str(raw).lower() in ("1", "true", "yes", "on")
 
     dry_run = _flag("dry_run", False)
-    freeze = _flag("freeze", True)
+    auto_freeze_default = getattr(company, "attendance_auto_freeze", False)
+    freeze = _flag("freeze", auto_freeze_default)
     year, month = request.data.get("year"), request.data.get("month")
     try:
         year = int(year) if year not in (None, "") else None
@@ -2342,7 +2389,7 @@ def _owned_artifact(request, pk):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def templates_list(request):
-    _guard = _platform_admin_blocked(request)
+    _guard = _platform_admin_blocked(request) or _docgen_disabled(request)
     if _guard:
         return _guard
     """Available templates for this user: uploaded company templates (ACL
@@ -2360,7 +2407,7 @@ def templates_list(request):
 @permission_classes([IsAuthenticated])
 @rate_limit("docgen", rate=30, per_seconds=60, key="user")
 def docgen_generate(request):
-    _guard = _platform_admin_blocked(request)
+    _guard = _platform_admin_blocked(request) or _docgen_disabled(request)
     if _guard:
         return _guard
     """Generate finished, copy/paste-ready documents from templates.
@@ -2394,7 +2441,7 @@ def docgen_generate(request):
 @permission_classes([IsAuthenticated])
 @rate_limit("docgen", rate=30, per_seconds=60, key="user")
 def artifact_from_text(request):
-    _guard = _platform_admin_blocked(request)
+    _guard = _platform_admin_blocked(request) or _docgen_disabled(request)
     if _guard:
         return _guard
     """Turn any chat answer into a downloadable artifact (DOCX/PDF/copy)."""
@@ -2419,7 +2466,7 @@ def artifact_from_text(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def artifact_detail(request, pk):
-    _guard = _platform_admin_blocked(request)
+    _guard = _platform_admin_blocked(request) or _docgen_disabled(request)
     if _guard:
         return _guard
     """Fetch a generated document (structured JSON + Markdown)."""
@@ -2429,7 +2476,7 @@ def artifact_detail(request, pk):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def artifact_download(request, pk):
-    _guard = _platform_admin_blocked(request)
+    _guard = _platform_admin_blocked(request) or _docgen_disabled(request)
     if _guard:
         return _guard
     """Download a generated document as md/txt/docx/pdf/html/json."""

@@ -69,8 +69,11 @@ class CompanyProfileSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Company
-        fields = ["id", "name", "slug", "access_code", "website", "contact_email", "phone",
-                  "max_employees", "plan", "hr_email", "signature", "tone", "industry"]
+        fields = [
+            "id", "name", "slug", "access_code", "website", "contact_email", "phone",
+            "max_employees", "plan", "hr_email", "signature", "tone", "industry",
+            "enable_attendance", "attendance_auto_freeze", "enable_docgen",
+        ]
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -108,6 +111,7 @@ class DocumentSerializer(serializers.ModelSerializer):
     company_name = serializers.CharField(source="company.name", read_only=True)
     department_name = serializers.CharField(source="department.name", read_only=True, default=None)
     tags = serializers.SerializerMethodField()
+    reindex_required = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
@@ -116,12 +120,20 @@ class DocumentSerializer(serializers.ModelSerializer):
             "downloads", "is_okf", "num_chunks", "access_scope", "department",
             "department_name", "tags", "indexing_status", "index_error",
             "version", "created_at", "updated_at", "company_name",
-            "is_template", "template_type",
+            "is_template", "template_type", "embed_model", "reindex_required",
         ]
 
     def get_tags(self, obj):
         raw = (obj.tags or "").strip()
         return [t.strip() for t in raw.split(",") if t.strip()]
+
+    def get_reindex_required(self, obj):
+        if not obj.num_chunks:
+            return False
+        from . import providers
+        prov = providers.get_embed_provider(company=obj.company)
+        active_model = getattr(prov, "embed_model_name", "") or ""
+        return bool(obj.embed_model and active_model and obj.embed_model != active_model)
 
 
 class DocumentVersionSerializer(serializers.ModelSerializer):
@@ -234,6 +246,7 @@ class LLMConfigSerializer(serializers.ModelSerializer):
     is_company_override = serializers.SerializerMethodField()
     key_source = serializers.SerializerMethodField()
     platform_key_in_use = serializers.SerializerMethodField()
+    dimension_warning = serializers.SerializerMethodField()
     provider = serializers.ChoiceField(
         choices=[p for p in LLMConfig.PROVIDERS if p[0] != "fake"])
 
@@ -252,7 +265,12 @@ class LLMConfigSerializer(serializers.ModelSerializer):
         model = LLMConfig
         fields = ["provider", "chat_model", "base_url", "temperature",
                   "max_tokens", "api_key", "has_api_key", "is_company_override",
-                  "key_source", "platform_key_in_use", "updated_at"]
+                  "key_source", "platform_key_in_use", "dimension_warning", "updated_at"]
+
+    def get_dimension_warning(self, obj):
+        from . import providers
+        prov_name = obj.provider or "ollama"
+        return providers.check_embed_dimension_warning(prov_name, getattr(obj, "chat_model", ""))
 
     def get_has_api_key(self, obj):
         return bool(obj.api_key)

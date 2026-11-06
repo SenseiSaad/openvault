@@ -21,8 +21,21 @@ class Command(BaseCommand):
                             help="Fail when more than this %% of chunks lack vectors.")
 
     def handle(self, *args, **opts):
+        from core import providers
+        from django.conf import settings
+
         threshold = max(0, int(opts["threshold"]))
         bad = []
+        drift_docs = []
+        db_dim = getattr(settings, "EMBED_DIM", 1024)
+        active_prov = providers.get_embed_provider()
+        active_model = getattr(active_prov, "embed_model_name", "") or "(unknown)"
+        self.stdout.write(f"Active embed provider: {active_prov.label} [{active_model}] (DB EMBED_DIM={db_dim})")
+
+        dim_warn = providers.check_embed_dimension_warning(active_prov.label, active_model)
+        if dim_warn:
+            self.stdout.write(self.style.WARNING(f"DIMENSION WARNING: {dim_warn}"))
+
         rows = (
             Document.objects
             .annotate(total=Count("chunks"),
@@ -32,16 +45,23 @@ class Command(BaseCommand):
         )
         for doc in rows:
             pct = int(round(100 * doc.missing / doc.total))
-            models = (
-                doc.chunks.exclude(embedding=None).exists(),
-                doc.embed_model or "(unknown model)",
-            )
+            doc_model = doc.embed_model or "(unknown model)"
+            doc_prov = providers.get_embed_provider(company=doc.company)
+            cur_model = getattr(doc_prov, "embed_model_name", "") or ""
+            drift = bool(doc.embed_model and cur_model and doc.embed_model != cur_model)
+
             line = (f"{doc.company.name if doc.company_id else '(no company)'} :: "
                     f"{doc.filename}: {doc.total - doc.missing}/{doc.total} vectors "
-                    f"[{models[1]}]")
+                    f"[{doc_model}]")
+            if drift:
+                drift_docs.append(f"{doc.filename} (has: {doc_model}, active: {cur_model})")
+                line += f" -> DRIFT (active: {cur_model})"
+
             if pct > threshold:
                 bad.append(line)
                 self.stdout.write(self.style.WARNING("LOW " + line))
+            elif drift:
+                self.stdout.write(self.style.WARNING("WARN " + line))
             else:
                 self.stdout.write(line)
 
@@ -56,4 +76,10 @@ class Command(BaseCommand):
                 f"{len(bad)} document(s) exceed the {threshold}% missing-vector threshold. "
                 "Run manage.py reindex_embeddings once the embedding provider is healthy."
             )
-        self.stdout.write(self.style.SUCCESS("Embedding coverage OK."))
+        if drift_docs:
+            self.stdout.write(self.style.WARNING(
+                f"{len(drift_docs)} document(s) have model drift. "
+                "Run manage.py reindex_embeddings --all to align vector geometries."
+            ))
+        else:
+            self.stdout.write(self.style.SUCCESS("Embedding coverage and model alignment OK."))

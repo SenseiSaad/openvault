@@ -304,6 +304,11 @@ ATTENDANCE_MAX_STRIKES = int(os.getenv("ATTENDANCE_MAX_STRIKES", "3"))
 ATTENDANCE_QR_REQUIRED = os.getenv("ATTENDANCE_QR_REQUIRED", "true").lower() in ("1", "true", "yes")
 ATTENDANCE_QR_TOKEN_TTL = int(os.getenv("ATTENDANCE_QR_TOKEN_TTL", "600"))  # seconds
 
+# ── Feature Flags & Legal Defaults ──
+ENABLE_ATTENDANCE = os.getenv("ENABLE_ATTENDANCE", "true").lower() in ("1", "true", "yes")
+ATTENDANCE_AUTO_FREEZE = os.getenv("ATTENDANCE_AUTO_FREEZE", "false").lower() in ("1", "true", "yes")
+ENABLE_DOCGEN = os.getenv("ENABLE_DOCGEN", "true").lower() in ("1", "true", "yes")
+
 # ── Security headers (HTTPS deployments) ──
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = "same-origin"

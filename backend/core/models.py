@@ -72,6 +72,10 @@ class Company(models.Model):
     stripe_customer_id = models.CharField(max_length=120, blank=True, default="")
     stripe_subscription_id = models.CharField(max_length=120, blank=True, default="")
     subscription_status = models.CharField(max_length=30, blank=True, default="")
+    # Feature flags
+    enable_attendance = models.BooleanField(default=True)
+    attendance_auto_freeze = models.BooleanField(default=False)  # warn-only by default (False = no auto-deactivation)
+    enable_docgen = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):

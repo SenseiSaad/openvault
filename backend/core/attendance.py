@@ -87,19 +87,24 @@ def evaluate_month(
     year: int | None = None,
     month: int | None = None,
     company=None,
-    freeze: bool = True,
+    freeze: bool | None = None,
     dry_run: bool = False,
 ) -> list[dict]:
     """Refresh every active user's absence count for the month and apply strikes.
 
     * 3+ absences in the month -> one strike (once per month, guarded by
       `last_evaluated_period`).
-    * strikes >= cap -> `is_frozen = True`; when `freeze` is set the account is
-      also deactivated (`is_active = False`).
+    * strikes >= cap -> `is_frozen = True`; account deactivation (`is_active = False`)
+      is only applied if `freeze=True` or if `freeze=None` and the company has
+      `attendance_auto_freeze=True`. By default it is warn-only.
+    * Companies with `enable_attendance=False` are skipped entirely.
 
     Superusers are skipped so platform testers are never locked out. With
     `dry_run` nothing is persisted — useful for a preview.
     """
+    if company is not None and not getattr(company, "enable_attendance", True):
+        return []
+
     today = timezone.localdate()
     year = year or today.year
     month = month or today.month
@@ -107,12 +112,15 @@ def evaluate_month(
     limit = settings.ATTENDANCE_MONTHLY_ABSENCE_LIMIT
     cap = settings.ATTENDANCE_MAX_STRIKES
 
-    users = User.objects.filter(is_active=True, is_superuser=False)
+    users = User.objects.filter(is_active=True, is_superuser=False).select_related("company")
     if company is not None:
         users = users.filter(company=company)
 
     results: list[dict] = []
     for user in users:
+        if user.company and not getattr(user.company, "enable_attendance", True):
+            continue
+
         absent = absences_in_month(user, year, month)
         strike = UserStrike.objects.filter(user=user).first() or UserStrike(user=user)
         strike.absent_count = absent
@@ -126,7 +134,12 @@ def evaluate_month(
         froze = False
         if strike.strikes >= cap:
             strike.is_frozen = True
-            if freeze and user.is_active:
+            should_freeze = (
+                getattr(user.company, "attendance_auto_freeze", False)
+                if freeze is None
+                else freeze
+            )
+            if should_freeze and user.is_active:
                 froze = True
 
         if not dry_run:
