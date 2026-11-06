@@ -23,6 +23,7 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from django.conf import settings
 
@@ -299,10 +300,16 @@ def load_builtin_templates() -> list[TemplateDoc]:
     form, email, leave, or is explicitly configured). Never arbitrary files.
     """
     root = template_root()
+    bundled_dir = str(Path(settings.BASE_DIR) / "templates")
+    search_folders = list(dict.fromkeys([
+        root,
+        os.path.join(root, "templates"),
+        bundled_dir,
+    ]))
     names: list[str] = []
     env_names = os.getenv("DOCGEN_TEMPLATE_FILES", "leave_request_form.txt")
     names.extend(n.strip() for n in env_names.split(",") if n.strip())
-    for folder in (root, os.path.join(root, "templates")):
+    for folder in search_folders:
         if not os.path.isdir(folder):
             continue
         for fname in sorted(os.listdir(folder)):
@@ -315,7 +322,7 @@ def load_builtin_templates() -> list[TemplateDoc]:
 
     out: list[TemplateDoc] = []
     for name in names:
-        for folder in (root, os.path.join(root, "templates")):
+        for folder in search_folders:
             path = os.path.join(folder, os.path.basename(name))
             if not os.path.isfile(path):
                 continue

@@ -20,6 +20,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --retries 8 --timeout 120 -r requirements.txt
 
 COPY backend/ .
+COPY demo_docs/ /app/demo_docs/
 # Nightly ECS backup task invokes this path; the script needs pg_dump + awscli
 # (installed above). Restore is included for a break-glass one-off task.
 COPY scripts/backup.sh scripts/restore.sh /app/scripts/

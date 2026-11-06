@@ -42,6 +42,8 @@ blob-report/
 # ── OS / editor ────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+.idea/
+.vscode/
 # Local desktop launchers contain machine-specific absolute paths.
 *.desktop
 

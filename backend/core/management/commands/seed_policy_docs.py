@@ -18,7 +18,9 @@ from django.core.management.base import BaseCommand
 from core import rag, storage
 from core.models import Chunk, Company, Document, Plan, User
 
-DEMO_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / "demo_docs"
+_REPO_DEMO_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent / "demo_docs"
+_BUNDLED_DEMO_DIR = Path(__file__).resolve().parent.parent.parent.parent / "demo_docs"
+DEMO_DIR = _REPO_DEMO_DIR if _REPO_DEMO_DIR.is_dir() else _BUNDLED_DEMO_DIR
 
 TEMPLATE_KINDS = {
     "email_": ("email", True),
