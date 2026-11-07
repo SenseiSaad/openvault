@@ -1,173 +1,153 @@
 # OpenVault
 
-> **Private Knowledge Infrastructure with Least-Privilege Document ACLs & Permission-Aware AI for Registered Organizations.**
+> **Private Multi-Tenant Knowledge Infrastructure with Least-Privilege Document ACLs, Deterministic Document Generation, and Permission-Aware AI for Enterprise Organizations.**
 
-OpenVault is an enterprise document repository and retrieval-augmented generation (RAG) assistant designed for organizations that require strict tenant isolation, least-privilege intra-company access controls, auditable cross-company collaboration, multi-turn AI chat history, attendance tracking, and compliance audit readiness.
+OpenVault is an enterprise document repository and retrieval-augmented generation (RAG) assistant designed for organizations that require strict tenant isolation, least-privilege intra-company access controls, auditable cross-company collaboration, multi-turn AI chat history with citations, legal-safe attendance tracking, and compliance audit readiness.
 
 ---
 
-## Deploy your own (AWS)
+## Zero-Step Quickstart (Clone & Run in One Line)
 
-**Prerequisites:** an AWS account with billing enabled and permissions to create
-the stack; a GitHub repository/admin account; a domain whose DNS you control;
-and local tools: AWS CLI v2, Terraform `>=1.9`, Docker Engine `>=24` with
-Buildx, GitHub CLI `>=2.45`, `jq >=1.6`, Git `>=2.30`, and Python `>=3.12`.
-Install the AWS Session Manager plugin for the interactive initial-admin/MFA
-steps; its version is **UNVERIFIED** in this workspace.
-Versions exercised while preparing this guide were AWS CLI `2.35.21`, Terraform
-`1.16.1`, Docker `29.9.0`, `gh 2.45.0`, and `jq 1.7`.
-
-`deploy.config` asks for AWS region, parent domain, subdomain, alert mailbox,
-sender-name local part, GitHub `owner/repository`, and target environment.
-Secrets stay in the separate ignored `.env.production` file.
-
-**Manual account steps:** choose a new subdomain (do not reuse your live-site
-hostname), ensure your parent-DNS provider can add NS records, request SES
-production sending access, enable the Bedrock models you intend to use, and
-choose a human GitHub environment reviewer. Bedrock availability and inference
-profile ARNs are **UNVERIFIED** until checked in your account.
+OpenVault includes an automated launcher that handles `.env` generation, cryptographic key generation, migrations, demo corpus seeding, and service orchestration automatically:
 
 ```bash
-git clone --branch infra https://github.com/SenseiSaad/openvault.git OpenVault
+git clone https://github.com/SenseiSaad/openvault.git OpenVault
 cd OpenVault
+
+# Option A: Full Docker Compose stack (Next.js :3000 + Django :8000 + SQLite)
+./scripts/start_local.sh --docker
+
+# Option B: Native local development (runs with local node + python venv)
+./scripts/start_local.sh --native
+
+# Stop all running instances:
+./scripts/start_local.sh --stop
+```
+
+Chat and retrieval support both local and cloud LLMs:
+* **Local (Zero-Cloud / Offline):** Install [Ollama](https://ollama.com), run `ollama pull nomic-embed-text && ollama pull qwen2.5:3b`, and set `LLM_PROVIDER=ollama`.
+* **Hosted Cloud (Production Default):** Set AWS Bedrock credentials (`BEDROCK_*`) for Claude 3.5 / Haiku + Titan Embeddings v2, or supply `GEMINI_API_KEY` / `OPENAI_API_KEY`.
+
+---
+
+## AWS Production Deployment (ECS Fargate + RDS pgvector)
+
+The production architecture is codified in Terraform (`infra/`, ~3,900 LOC across 9 modular components):
+* **Compute:** AWS ECS Fargate with Application Load Balancer (ALB).
+* **Database & Vectors:** Amazon RDS PostgreSQL 16 with `pgvector` HNSW vector indexes (`core_chunk.embedding_vec`).
+* **Caching & Broker:** Amazon ElastiCache Redis 7 for rate-limiting and task queuing.
+* **Storage:** Encrypted Amazon S3 bucket for documents, version archives, and generated artifacts.
+* **CI/CD:** Automated GitHub Actions workflows with AWS OIDC authentication (no static IAM credentials).
+
+```bash
 cp deploy.config.example deploy.config
 $EDITOR deploy.config
 cp .env.production.example .env.production
 $EDITOR .env.production
+
+# Run preflight checks, infrastructure provisioning, and first deployment:
 ./scripts/bootstrap.sh
 ```
 
-The entry point runs preflight, config generation, bootstrap/base infrastructure,
-first image push, service apply, migrations, initial setup, and smoke tests in
-order. Allow **45–90 minutes** for the hands-on steps; DNS/SES verification can
-take longer. **Estimated monthly cost:** about **$131 for production** plus
-Bedrock usage; staging is about **$95–$110 while running**. These are estimates,
-not a quote, and apply creates billable resources. To tear down staging, use
-`./scripts/destroy.sh staging`; production requires
-`./scripts/destroy.sh prod --allow-production` plus confirmation. S3 objects and
-ECR images are emptied only with explicit `--empty-s3` / `--empty-ecr` flags.
-The Terraform state/OIDC bootstrap stack is intentionally kept.
-
-See [`docs/DEPLOY.md`](docs/DEPLOY.md) for account-specific details, verification,
-and what is not removed by teardown.
-
----
-
-## Quickstart (any OS — clone and run)
-
-```bash
-git clone <repo> && cd openvault
-docker compose up -d          # API :8000 + web :3000 (SQLite, zero config)
-./run.sh                      # or bare-metal dev mode
-```
-
-Chat with your documents needs an LLM — two no-config options:
-* **Local:** install [Ollama](https://ollama.com), then `ollama pull qwen2.5:1.5b`
-  (986 MB — the smallest model that grounds answers decently) and set
-  `LLM_PROVIDER=ollama`.
-* **Online:** set `GEMINI_API_KEY` (cheapest cloud option) or `BEDROCK_*` for AWS.
-
-Production path (ECS/RDS/Bedrock): see `docs/DEPLOY.md` and `infra/`.
+See [`docs/DEPLOY.md`](docs/DEPLOY.md) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for full runbooks and infrastructure specs.
 
 ---
 
 ## Table of Contents
 
-1. [Executive Summary](#executive-summary)
-2. [Key Features](#key-features)
-3. [Security & Authentication Flow](#security--authentication-flow)
-4. [Plans & USD Billing](#plans--usd-billing)
-5. [Data Privacy: AWS Bedrock & Ollama](#data-privacy-aws-bedrock--ollama)
-6. [API Endpoints Reference](#api-endpoints-reference)
-7. [Repository Layout](#repository-layout)
-8. [Local Development & Quick Start](#local-development--quick-start)
-9. [Deploying to Vercel (Frontend + Backend)](#deploying-to-vercel-frontend--backend)
-10. [Docker Compose & Self-Hosted Deployment](#docker-compose--self-hosted-deployment)
-11. [Running the Tests](#running-the-tests)
-12. [Platform Administration Commands](#platform-administration-commands)
+1. [Architecture & Key Features](#architecture--key-features)
+2. [Tenant Isolation & Document ACLs](#tenant-isolation--document-acls)
+3. [AI Retrieval, Workflows & DocGen](#ai-retrieval-workflows--docgen)
+4. [Compliance, Legal Safeguards & Feature Flags](#compliance-legal-safeguards--feature-flags)
+5. [Security & Authentication](#security--authentication)
+6. [Subscription Plans & Commercial Pricing](#subscription-plans--commercial-pricing)
+7. [API Endpoints Reference](#api-endpoints-reference)
+8. [Management Commands](#management-commands)
+9. [Running Tests & Quality Assurance](#running-tests--quality-assurance)
 
 ---
 
-## Executive Summary
+## Architecture & Key Features
 
-OpenVault is built around **employer-controlled private access**:
+### Strict Multi-Tenancy
+* Every document, chunk, user account, attendance record, and audit entry has a mandatory foreign key to a verified `Company` tenant.
+* Cross-tenant leaks are mathematically impossible at the database query layer: all retrieval, search, and admin queries enforce `company=request.user.company`.
+* Organizations locate partner companies via unique 8-character access codes (`access_code`).
 
-- **Strict Multi-Tenancy:** Every document, vector chunk, user account, attendance record, and audit entry is bound to a verified `Company` tenant.
-- **Least-Privilege Document Scoping:** Documents can be scoped company-wide, to a specific department, or locked to selected people (`restricted`). Even same-company executives cannot search or view restricted files without an explicit grant.
-- **Controlled Cross-Company Collaboration:** Organizations locate partner companies via unique 5-character share codes (`access_code`). Admins can grant a specific document to a registered employee at a partner company, with immediate revocation and download restrictions.
-- **Permission-Aware RAG:** Chat retrieval filters documents based on the requesting user's explicit permissions *before* running hybrid retrieval (BM25 + dense cosine similarity), ensuring the AI never leaks unauthorized information.
-- **Multi-Turn Persistent Chat:** Interactive threaded conversations with recent turns supplied to the LLM, thumbs up/down user feedback, and live source citations.
-- **Audit Readiness:** Every sign-in, upload, download, share, revocation, member modification, and AI prompt is recorded in an append-only (at the API layer) audit trail with IP tracking and CSV export.
-
----
-
-## Key Features
-
-### Multi-Tenancy & Subscriptions
-- Isolated company workspaces identified by slug and unique 5-character `access_code`.
-- Company self-service settings: name, website, contact email, phone, and seat cap.
-- Tiered subscription plans (Free, Starter, Business, Enterprise) priced in **USD** with server-side quota enforcement on seats, documents, storage, and monthly AI asks.
-- Cross-tenant platform administration for root operators with an active tenant switcher.
-
-### Least-Privilege Document Management
-- Supported formats: **PDF (`.pdf`)**, **Word (`.docx`)**, **PowerPoint (`.pptx`)**, **Markdown (`.md`)**, **Plain Text (`.txt`, `.csv`)**, and scanned PDFs/images via OCR (tesseract + poppler are installed in the API image).
-- Three-tier access scoping (`company`, `department`, `restricted`).
-- **Flexible Storage Backend:** Supports Amazon S3 object storage (with presigned direct browser uploads for files > 4 MB on serverless deployments) and local filesystem storage.
-- **Adaptive Indexing:** Runs inline on serverless functions (Vercel) or in background threads on long-running servers, with retry capability (`POST /api/documents/<id>/reindex`).
-- **Document Versioning:** Upload new versions of existing documents while preserving archive history and sharing rules.
-- **In-Browser Text Preview:** View extracted text chunks directly without forced downloads.
-
-### Granular Cross-Company Collaboration
-- Tenant lookup via 5-character access code (`GET /api/companies/search?code=...`).
-- Granular per-user, per-document grants (`POST /api/documents/<id>/shares`) with configurable download permission (`can_download: true/false`).
-- Instant revocation (`DELETE /api/documents/<id>/shares/<user_id>`).
-- Dedicated "Shared with me" view displaying externally granted files.
-
-### Bedrock + Ollama RAG Assistant
-- **AWS Bedrock** (Claude Haiku 4.5 via the India `in.` geographic inference profile + Titan Text Embeddings V2) as the hosted default, plus support for **Ollama**, **OpenAI**, **Anthropic**, and **Google Gemini**.
-- **Hybrid Retrieval:** Blended 70% dense cosine similarity + 30% BM25 keyword retrieval.
-- **Automated Workflows:** Detects intent to schedule meetings (Google Calendar / email notification) and generate auto-filled leave application forms (`.docx`).
-- **Policy Flagging:** Non-blocking audit-logged safety alerts for compliance monitoring.
-- **Bilingual UI:** English and Urdu / Roman Urdu support.
-
-### Member Administration, Attendance & Audit
-- Department assignment, inline member role editing (`admin`, `employee`, `viewer`), and account activation/deactivation.
-- QR-code attendance check-in with 3-strike policy tracking.
-- Broadcast company announcements and 30-day usage analytics dashboard.
-- Paginated audit log with client-side filtering and **CSV export**.
+### Least-Privilege Document Scoping
+* **Supported formats:** PDF (`.pdf`), Word (`.docx`), PowerPoint (`.pptx`), Markdown (`.md`), Plain Text (`.txt`, `.csv`), and scanned PDFs/images via OCR (`tesseract` + `poppler`).
+* **Three Access Scopes:**
+  1. `company`: Visible to all authenticated members of the tenant.
+  2. `department`: Automatically restricted to members of the document's assigned department.
+  3. `restricted`: Locked strictly to explicitly granted individuals (`DocumentAccess`), invisible even to company managers without access grants.
+* **Granular Cross-Company Collaboration:** Admins can share a specific single document with a named user at a partner company (`DocumentShare`), with configurable download permissions and instant revocation.
 
 ---
 
-## Security & Authentication Flow
+## AI Retrieval, Workflows & DocGen
 
-1. **HttpOnly Cookie JWT Sessions:** `POST /api/auth/login` sets `openvault_access` (15-min) and `openvault_refresh` (7-day) cookies with `HttpOnly` and `SameSite=Lax`.
-2. **Automatic Request Signing:** The browser attaches credentials automatically (`credentials: 'include'`); tokens never touch `localStorage`.
-3. **Silent Refresh Interceptor:** On `401 Unauthorized`, `frontend/lib/api.ts` calls `POST /api/auth/refresh` and replays the original request.
-4. **Token Rotation & Blacklisting:** Old refresh tokens are blacklisted on every refresh, logout, and password change.
-5. **Sliding-Window Rate Limiting:** Protects login, registration, password reset, and company code lookup (backed by Redis when `CACHE_URL` is configured, or in-memory cache locally).
+### Hybrid Retrieval Engine
+* **Blended Retrieval:** 70% dense vector similarity (cosine distance over 1024-dim Bedrock Titan Text Embeddings v2 or 768-dim Ollama) + 30% BM25 keyword matching with stemming.
+* **Database Acceleration:** Uses PostgreSQL `pgvector` with HNSW indexes in production; falls back to an in-memory NumPy vector scan on local SQLite development.
+* **Grounded Answers:** Returns exact document citations with highlighted passage snippets. Refuses to invent facts if company documents do not contain the answer.
+* **Bilingual Support:** Responds fluently in English, Urdu, and Roman Urdu.
+
+### Deterministic Document Generation (DocGen)
+* Fills HR forms, leave requests, expense claim sheets, IT access requests, and official letters with real employee and company profile data.
+* Deterministic rule-based template parser (no hallucinated personal details, no model cost).
+* Exports finished documents to `.docx`, `.pdf`, `.md`, and `.txt`.
 
 ---
 
-## Plans & USD Billing
+## Compliance, Legal Safeguards & Feature Flags
 
-| Tier | Price | Member Seats | Documents | Storage | Monthly Asks | Features |
+OpenVault includes production-grade feature flags and legal compliance guards designed to prevent HR liability and database schema corruption:
+
+### 1. Attendance Tracking & Warn-Only Default
+* QR-code check-in with HMAC-SHA256 signed, short-lived tokens bound to the company's access code.
+* **Warn-Only Safety Mode (`ATTENDANCE_AUTO_FREEZE=false`):** When employees accumulate 3 strikes in a month, strikes are recorded and flagged on the admin dashboard, but user accounts are **never** automatically locked out without manual HR confirmation.
+* **Company Feature Toggle (`enable_attendance`):** Tenants who only want a document search engine can disable attendance completely; the UI hides attendance tabs and the API returns 403.
+
+### 2. Document Generation Toggle (`enable_docgen`)
+* Companies requiring a strict, read-only knowledge base can disable DocGen. Chat automatically bypasses template parsing and routes 100% of queries to pure RAG retrieval.
+
+### 3. Vector Dimension & Model Drift Guard
+* Mismatched embedding vector dimensions (e.g., Bedrock 1024d vs. Ollama 768d vs. OpenAI 1536d) cause fatal SQL errors on PostgreSQL `vector(N)` columns.
+* `LLMConfigSerializer` surfaces proactive dimension warnings in the admin settings API.
+* Documents track `embed_model` and flag `reindex_required=True` whenever active model geometry changes.
+* CLI diagnostic commands monitor coverage and alignment:
+  ```bash
+  python backend/manage.py check_embeddings
+  python backend/manage.py reindex_embeddings --all
+  ```
+
+---
+
+## Security & Authentication
+
+1. **HttpOnly Cookie JWT Sessions:** Login sets `openvault_access` (15-min) and `openvault_refresh` (7-day) cookies with `HttpOnly`, `SameSite=Lax`, and `Secure` (in HTTPS production). Tokens never touch `localStorage`.
+2. **Silent Refresh Interceptor:** The Next.js API client intercepts `401 Unauthorized` responses, refreshes tokens via `POST /api/auth/refresh`, and replays requests transparently.
+3. **Token Rotation & Revocation:** Old refresh tokens are blacklisted upon refresh, password reset, or logout.
+4. **Sliding-Window Rate Limiting:** Redis-backed (or cache-backed locally) rate limiters protect login, registration, password resets, and search endpoints.
+5. **SSRF & Cryptography:** Outbound URLs for BYO AI endpoints pass an SSRF guard. Custom provider API keys are encrypted at rest with Fernet (`AES-128-CBC` + `HMAC-SHA256`).
+
+---
+
+## Subscription Plans & Commercial Pricing
+
+OpenVault enforces plan quotas on member seats, document counts, storage capacity, and monthly AI queries at the API layer:
+
+| Tier | Price (USD) | Member Seats | Documents | Storage | Monthly Asks | Included Features |
 |---|---|---|---|---|---|---|
-| **Free** | \$0 / mo | 3 | 20 | 512 MB | 50 | Basic RAG, Audit log |
-| **Starter** | \$15 / mo | 15 | 200 | 5 GB | 1,500 | + File versioning |
-| **Business** | \$49 / mo | 50 | 1,000 | 25 GB | 6,000 | + Departments, BYO Custom LLM key |
-| **Enterprise** | \$129 / mo | Unlimited | Unlimited | Unlimited | Unlimited | All features enabled, Dedicated support |
+| **Free** | \$0 / mo | 3 | 20 | 512 MB | 50 | Hybrid RAG, Audit log, QR Attendance |
+| **Starter** | \$29 / mo | 15 | 200 | 5 GB | 1,500 | + File versioning, DocGen exports |
+| **Business** | \$99 / mo | 50 | 1,000 | 25 GB | 6,000 | + Departments, BYO AI keys, Priority search |
+| **Enterprise** | \$299+ / mo | Unlimited | Unlimited | Unlimited | Unlimited | Dedicated ECS instance, On-Prem AI, Custom SLA |
 
-To seed or refresh plans in the database:
+Seed or refresh plans in the database:
 ```bash
 python backend/manage.py seed_plans
 ```
-
----
-
-## Data Privacy: AWS Bedrock & Ollama
-
-- **Amazon Bedrock:** Only the user's question and passages permitted by the document ACL filter are sent over TLS to the configured AWS Bedrock inference profile (`in.anthropic.claude-haiku-4-5-20251001-v1:0`). AWS Bedrock does not use customer prompts or outputs to train foundation models.
-- **Ollama (Local / Private Server):** When both `LLM_PROVIDER=ollama` and `EMBED_PROVIDER=ollama` point to a private Ollama server, prompts and embeddings stay entirely on your infrastructure.
 
 ---
 
@@ -175,166 +155,46 @@ python backend/manage.py seed_plans
 
 All endpoints are served under `/api/`:
 
-- **Health:** `GET /api/health`
-- **Auth:** `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/refresh`, `POST /api/auth/logout`, `GET /api/auth/me`, `PATCH /api/auth/update-me`, `POST /api/auth/forgot-password`, `POST /api/auth/reset-password`, `POST /api/auth/request-verification`, `POST /api/auth/verify`
-- **Documents:** `GET /api/documents`, `POST /api/documents/upload`, `POST /api/documents/presign`, `POST /api/documents/confirm`, `GET|PATCH|DELETE /api/documents/<id>`, `GET /api/documents/<id>/download`, `GET /api/documents/<id>/preview`, `POST /api/documents/<id>/reindex`, `GET /api/documents/<id>/versions`, `POST /api/documents/<id>/versions/new`
-- **Sharing:** `GET /api/companies/search?code=<code>`, `GET /api/companies/<code>/members`, `GET|POST /api/documents/<id>/shares`, `DELETE /api/documents/<id>/shares/<user_id>`, `GET /api/shared-with-me`
-- **Chat & AI:** `POST /api/ask`, `GET /api/conversations`, `GET|PATCH|DELETE /api/conversations/<id>`, `POST /api/messages/<id>/rate`, `GET /api/llm-status`
-- **Workflows & Attendance:** `GET /api/workflow/forms/<user_id>/<name>`, `POST /api/attendance/scan`, `GET /api/attendance/me`, `GET /api/attendance/qr`, `POST /api/admin/attendance/evaluate`
-- **Administration:** `GET|PATCH /api/admin/company`, `GET|POST /api/admin/users`, `PATCH|DELETE /api/admin/users/<id>`, `GET|POST /api/admin/departments`, `DELETE /api/admin/departments/<id>`, `GET|POST /api/admin/announcements`, `DELETE /api/admin/announcements/<id>`, `GET /api/admin/analytics`, `GET /api/admin/usage`, `GET /api/admin/audit`, `GET|PUT|DELETE /api/admin/llm-config`, `POST /api/admin/llm-test`, `GET /api/plans`, `GET /api/admin/companies`, `POST /api/admin/companies/<id>/plan`, `POST /api/admin/switch-company`, `POST /api/admin/detach-company`
+* **System Health:** `GET /api/health`
+* **Authentication:** `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/refresh`, `POST /api/auth/logout`, `GET /api/auth/me`, `PATCH /api/auth/update-me`, `POST /api/auth/forgot-password`, `POST /api/auth/reset-password`
+* **Documents:** `GET /api/documents`, `POST /api/documents/upload`, `GET|PATCH|DELETE /api/documents/<id>`, `GET /api/documents/<id>/download`, `GET /api/documents/<id>/preview`, `POST /api/documents/<id>/reindex`, `GET|POST /api/documents/<id>/versions`
+* **Collaboration:** `GET /api/companies/search?code=<code>`, `GET /api/companies/<code>/members`, `GET|POST /api/documents/<id>/shares`, `DELETE /api/documents/<id>/shares/<user_id>`, `GET /api/shared-with-me`
+* **Chat & AI:** `POST /api/ask`, `GET /api/conversations`, `GET|PATCH|DELETE /api/conversations/<id>`, `POST /api/messages/<id>/rate`, `GET /api/llm-status`
+* **Templates & DocGen:** `GET /api/templates`, `POST /api/docgen`, `POST /api/artifacts/from-text`, `GET /api/artifacts/<id>`, `GET /api/artifacts/<id>/download`
+* **Attendance:** `POST /api/attendance/scan`, `GET /api/attendance/me`, `GET /api/attendance/qr`, `GET|POST /api/admin/attendance/holidays`, `GET|POST /api/admin/attendance/exemptions`, `POST /api/admin/attendance/evaluate`
+* **Administration:** `GET|PATCH /api/admin/company`, `GET|POST /api/admin/users`, `PATCH|DELETE /api/admin/users/<id>`, `GET|POST /api/admin/departments`, `GET /api/admin/analytics`, `GET /api/admin/usage`, `GET /api/admin/audit`, `GET|PUT|DELETE /api/admin/llm-config`, `POST /api/admin/llm-test`, `GET /api/plans`
 
 ---
 
-## Repository Layout
+## Management Commands
 
-```text
-OpenVault/
-├── backend/                 Django 5.1 API, RAG pipeline, S3/local storage, tests
-│   ├── api/index.py         Vercel Python WSGI serverless entrypoint
-│   ├── config/              Django settings, URLs, WSGI/ASGI entrypoints
-│   ├── core/                Tenancy, documents, storage, RAG, billing, audit
-│   ├── tests/               Pytest suite
-│   ├── vercel.json          Vercel serverless configuration for backend
-│   └── Dockerfile           Container build for Docker / Render
-├── frontend/                Next.js 16 App Router UI (Vercel, Amplify SSG, and Docker ready)
-│   ├── app/                 Routes and pages
-│   ├── components/          UI and workspace components
-│   ├── lib/                 API client (with S3 presigned upload fallback), i18n, auth
-│   └── vercel.json          Vercel configuration for frontend
-├── docs/                    Deployment and AWS Bedrock documentation
-├── deploy/                  Caddy configuration and backup script
-├── .env.vercel.example      Ready-to-copy environment variables for Vercel
-├── amplify.yml              AWS Amplify build spec (frontend static export)
-├── render.yaml              Render Blueprint
-└── docker-compose*.yml      Local and single-host production container stacks
-```
-
----
-
-## Local Development & Quick Start
-
-### 1. Backend Setup
 ```bash
-python3 -m venv backend/.venv
-source backend/.venv/bin/activate
-pip install -r backend/requirements.txt
-
-cp backend/.env.example backend/.env
-# Generate a secret and set SECRET_KEY in backend/.env:
-python3 -c "import secrets; print(secrets.token_urlsafe(50))"
-
-python backend/manage.py migrate
+# Seed initial plans and demo corpus:
 python backend/manage.py seed_plans
-```
+python backend/manage.py seed_policy_docs
 
-### 2. Frontend Setup
-```bash
-cd frontend
-pnpm install
-cd ..
-```
+# Check embedding coverage and detect model/dimension drift:
+python backend/manage.py check_embeddings
 
-### 3. Run Dev Servers
-```bash
-./run.sh          # Starts Django on :8000 and Next.js on :3000
-./run.sh stop     # Stops both servers
-```
+# Reindex chunks (safe backfill or full geometry recompute):
+python backend/manage.py reindex_embeddings
+python backend/manage.py reindex_embeddings --all
 
----
-
-## New AWS production infrastructure (`infra/` branch)
-
-The new stack is **ECS Fargate + RDS PostgreSQL/pgvector + ElastiCache + S3** in
-`ap-south-1`, behind one ALB on a **new subdomain**. It does not modify the live
-Amplify/Render site. See:
-
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
-- [`docs/DEPLOY.md`](docs/DEPLOY.md)
-- [`docs/COST.md`](docs/COST.md)
-- [`docs/runbooks/`](docs/runbooks/)
-- [`docs/INTERVIEW_NOTES.md`](docs/INTERVIEW_NOTES.md)
-
-## Deploying to Vercel (Frontend + Backend)
-
-OpenVault is configured so both `backend/` and `frontend/` can be deployed directly to Vercel from this GitHub repository while keeping PostgreSQL on Render (and AWS Amplify active for the frontend until you cut over).
-
-### 1. Database Preparation (Render PostgreSQL)
-- Keep your existing Render PostgreSQL instance.
-- Copy the **External Database URL** from Render and append `?sslmode=require` (e.g. `postgresql://user:pass@dpg-xxx.oregon-postgres.render.com/openvault?sslmode=require`).
-- Ensure Render's PostgreSQL Access Control allows external connections (`0.0.0.0/0`).
-
-### 2. Deploy the Backend to Vercel
-1. In the Vercel Dashboard, click **Add New → Project** and import this GitHub repository.
-2. Set **Root Directory** to `backend`.
-3. Paste the backend environment variables from [`.env.vercel.example`](docs/retired/env.vercel.example) into **Settings → Environment Variables**:
-   - `DATABASE_URL`, `SECRET_KEY`, `LLM_KEY_ENCRYPTION_KEY` (reuse your existing Render keys so sessions and encrypted LLM keys remain valid).
-   - `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, `PUBLIC_BASE_URL`.
-   - `AWS_STORAGE_BUCKET_NAME`, `AWS_S3_REGION_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (for persistent document storage on S3).
-   - `BEDROCK_*` and `EMAIL_*` settings.
-4. Click **Deploy**. Verify health at `https://<your-backend>.vercel.app/api/health`.
-5. Attach your custom API domain (e.g. `api.saadops.site`) under **Settings → Domains**.
-6. Run database migrations and plan seeding against the external `DATABASE_URL` when releasing schema updates:
-   ```bash
-   DATABASE_URL="postgresql://...?sslmode=require" SECRET_KEY="temp" \
-     backend/.venv/bin/python backend/manage.py migrate
-   DATABASE_URL="postgresql://...?sslmode=require" SECRET_KEY="temp" \
-     backend/.venv/bin/python backend/manage.py seed_plans
-   ```
-7. If migrating existing files from a Render disk to S3, run:
-   ```bash
-   python backend/manage.py migrate_files_to_s3
-   ```
-
-### 3. Deploy the Frontend (Amplify Now, Vercel Anytime)
-- **While on AWS Amplify:** Amplify continues using `amplify.yml` (`output: 'export'`) and talks to `NEXT_PUBLIC_API_URL=https://api.saadops.site`. Include your Amplify domain in the backend's `CORS_ALLOWED_ORIGINS` and `CSRF_TRUSTED_ORIGINS`.
-- **When moving Frontend to Vercel:**
-  1. In Vercel, click **Add New → Project** and import the same repository.
-  2. Set **Root Directory** to `frontend`.
-  3. Set environment variable `NEXT_PUBLIC_API_URL=https://api.saadops.site`.
-  4. Click **Deploy** (`frontend/next.config.mjs` automatically detects `VERCEL=1` and builds natively for Vercel).
-  5. Attach `openvault.saadops.site` to the frontend Vercel project.
-
----
-
-## Docker Compose & Self-Hosted Deployment
-
-```bash
-# Local zero-config SQLite stack:
-cp .env.example .env
-docker compose up --build
-
-# Single-host production stack (PostgreSQL + Redis + Django + Next.js + Caddy HTTPS):
-cp .env.production.example .env.production
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+# Create or promote root platform administrators:
+python backend/manage.py create_platform_admin admin@openvault.site
 ```
 
 ---
 
-## Running the Tests
+## Running Tests & Quality Assurance
 
 ```bash
-# Backend (pytest)
-cd backend
-pip install -r requirements-dev.txt
-python -m pytest
+# Backend pytest suite (220+ tests: isolation, tenancy, guards, RAG, auth):
+backend/.venv/bin/pytest backend/tests/
 
-# Frontend (Vitest + TypeScript)
-cd frontend
-pnpm test
-pnpm typecheck
-```
+# Frontend test suite (Vitest):
+cd frontend && pnpm test
 
----
-
-## Platform Administration Commands
-
-```bash
-# Create a new root platform administrator:
-python backend/manage.py create_platform_admin root@openvault.internal
-
-# Promote an existing user to platform admin:
-python backend/manage.py create_platform_admin user@company.com --promote
-
-# Seed or update subscription plans:
-python backend/manage.py seed_plans
+# Frontend production compile check (Turbopack):
+cd frontend && pnpm build
 ```
